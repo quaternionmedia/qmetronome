@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Blocky metronome silhouette, white on navy - kept simple and bold for legibility at
+         launcher-icon sizes, and to echo the Glyph Toy preview's pixel-grid aesthetic. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M50,28h8v8h-8z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,36 L60,36 L72,78 L36,78 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,78h48v8h-48z" />
+</vector>

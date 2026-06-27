@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<devices>
+    <device manufacturer="qMetronome" product="qMetronome Clock In">
+        <input-port name="clock_in" />
+    </device>
+</devices>

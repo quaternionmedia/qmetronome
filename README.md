@@ -1,0 +1,132 @@
+# qMetronome
+
+A tempo/beat visualizer and functional metronome for Nothing phones with a Glyph Matrix
+(Phone (3), Phone (4a) Pro), built on the [Glyph Matrix Developer Kit](https://github.com/Nothing-Developer-Programme/GlyphMatrix-Developer-Kit).
+
+## Architecture
+
+- `engine/MetronomeEngine` — process-wide singleton holding tempo, beat position and the
+  current Glyph frame as `StateFlow`s. It's the single source of truth so the in-app preview
+  and the real Glyph Matrix always show the same thing, whether or not the app UI is open.
+- `engine/ClockSource` — produces beat ticks. `InternalClockSource` drift-corrects against
+  `System.nanoTime()` so tempo doesn't slip over a long session. `midi/MidiClockSource` is the
+  external-clock implementation: the engine auto-switches to it the moment MIDI Clock activity
+  arrives, and falls back to internal timing if that feed goes quiet for a few beats.
+- `midi/` — MIDI Clock (24 ppqn) support. `MidiClockSource` parses real-time bytes and measures
+  tempo from a smoothed rolling average of tick intervals, regardless of transport.
+  `VirtualMidiClockService` exposes the app as a MIDI destination other apps can target with no
+  hardware (see `res/xml/midi_device_info.xml`); `UsbMidiConnector` discovers/connects real USB
+  MIDI devices. Both just feed raw bytes into the same `MidiClockSource` - see
+  [`docs/external-midi-clock.md`](docs/external-midi-clock.md) for the design rationale and
+  [`docs/usb-midi-test-plan.md`](docs/usb-midi-test-plan.md) for how to verify it against real
+  hardware.
+- `engine/ClickPlayer` — the audible click (`ToneGenerator`), so this also works as a real
+  metronome for practicing/performing musicians, with or without the Glyph Matrix.
+- `visualizers/` — the animation algorithms. See below.
+- `glyph/GlyphMatrixToyService` — reusable Glyph Toy boilerplate (bind lifecycle, device
+  registration, Glyph Button message handling). `glyph/MetronomeGlyphService` is the concrete
+  toy: it starts/stops the engine with toy selection, taps tempo on Glyph Button touch-down,
+  and cycles visualizers on long-press.
+- `ui/` — Compose UI. `MainScreen` keeps the Glyph Matrix preview as the dominant, focal
+  element with only tempo/tap/play-stop alongside it; everything else (beats-per-bar, click
+  toggle, visualizer picker, MIDI clock status/USB connection) lives in the dismissable
+  `SettingsSheet` rather than competing for attention on the main screen. The settings button
+  isn't the only way in: long-pressing the preview also opens settings (useful since the button
+  can end up crowded against the system status bar on some devices), and swiping the preview
+  left/right cycles visualizers without leaving the main screen. `MatrixPreview` renders the
+  exact same frames as the real hardware, so visualizers can be developed and demoed without a
+  physical Nothing device. The theme (`ui/theme/`) is strictly monochrome — black/white only,
+  matching the Glyph Matrix and Nothing's own design language — with one deliberate exception:
+  a navy accent (`QmNavy`) reserved for the small Quaternion Media credit mark (`BrandFooter`)
+  and nothing else.
+
+## Adding a new visualizer
+
+Implement `GlyphVisualizer`:
+
+```kotlin
+class MyVisualizer : GlyphVisualizer {
+    override val id = "my_visualizer"
+    override val displayName = "My Visualizer"
+
+    override fun render(matrixSize: Int, beat: BeatPhase): IntArray {
+        val canvas = GlyphCanvas(matrixSize)
+        // beat.phase is 0..1 progress through the current beat, beat.isAccent marks beat 1
+        canvas.filledCircle(canvas.center, canvas.center, matrixSize * 0.3f, 255)
+        return canvas.toIntArray()
+    }
+}
+```
+
+Add an instance to `VisualizerRegistry.all` and it's done — it shows up in the in-app picker
+and becomes selectable via Glyph Button long-press. No service, threading, or SDK code needed;
+`render()` is called continuously by the engine and is a pure function of `BeatPhase`.
+
+## Setup notes
+
+- `app/libs/glyph-matrix-sdk-2.0.aar` is the Glyph Matrix SDK from the Developer Kit.
+- `minSdk` is 33, required by the SDK itself (the Glyph Matrix only exists on phones running
+  recent Android anyway).
+- The Glyph Toy preview icon (`drawable/toy_preview.xml`) is a placeholder pixel-grid icon
+  matching the kit's preview style — replace with real artwork before shipping, following the
+  spec images in the Developer Kit (`23112_spec.svg` / `25111_spec.svg`).
+- `NothingKey` meta-data is set to the kit's demo placeholder (`"test"`); replace with a real
+  key if Nothing requires one for distribution.
+
+## Testing
+
+`./gradlew test` runs the full unit test suite, including Robolectric-backed
+tests for anything that touches Android framework classes (the engine's
+self-healing render loop, `MetronomeSettings` persistence, MIDI clock source
+arbitration) and plain-JUnit tests for the pure-Kotlin pieces (every
+visualizer, `GlyphCanvas`, `VisualizerRegistry`). The visualizer tests double
+as a contract check: every built-in visualizer is verified to produce a
+correctly-sized, in-range frame, to flash brighter at the start of a beat
+than mid-decay (the no-audio accessibility requirement - see
+`GlyphVisualizer`'s docs), and to render fast enough not to lag the render
+loop. `glyph/` and the real Glyph Matrix SDK aren't unit-testable here (a
+closed third-party AAR with real Binder calls, not something Robolectric can
+shadow) - see [`docs/usb-midi-test-plan.md`](docs/usb-midi-test-plan.md) for
+how that side is verified on real hardware instead.
+
+## Project governance
+
+This is Quaternion Media's first mobile/cross-platform-device project, and
+its decision-record discipline (`adr/`) is adopted from the org's
+[`qm`](https://github.com/quaternionmedia/qm) constitution. Two real gaps
+showed up between that constitution (built around self-hosted server
+infrastructure) and a sideloaded app built against a closed hardware-vendor
+SDK; rather than papering over them, they're named in
+[`docs/governance-perspective.md`](docs/governance-perspective.md) and the
+corresponding `adr/` drafts, and fed back to the org as an open question
+rather than resolved unilaterally.
+
+## CI
+
+`.github/workflows/ci.yml` runs the Glyph SDK import-boundary check (enforcing
+the isolation claimed in `adr/DRAFT-glyph-matrix-sdk-dependency.md`), then a
+full `assembleDebug` + `testDebugUnitTest`, on every push to `main` and every
+pull request.
+
+## License
+
+qmetronome's own source is MIT-licensed (see [`LICENSE`](LICENSE)). That
+covers everything in this repository except `app/libs/glyph-matrix-sdk-2.0.aar`,
+which is a closed-source binary distributed by Nothing Technology Limited
+under its own terms (see [`adr/DRAFT-glyph-matrix-sdk-dependency.md`](adr/DRAFT-glyph-matrix-sdk-dependency.md)
+for why that dependency exists and how it's isolated). Third-party
+dependencies pulled in via Gradle (AndroidX, Kotlin, Robolectric, etc.) remain
+under their own licenses, not relicensed by this project's MIT grant.
+
+## Known limitations / next steps
+
+- Phone (4a) Pro (`DEVICE_25111p`) is AOD-only per the kit, which only refreshes once a minute —
+  not useful for live tempo. The toy currently isn't registered with `aod_support`, so on that
+  device it just won't show up in the toy list; full AOD support is future work.
+- External MIDI clock sync is implemented for virtual (inter-app) and USB transports. MIDI
+  Song Position Pointer / proper Continue support is not (Continue currently behaves like
+  Start - resets to beat 0). Bluetooth LE MIDI is not implemented yet (the least consistent
+  transport across hardware - see `docs/external-midi-clock.md`).
+- USB MIDI only scans `TRANSPORT_MIDI_BYTE_STREAM` devices; a USB-MIDI 2.0/UMP-only device
+  wouldn't show up in the scan yet (see the troubleshooting section in
+  `docs/usb-midi-test-plan.md`).
