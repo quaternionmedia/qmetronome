@@ -53,4 +53,20 @@ class GlyphCanvasTest {
         val canvas = GlyphCanvas(25)
         assertEquals(25 * 25, canvas.toIntArray().size)
     }
+
+    @Test
+    fun `line lights both endpoints and tolerates a zero-length line without throwing`() {
+        val canvas = GlyphCanvas(13)
+        canvas.line(2f, 2f, 9f, 9f, 200)
+        assertTrue("start point should be lit", canvas.pixels[2 * 13 + 2] > 0)
+        assertTrue("end point should be lit", canvas.pixels[9 * 13 + 9] > 0)
+
+        canvas.line(5f, 5f, 5f, 5f, 200) // zero-length - must not divide by zero or throw
+    }
+
+    @Test
+    fun `line out of bounds does not throw`() {
+        val canvas = GlyphCanvas(13)
+        canvas.line(-5f, -5f, 50f, 50f, 200)
+    }
 }

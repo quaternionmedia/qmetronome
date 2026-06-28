@@ -1,5 +1,7 @@
 package com.example.qmetronome.visualizers
 
+import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -61,6 +63,15 @@ class GlyphCanvas(val size: Int) {
                 val edge = (halfThickness - kotlin.math.abs(distance - radius) + 0.5f).coerceIn(0f, 1f)
                 if (edge > 0f) add(x, y, (brightness * edge).toInt())
             }
+        }
+    }
+
+    /** A straight stroke from ([x0],[y0]) to ([x1],[y1]), sampled densely enough not to leave gaps at matrix resolution. */
+    fun line(x0: Float, y0: Float, x1: Float, y1: Float, brightness: Int) {
+        val steps = (hypot(x1 - x0, y1 - y0) * 2f).roundToInt().coerceAtLeast(1)
+        for (i in 0..steps) {
+            val t = i / steps.toFloat()
+            add((x0 + (x1 - x0) * t).roundToInt(), (y0 + (y1 - y0) * t).roundToInt(), brightness)
         }
     }
 

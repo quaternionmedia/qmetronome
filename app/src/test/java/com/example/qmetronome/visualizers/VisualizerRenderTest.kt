@@ -62,6 +62,25 @@ class VisualizerRenderTest {
     }
 
     @Test
+    fun `every visualizer puts out more total light on the accented beat than a regular beat at the same phase`() {
+        // Same idea as the beat-flash test, but for finding "the 1" in a bar at a glance. Held
+        // at the same phase so this isolates the isAccent effect from the phase-decay effect
+        // already covered above.
+        for (visualizer in VisualizerRegistry.all) {
+            val accentBeat = BeatPhase.IDLE.copy(isPlaying = true, phase = 0f, isAccent = true, beatIndex = 0)
+            val regularBeat = BeatPhase.IDLE.copy(isPlaying = true, phase = 0f, isAccent = false, beatIndex = 1)
+            val accentTotal = visualizer.render(25, accentBeat).sum()
+            val regularTotal = visualizer.render(25, regularBeat).sum()
+            assertTrue(
+                "${visualizer.id} should put out more total light on the accented beat than a " +
+                    "regular beat at the same phase, so bar 1 is findable at a glance without " +
+                    "audio - got accent=$accentTotal regular=$regularTotal",
+                accentTotal > regularTotal,
+            )
+        }
+    }
+
+    @Test
     fun `every visualizer renders within a reasonable time budget`() {
         val maxMillisPerFrame = 5.0
         for (visualizer in VisualizerRegistry.all) {

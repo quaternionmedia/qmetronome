@@ -23,7 +23,10 @@ class SweepVisualizer : GlyphVisualizer {
         // itself brighter and bigger right on the beat so there's always one.
         val flash = decayEase(beat.phase)
         val dotBrightness = (160 + 95 * flash).toInt()
-        val dotRadius = matrixSize * (0.09f + 0.05f * flash)
+        // Brightness alone can't carry the bar-1 accent - it's already saturated near phase=0 to
+        // satisfy the beat-flash requirement. Radius is what survives that saturation.
+        val accentScale = if (beat.isAccent) 1.6f else 1f
+        val dotRadius = matrixSize * (0.09f + 0.05f * flash) * accentScale
 
         canvas.ring(canvas.center, canvas.center, radius, 1.2f, 30)
         canvas.filledCircle(x, y, dotRadius, dotBrightness)

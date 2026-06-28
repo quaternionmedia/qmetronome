@@ -75,6 +75,21 @@
                 android:resource="@xml/midi_device_info" />
         </service>
 
+        <!-- Home screen widget: BPM + play/stop, event-driven updates only. Must be exported -
+             the launcher/system process delivers APPWIDGET_UPDATE from outside this app. -->
+        <receiver
+            android:name=".widget.MetronomeWidgetReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/metronome_widget_info" />
+        </receiver>
+
     </application>
 
 </manifest>

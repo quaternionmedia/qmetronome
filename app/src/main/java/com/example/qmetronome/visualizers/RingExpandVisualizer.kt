@@ -20,7 +20,10 @@ class RingExpandVisualizer : GlyphVisualizer {
         // mid-decay, not at the beat. A real splash is brightest and most concentrated at the
         // moment of impact, fading as the ripple spreads - model that explicitly.
         val splashBrightness = (255 * decayEase(beat.phase)).toInt()
-        val splashRadius = matrixSize * (0.06f + 0.1f * decayEase(beat.phase))
+        // The splash is bigger on bar 1, not just brighter - brightness alone is already
+        // saturated near phase=0, so radius is what stays distinguishable.
+        val accentScale = if (beat.isAccent) 1.7f else 1f
+        val splashRadius = matrixSize * (0.06f + 0.1f * decayEase(beat.phase)) * accentScale
         canvas.filledCircle(canvas.center, canvas.center, splashRadius, splashBrightness)
         return canvas.toIntArray()
     }

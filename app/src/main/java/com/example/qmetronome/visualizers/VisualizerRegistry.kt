@@ -13,6 +13,11 @@ object VisualizerRegistry {
         RingExpandVisualizer(),
         BounceVisualizer(),
         StrobeVisualizer(),
+        SpiralVisualizer(),
+        SplashVisualizer(),
+        ClassicMetronomeVisualizer(),
+        DoublePendulumVisualizer(),
+        ChaosVisualizer(),
     )
 
     val default: GlyphVisualizer get() = all.first()

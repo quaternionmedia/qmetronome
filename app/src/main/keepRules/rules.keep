@@ -10,3 +10,21 @@
 #-keepclassmembers class fqcn.of.javascript.interface.for.webview {
 #   public *;
 #}
+
+# Forward-looking only: release builds currently disable R8/optimization
+# entirely (see android.buildTypes.release.optimization in app/build.gradle.kts),
+# so nothing here is exercised yet. Kept anyway so enabling optimization later
+# doesn't silently break reflection-based dispatch.
+
+# The Glyph Matrix SDK (com.nothing.ketchum.*) is a closed third-party AAR -
+# keep it whole rather than risk obfuscating something the vendor's binary
+# expects to find by name.
+-keep class com.nothing.ketchum.** { *; }
+
+# Jetpack Glance dispatches these by class name (ActionCallback via a
+# broadcast receiver, GlanceAppWidget/GlanceAppWidgetReceiver via the
+# manifest), not by a direct constructor call from app code - R8 has no way
+# to see that reference and would otherwise strip or rename them.
+-keep class * extends androidx.glance.appwidget.action.ActionCallback { *; }
+-keep class * extends androidx.glance.appwidget.GlanceAppWidget { *; }
+-keep class * extends androidx.glance.appwidget.GlanceAppWidgetReceiver { *; }

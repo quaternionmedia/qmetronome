@@ -3,6 +3,10 @@
 A tempo/beat visualizer and functional metronome for Nothing phones with a Glyph Matrix
 (Phone (3), Phone (4a) Pro), built on the [Glyph Matrix Developer Kit](https://github.com/Nothing-Developer-Programme/GlyphMatrix-Developer-Kit).
 
+This file is architecture/setup/testing. Feasibility investigations, manual
+test plans, and release readiness live in [`docs/`](docs/README.md);
+decision records live in [`adr/`](adr/README.md).
+
 ## Architecture
 
 - `engine/MetronomeEngine` — process-wide singleton holding tempo, beat position and the
@@ -39,6 +43,12 @@ A tempo/beat visualizer and functional metronome for Nothing phones with a Glyph
   matching the Glyph Matrix and Nothing's own design language — with one deliberate exception:
   a navy accent (`QmNavy`) reserved for the small Quaternion Media credit mark (`BrandFooter`)
   and nothing else.
+- `widget/MetronomeWidget` — a home screen widget (Jetpack Glance), BPM + play/stop only.
+  Updates are event-driven, not polled: `QMetronomeApp` collects `MetronomeEngine.state`,
+  filters it down to just `(bpm, isPlaying)` with `distinctUntilChanged()`, and calls
+  `updateAll()` only when one of those actually changes - never on the render loop's ~40Hz
+  phase ticks. See [`docs/home-screen-widget.md`](docs/home-screen-widget.md) for why a
+  smoothly-animating widget was deliberately ruled out rather than attempted.
 
 ## Adding a new visualizer
 
@@ -61,6 +71,35 @@ class MyVisualizer : GlyphVisualizer {
 Add an instance to `VisualizerRegistry.all` and it's done — it shows up in the in-app picker
 and becomes selectable via Glyph Button long-press. No service, threading, or SDK code needed;
 `render()` is called continuously by the engine and is a pure function of `BeatPhase`.
+
+Two requirements every visualizer must meet, enforced by `VisualizerRenderTest` (see
+`GlyphVisualizer`'s docs for the full rationale):
+
+1. **The beat must read without audio** — more total light at `phase == 0` than mid-decay
+   (e.g. `phase == 0.5`).
+2. **Bar 1 must read distinctly from the other beats** — more total light when `isAccent` is
+   true than at the same phase with `isAccent` false.
+
+Brightness alone usually can't carry requirement 2, since it's already pushed near maximum at
+`phase == 0` to satisfy requirement 1 — scale the *size* of whatever's flashing instead (see any
+built-in visualizer's `accentScale` pattern). `GlyphCanvas.line()` is available alongside
+`filledCircle()`/`ring()` for arm/pendulum-style visualizers.
+
+## Using the widget
+
+Long-press the home screen → **Widgets** → place qMetronome. It shows the
+current BPM and a START/STOP control:
+
+- **Tap START/STOP** to toggle the metronome — this is the same engine the
+  app and the Glyph Toy use, so it stays in sync with all of them.
+- **Tap anywhere else on the widget** to open the full app (for tempo,
+  visualizer, or MIDI settings).
+- The number updates on its own when BPM changes from the app, MIDI, or the
+  widget itself — no need to remove and re-place it.
+
+It's deliberately BPM + play/stop only, not a live mirror of the Glyph
+Matrix animation — see [`docs/home-screen-widget.md`](docs/home-screen-widget.md)
+for why.
 
 ## Setup notes
 
@@ -127,6 +166,9 @@ under their own licenses, not relicensed by this project's MIT grant.
   Song Position Pointer / proper Continue support is not (Continue currently behaves like
   Start - resets to beat 0). Bluetooth LE MIDI is not implemented yet (the least consistent
   transport across hardware - see `docs/external-midi-clock.md`).
+- The home screen widget is BPM + play/stop only, by design - no matrix-preview thumbnail (see
+  [`docs/home-screen-widget.md`](docs/home-screen-widget.md) for why a live-pulsing widget was
+  ruled out, and the manual test checklist, since a placed widget isn't unit-testable here).
 - USB MIDI only scans `TRANSPORT_MIDI_BYTE_STREAM` devices; a USB-MIDI 2.0/UMP-only device
   wouldn't show up in the scan yet (see the troubleshooting section in
   `docs/usb-midi-test-plan.md`).

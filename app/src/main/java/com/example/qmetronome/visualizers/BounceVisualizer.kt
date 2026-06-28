@@ -18,15 +18,18 @@ class BounceVisualizer : GlyphVisualizer {
         val x = margin + triangle * (matrixSize - 1 - 2 * margin)
         val y = canvas.center
 
-        // Flash the dot itself (not just the accent ring) so the beat reads clearly even at a
+        // Flash the dot itself (not just the secondary ring) so the beat reads clearly even at a
         // glance, without relying on the secondary ring as the only cue.
         val flash = decayEase(beat.phase)
+        // Bar 1's dot (and ring) are bigger/brighter, not just the regular beat flash - radius is
+        // what stays distinguishable once brightness saturates near phase=0.
+        val accentScale = if (beat.isAccent) 1.4f else 1f
         val dotBrightness = (170 + 85 * flash).toInt()
-        val dotRadius = matrixSize * (0.13f + 0.05f * flash)
+        val dotRadius = matrixSize * (0.13f + 0.05f * flash) * accentScale
         canvas.filledCircle(x, y, dotRadius, dotBrightness)
 
-        val accentBrightness = (140 * flash).toInt()
-        if (accentBrightness > 0) canvas.ring(canvas.center, canvas.center, canvas.center * 0.95f, 1f, accentBrightness)
+        val ringBrightness = (140 * flash * accentScale).toInt()
+        if (ringBrightness > 0) canvas.ring(canvas.center, canvas.center, canvas.center * 0.95f, 1f, ringBrightness)
         return canvas.toIntArray()
     }
 }
