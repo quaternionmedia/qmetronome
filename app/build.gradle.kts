@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.qmetronome"
+    namespace = "media.quaternion.qmetronome"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -12,7 +12,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.qmetronome"
+        applicationId = "media.quaternion.qmetronome"
         minSdk = 33
         targetSdk = 36
         versionCode = 1

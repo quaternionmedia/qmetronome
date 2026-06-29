@@ -14,10 +14,11 @@ Where on-device testing found real bugs, they're logged round-by-round
 rather than smoothed over - the bug and the wrong hypothesis along the way
 are part of the record, not just the eventual fix.
 
-- **[`external-midi-clock.md`](external-midi-clock.md)** — MIDI Clock sync
-  (virtual inter-app + USB). Implemented. Pairs with
-  **[`usb-midi-test-plan.md`](usb-midi-test-plan.md)**, the manual checklist
-  for the one part of this that needs real hardware to verify.
+- **[`external-midi-clock.md`](external-midi-clock.md)** — MIDI Clock sync,
+  both directions, over both virtual (inter-app) and USB transports:
+  following an external clock, and sending our own clock out. Implemented.
+  Pairs with **[`usb-midi-test-plan.md`](usb-midi-test-plan.md)**, the manual
+  checklist for the parts of this that need real hardware to verify.
 - **[`home-screen-widget.md`](home-screen-widget.md)** — the BPM + play/stop
   widget. Implemented, four rounds of on-device debugging logged in full
   (a silently-dying update collector, then a one-shot-snapshot-vs-reactive-

@@ -1,11 +1,13 @@
 # External MIDI clock: feasibility & lift
 
-**Status: virtual (inter-app) and USB MIDI are implemented** (`midi/MidiClockSource`,
-`midi/VirtualMidiClockService`, `midi/UsbMidiConnector`). This doc is kept as the design
-rationale for *why* it's built the way it is, plus what's intentionally still out of scope
-(Bluetooth LE MIDI, Song Position Pointer / proper Continue support — see the bottom of this
-file). For how to verify the USB path against real hardware, see
-[`docs/usb-midi-test-plan.md`](usb-midi-test-plan.md).
+**Status: both directions, all three transport paths that don't need BLE, are implemented.**
+Following an external clock - virtual (inter-app) and USB MIDI - via `midi/MidiClockSource`,
+`midi/VirtualMidiClockService`, `midi/UsbMidiConnector`. Sending our own clock out, also via
+virtual and USB, via `midi/MidiClockSender` and the same `UsbMidiConnector` (see "Sending clock
+out" below). This doc is kept as the design rationale for *why* it's built the way it is, plus
+what's intentionally still out of scope (Bluetooth LE MIDI, Song Position Pointer / proper
+Continue support — see the bottom of this file). For how to verify either USB path against real
+hardware, see [`docs/usb-midi-test-plan.md`](usb-midi-test-plan.md).
 
 This was originally written as a feasibility investigation before any of it existed — the
 analysis held up: feasible, no new dependency, and `engine/ClockSource.kt` was already shaped
@@ -81,6 +83,45 @@ the hardware, and expect qMetronome to resume from the same bar.
 As predicted, visualizers, the Glyph service, and the matrix preview needed **zero changes** —
 they only ever see `BeatPhase`, which doesn't know or care where the beat came from.
 
+## Sending clock out (the symmetric case)
+
+`midi/MidiClockSender` is the mirror image: instead of measuring tempo from received ticks, it
+generates them from `MetronomeEngine.state` and writes raw bytes to a registered set of
+destinations. It doesn't need a seam of its own the way receiving needed `ClockSource` - it's
+just one more reader of the same `BeatPhase` everything else already reads, so there's nothing
+for visualizers/UI/the Glyph service to know about here either.
+
+Because it always derives from `MetronomeEngine.state` rather than caring where that tempo
+actually came from, enabling clock-out while the engine happens to be *following* an external
+clock turns qmetronome into a repeater automatically - no special-casing needed, same as
+predicted when `ClockSource` was originally designed as a swappable seam.
+
+`VirtualMidiClockService` now declares both an input port (for `MidiClockSource`) and an output
+port (for `MidiClockSender`) on one logical device, renamed from "qMetronome Clock In" to
+"qMetronome Clock" now that the old name undersold what it does. The output port's receiver is
+obtained via the platform's `MidiDeviceService.getOutputPortReceivers()` (confirmed against the
+actual `android.jar` bytecode, not just docs - it's a real, `final`, non-overridable method)
+and registered with `MidiClockSender.addDestination()` in `onCreate()`, unregistered in
+`onClose()`.
+
+USB clock-out (sending to a physical device's input port, not just other apps) is also wired up:
+`UsbMidiConnector.connectForSending(deviceInfo)` opens the device's input port
+(`device.openInputPort(0)`, which returns a `MidiInputPort` - confirmed via `javap` that it
+`extends MidiReceiver`, so it registers through the exact same `MidiClockSender.addDestination()`
+call as the virtual port) and `disconnectSending()` tears it down. It's deliberately a separate
+connection from `connectForFollowing()`/`disconnectFollowing()` - you can follow one device while
+sending to a different one, follow and send to the *same* device, or just do one direction.
+
+That last combination - following and sending to the same physical device - is allowed rather
+than blocked. On real gear with separate MIDI IN/OUT jacks this is normal and isn't a loop by
+itself; it would only become one if that specific device has MIDI Thru/echo enabled, silently
+re-transmitting whatever it receives out its own output - a per-device setting this app has no
+way to query or detect. Blocking the combination outright would also incorrectly prevent the
+common, non-looping case on devices without Thru enabled, so the settings UI surfaces a heads-up
+text when both point at the same device instead of guessing. This specific combination is the one
+part of clock-out I can't verify without real hardware that has a Thru setting to test against -
+see [`docs/usb-midi-test-plan.md`](usb-midi-test-plan.md).
+
 ## Routing & extensibility: adding a new transport
 
 `MidiClockSource` doesn't care which transport bytes arrive from - it exposes
@@ -132,8 +173,9 @@ parsing core but with the most additional plumbing around it.
 
 ## Status and what's left
 
-Virtual (inter-app) MIDI and USB MIDI are both built, sharing the same `MidiClockSource`
-parsing core as planned. Remaining, in priority order:
+Virtual (inter-app) and USB MIDI are both built in both directions - following and sending out -
+sharing the same `MidiClockSource` parsing core (receiving) or `MidiClockSender` destination set
+(sending) regardless of transport. Remaining, in priority order:
 
 1. **Real-hardware verification, round 2** — first real-gear test found the beat firing far
    faster than the displayed BPM while the BPM itself was correct. Root cause: testing used a
@@ -142,8 +184,13 @@ parsing core as planned. Remaining, in priority order:
    [`docs/usb-midi-test-plan.md`](usb-midi-test-plan.md) to confirm the fix holds, ideally with
    only one source connected at a time first, then deliberately with both live to confirm
    arbitration behaves as expected rather than glitching.
-2. **Song Position Pointer / proper Continue** — only worth doing if you actually want
+2. **USB clock-out, real-hardware verification** — `connectForSending()`/the follow-and-send-to-
+   the-same-device combination have never run against real gear. Particularly worth checking
+   whether any available hardware has a MIDI Thru/echo setting, to see what the "could loop"
+   heads-up text is warning about actually looks like in practice, and whether that's enough or
+   needs an actual guard.
+3. **Song Position Pointer / proper Continue** — only worth doing if you actually want
    stop-and-resume-from-position behavior; skip if "just follow along" is good enough.
-3. **Bluetooth LE MIDI** — real demand from hardware-synth users, but the most fragile
+4. **Bluetooth LE MIDI** — real demand from hardware-synth users, but the most fragile
    transport to support well across different peripherals; do this once the other two are
    proven solid.

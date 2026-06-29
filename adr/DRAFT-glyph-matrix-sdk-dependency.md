@@ -36,7 +36,7 @@ qmetronome depends on the closed `glyph-matrix-sdk-2.0.aar`, named and bounded
 rather than hidden:
 
 1. **Isolation as the mitigant.** Every import of `com.nothing.ketchum.*` is
-   confined to `app/src/main/java/com/example/qmetronome/glyph/` — verified
+   confined to `app/src/main/java/media/quaternion/qmetronome/glyph/` — verified
    by grep at the time of writing: exactly two files
    (`GlyphMatrixToyService.kt`, `MetronomeGlyphService.kt`). The tempo engine
    (`engine/`), MIDI clock handling (`midi/`), visualizer algorithms

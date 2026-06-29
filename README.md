@@ -16,14 +16,17 @@ decision records live in [`adr/`](adr/README.md).
   `System.nanoTime()` so tempo doesn't slip over a long session. `midi/MidiClockSource` is the
   external-clock implementation: the engine auto-switches to it the moment MIDI Clock activity
   arrives, and falls back to internal timing if that feed goes quiet for a few beats.
-- `midi/` — MIDI Clock (24 ppqn) support. `MidiClockSource` parses real-time bytes and measures
-  tempo from a smoothed rolling average of tick intervals, regardless of transport.
-  `VirtualMidiClockService` exposes the app as a MIDI destination other apps can target with no
-  hardware (see `res/xml/midi_device_info.xml`); `UsbMidiConnector` discovers/connects real USB
-  MIDI devices. Both just feed raw bytes into the same `MidiClockSource` - see
+- `midi/` — MIDI Clock (24 ppqn) support, in both directions, over both virtual (inter-app) and
+  USB transports. `MidiClockSource` parses real-time bytes and measures tempo from a smoothed
+  rolling average of tick intervals, regardless of transport; `VirtualMidiClockService` exposes
+  the app as a MIDI destination other apps can target with no hardware (see
+  `res/xml/midi_device_info.xml`). Going the other way, `MidiClockSender` generates clock from
+  `MetronomeEngine.state` and writes it to a registered set of destinations. `UsbMidiConnector`
+  is the USB side of both directions - `connectForFollowing()`/`connectForSending()` are
+  independent, so a device can be followed, sent to, both, or neither. See
   [`docs/external-midi-clock.md`](docs/external-midi-clock.md) for the design rationale and
-  [`docs/usb-midi-test-plan.md`](docs/usb-midi-test-plan.md) for how to verify it against real
-  hardware.
+  [`docs/usb-midi-test-plan.md`](docs/usb-midi-test-plan.md) for how to verify either USB
+  direction against real hardware.
 - `engine/ClickPlayer` — the audible click (`ToneGenerator`), so this also works as a real
   metronome for practicing/performing musicians, with or without the Glyph Matrix.
 - `visualizers/` — the animation algorithms. See below.
@@ -33,16 +36,19 @@ decision records live in [`adr/`](adr/README.md).
   and cycles visualizers on long-press.
 - `ui/` — Compose UI. `MainScreen` keeps the Glyph Matrix preview as the dominant, focal
   element with only tempo/tap/play-stop alongside it; everything else (beats-per-bar, click
-  toggle, visualizer picker, MIDI clock status/USB connection) lives in the dismissable
+  toggle, visualizer picker, MIDI clock status/USB connection/clock-out) lives in the dismissable
   `SettingsSheet` rather than competing for attention on the main screen. The settings button
   isn't the only way in: long-pressing the preview also opens settings (useful since the button
   can end up crowded against the system status bar on some devices), and swiping the preview
-  left/right cycles visualizers without leaving the main screen. `MatrixPreview` renders the
-  exact same frames as the real hardware, so visualizers can be developed and demoed without a
-  physical Nothing device. The theme (`ui/theme/`) is strictly monochrome — black/white only,
-  matching the Glyph Matrix and Nothing's own design language — with one deliberate exception:
-  a navy accent (`QmNavy`) reserved for the small Quaternion Media credit mark (`BrandFooter`)
-  and nothing else.
+  left/right cycles visualizers without leaving the main screen. Tempo has three input methods
+  layered for different precision needs: tap-tempo, `HoldRepeatButton` step controls either side
+  of the BPM number (tap for ±1, hold for a geometrically-accelerating repeat - see its kdoc for
+  why the click callback is intentionally a no-op), and dragging the BPM number itself
+  left/right for continuous fine adjustment. `MatrixPreview` renders the exact same frames as the
+  real hardware, so visualizers can be developed and demoed without a physical Nothing device.
+  The theme (`ui/theme/`) is strictly monochrome — black/white only, matching the Glyph Matrix
+  and Nothing's own design language — with one deliberate exception: a navy accent (`QmNavy`)
+  reserved for the small Quaternion Media credit mark (`BrandFooter`) and nothing else.
 - `widget/MetronomeWidget` — a home screen widget (Jetpack Glance), BPM + play/stop only.
   Updates are event-driven, not polled: `QMetronomeApp` collects `MetronomeEngine.state`,
   filters it down to just `(bpm, isPlaying)` with `distinctUntilChanged()`, and calls
@@ -84,6 +90,22 @@ Brightness alone usually can't carry requirement 2, since it's already pushed ne
 `phase == 0` to satisfy requirement 1 — scale the *size* of whatever's flashing instead (see any
 built-in visualizer's `accentScale` pattern). `GlyphCanvas.line()` is available alongside
 `filledCircle()`/`ring()` for arm/pendulum-style visualizers.
+
+## Setting tempo
+
+Three input methods on the main screen, layered for different precision needs:
+
+- **Tap tempo**: tap the **TAP** button in rhythm; BPM is derived from a rolling average of the
+  last few taps.
+- **Step buttons** (either side of the BPM number): tap for ±1 BPM, hold for a
+  geometrically-accelerating repeat - the longer you hold, the faster it moves.
+- **Drag-to-scrub**: press and drag the BPM number itself left/right for continuous fine
+  adjustment.
+
+All three write to the same tempo, so mixing them (tap to get close, then drag to fine-tune) just
+works. **Settings → Clock → "Send MIDI clock"** turns qMetronome into a MIDI clock *source* for
+other apps or USB gear, the mirror image of following an external clock - see
+[`docs/external-midi-clock.md`](docs/external-midi-clock.md) for both directions.
 
 ## Using the widget
 
@@ -162,10 +184,13 @@ under their own licenses, not relicensed by this project's MIT grant.
 - Phone (4a) Pro (`DEVICE_25111p`) is AOD-only per the kit, which only refreshes once a minute —
   not useful for live tempo. The toy currently isn't registered with `aod_support`, so on that
   device it just won't show up in the toy list; full AOD support is future work.
-- External MIDI clock sync is implemented for virtual (inter-app) and USB transports. MIDI
-  Song Position Pointer / proper Continue support is not (Continue currently behaves like
-  Start - resets to beat 0). Bluetooth LE MIDI is not implemented yet (the least consistent
-  transport across hardware - see `docs/external-midi-clock.md`).
+- External MIDI clock sync is implemented for virtual (inter-app) and USB transports, in both
+  directions (following, and sending our own clock out). Following and sending to the *same* USB
+  device simultaneously is allowed rather than blocked, with a UI heads-up about devices that
+  echo MIDI Thru - that combination hasn't been verified against real hardware yet. MIDI Song
+  Position Pointer / proper Continue support is not implemented (Continue currently behaves like
+  Start - resets to beat 0). Bluetooth LE MIDI is not implemented yet (see
+  `docs/external-midi-clock.md`).
 - The home screen widget is BPM + play/stop only, by design - no matrix-preview thumbnail (see
   [`docs/home-screen-widget.md`](docs/home-screen-widget.md) for why a live-pulsing widget was
   ruled out, and the manual test checklist, since a placed widget isn't unit-testable here).

@@ -6,6 +6,43 @@ feature docs and `adr/` decision records it references.
 
 ## Technical Polish
 
+- [x] **Application identity**: `applicationId`/`namespace` were still
+      Android Studio's `com.example.qmetronome` template default. Renamed to
+      `media.quaternion.qmetronome` (package directories, all source files,
+      `app/build.gradle.kts`, the one stale path in
+      `adr/DRAFT-glyph-matrix-sdk-dependency.md`) before any beta install
+      happens, since changing it later means every existing install has to
+      be uninstalled and reinstalled from scratch.
+- [x] **Thread safety review**: `MidiClockSender`'s destination set is
+      mutated from the main thread (UI buttons, service `onCreate`/`onClose`)
+      but iterated from the tick loop's background dispatcher - was a plain
+      `MutableSet` (risk of `ConcurrentModificationException`), now
+      `CopyOnWriteArraySet`. `wasPlaying` is written from both threads too,
+      now `@Volatile`.
+- [x] **USB device identity review**: the Settings USB device list matched
+      "is this row the connected one" by display name string. Two devices
+      can share a name (including the generic "USB MIDI device" fallback),
+      which would make the UI show the wrong row as connected. Now matches
+      by `MidiDeviceInfo.id`, the platform's actual stable identity.
+- [x] **BPM persistence debounce**: the new press-and-hold/drag-to-scrub
+      tempo controls can call `MetronomeEngine.setBpm()` dozens of times a
+      second; it was persisting to `SharedPreferences` on every single call.
+      Engine state stays instant, the disk write is now debounced (250ms).
+- [x] **`MidiDevice.close()` exception safety**: it declares `throws
+      IOException`; `UsbMidiConnector`'s disconnect paths weren't all
+      guarded, so closing an already-unplugged device could crash whatever
+      UI action triggered it. All three close sites now go through one
+      `closeQuietly()`.
+- [x] **Branch/CI mismatch**: `.github/workflows/ci.yml` triggers on
+      `main`, but the repo's only branch was `master` - meaning CI would
+      never have run on a push to the actual default branch. Renamed the
+      branch to `main` (nothing had been pushed yet, so this was free).
+- [x] **Tracked IDE session noise**: `.idea/deploymentTargetSelector.xml`
+      (last-selected run device + timestamp), `.idea/studiobot.xml` (AI
+      assistant sharing opt-in), and `.idea/planningMode.xml` (a session
+      approval-state UUID) were committed in the previous round - all
+      per-machine/per-session state, not shared project config. Untracked
+      and added to `.gitignore`.
 - [x] **ProGuard/R8 rules**: Release `optimization` is currently disabled
       (`app/build.gradle.kts`), so nothing is obfuscated today — but added
       forward-looking keep rules anyway (`app/src/main/keepRules/rules.keep`)
@@ -26,6 +63,12 @@ feature docs and `adr/` decision records it references.
 
 ## Documentation
 
+- [x] **Tempo controls & MIDI clock-out**: README's `ui/` and `midi/`
+      architecture bullets cover the press-and-hold step buttons,
+      drag-to-scrub, and bidirectional MIDI clock (virtual + USB, both
+      ways). `docs/external-midi-clock.md` and the MIDI ADR cover the
+      design rationale, including the deliberate choice to allow rather
+      than block following-and-sending-to-the-same-USB-device.
 - [x] **Widget implementation**: `docs/home-screen-widget.md` documents the
       `collectAsState` reactivity pattern and the round-by-round path to it.
 - [x] **User guide**: README now has a "Using the widget" section (placement,
@@ -68,3 +111,17 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       wallpapers/launcher themes — the widget (like the app) is intentionally
       black/white regardless of system theme, so there's no light/dark code
       branch to test, just legibility in practice.
+- [ ] **Tempo controls on-device**: press-and-hold acceleration feel and
+      drag-to-scrub sensitivity were tuned by reading the code, not by
+      holding a phone - confirm both feel right (not too twitchy, not too
+      sluggish) on real hardware, and that all three input methods (tap
+      tempo, step buttons, drag) agree with each other and the Glyph Matrix.
+- [ ] **MIDI clock-out, virtual**: confirm another app on the same phone can
+      pick "qMetronome Clock" as a MIDI input and actually receives clock
+      when "Send MIDI clock" is on - this path has never run end-to-end on a
+      device, only compiled and unit-tested against a fake `MidiReceiver`.
+- [ ] **MIDI clock-out, USB**: per `docs/usb-midi-test-plan.md` section 5 -
+      sending to a USB device, following one device while sending to
+      another, and the deliberately-allowed-not-blocked case of following
+      and sending to the *same* device (the one combination with a real,
+      documented, unverified loop risk if that device echoes MIDI Thru).

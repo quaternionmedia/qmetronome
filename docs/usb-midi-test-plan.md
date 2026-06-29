@@ -1,25 +1,37 @@
 # Real-world USB MIDI clock test plan
 
-For verifying the USB MIDI path (`UsbMidiConnector` + `MidiClockSource`) against actual
-hardware — this is the one part of the MIDI clock work I can't verify myself without the gear
-in hand, so this is written to be self-contained for you to run.
+For verifying the USB MIDI path (`UsbMidiConnector` + `MidiClockSource`/`MidiClockSender`)
+against actual hardware — this is the one part of the MIDI clock work I can't verify myself
+without the gear in hand, so this is written to be self-contained for you to run. Covers both
+directions: following a device's clock (section 2) and sending our clock to a device (section
+5) — they're independent connections, so test them separately before trying both at once.
 
 ## What you'll need
 
 - A USB-C OTG adapter (if your MIDI gear/interface is USB-A or 5-pin DIN), or a USB-C MIDI
   interface/cable if your gear is already USB-C / class-compliant.
-- A clock source: a hardware sequencer/groovebox/drum machine that sends MIDI Clock over USB, a
-  USB MIDI keyboard/controller plugged into a computer running a DAW that's transmitting clock
-  out over USB to the phone, or any class-compliant MIDI interface fed by clock from elsewhere.
+- For following (section 2): a clock source — a hardware sequencer/groovebox/drum machine that
+  sends MIDI Clock over USB, a USB MIDI keyboard/controller plugged into a computer running a
+  DAW that's transmitting clock out over USB to the phone, or any class-compliant MIDI interface
+  fed by clock from elsewhere.
+- For sending (section 5): something that can show you received clock — a hardware sequencer set
+  to "external clock" / "MIDI sync" mode, a DAW set to sync to incoming MIDI clock, or (ideally,
+  for the same-device test in 5.2) a device with a MIDI Thru/echo setting you can toggle.
 
 ## 1. Sanity check without hardware (optional, do this first)
 
 If you have any other MIDI-capable app on the phone (even a free MIDI monitor/utility app),
-check that qMetronome shows up as a MIDI destination named **"qMetronome Clock In"** and that
-sending clock to it switches the in-app "Clock" status from `Internal` to `Following MIDI
-clock`. This isolates whether the byte-parsing logic itself works before involving USB at all.
+check that qMetronome shows up as a MIDI device named **"qMetronome Clock"** with both an input
+and an output port, and that:
 
-## 2. Connect the USB hardware
+- sending clock to its input switches the in-app "Clock" status from `Internal` to `Following
+  MIDI clock` (tests the receiving side), and
+- with "Send MIDI clock" enabled in Settings, picking qMetronome's output as that other app's
+  MIDI input shows clock bytes arriving there (tests the sending side).
+
+This isolates whether the byte-parsing/generation logic itself works before involving USB at all.
+
+## 2. Following a USB device's clock
 
 1. Launch qMetronome, plug in the USB MIDI device via the OTG adapter/cable.
 2. Tap **"Scan USB MIDI"** on the main screen. Your device should appear in the list below the
@@ -27,7 +39,7 @@ clock`. This isolates whether the byte-parsing logic itself works before involvi
    whatever your gear calls itself).
    - If nothing shows up: unplug/replug, then scan again — USB device enumeration can lag the
      physical connection by a second or two.
-3. Tap **"Connect"** next to the device. The first time, Android should show a system USB
+3. Tap **"Follow"** next to the device. The first time, Android should show a system USB
    permission dialog ("Allow qMetronome to access this USB device?") — accept it. This dialog
    is handled by the platform automatically; nothing in the app code triggers it manually, so if
    it never appears, that itself is a useful data point (see Troubleshooting).
@@ -61,9 +73,10 @@ Things worth checking, in order:
 
 1. **Device never appears after "Scan USB MIDI"** — likely a USB host-mode/cabling issue, not
    app logic. Confirm the phone enumerates *any* USB device via OTG (e.g. a USB drive) first.
-2. **Device appears but "Connect" does nothing / no permission dialog** — check logcat for
-   `MidiManager`/`UsbManager` errors; this would point at `UsbMidiConnector.connect()` not
-   reaching `openDevice()`, or the device exposing zero MIDI ports.
+2. **Device appears but "Follow"/"Send to" does nothing / no permission dialog** — check logcat
+   for `MidiManager`/`UsbManager` errors; this would point at `UsbMidiConnector`'s
+   `connectForFollowing()`/`connectForSending()` not reaching `openDevice()`, or the device
+   exposing zero MIDI ports in that direction.
 3. **Connects, but BPM never appears ("waiting for clock…" forever)** — your hardware may be
    sending MIDI over a transport other than the legacy byte-stream protocol (e.g. only Universal
    MIDI Packets / USB-MIDI 2.0). `UsbMidiConnector` currently only scans
@@ -78,6 +91,52 @@ Things worth checking, in order:
    If you hit this again with only *one* source connected, that's a different, more interesting
    bug — grab logcat with `adb logcat | grep MidiClockSource`, which logs every source switch
    and every beat fired (with tick count and measured BPM), and send that over.
+
+## 5. Sending clock to a USB device
+
+This is the direction that's never run against real hardware - everything below is genuinely
+unverified, not just "should work in theory."
+
+1. In Settings → Clock, turn on **"Send MIDI clock"** (this is the master on/off for sending;
+   without it, nothing goes out regardless of what's connected below).
+2. Scan for USB MIDI as in section 2, then tap **"Send to"** next to your device instead of
+   "Follow". Same permission-dialog behavior as following.
+3. Set your hardware/DAW to follow external MIDI clock (terminology varies - "external sync",
+   "MIDI sync", "slave mode").
+4. Press play in qMetronome (or tap-tempo/start it any way you like).
+
+**What should happen:** your hardware should start in time with qMetronome and track its tempo,
+including BPM changes made via the new +/- buttons or drag-to-scrub. Stopping qMetronome should
+stop your hardware's transport too (`0xFC`).
+
+**If it doesn't:** check whether your hardware actually distinguishes "external clock present"
+from "no clock" - some gear needs the clock running *before* you arm external sync, not after.
+If qMetronome's own UI looks correct (engine playing, "Send MIDI clock" on, device shows
+"Stop sending" available) but nothing arrives, logcat for `MidiClockSender` will show every byte
+send attempt and any exceptions from a destination that's gone away.
+
+### 5.1 Following one device while sending to a different one
+
+If you have two MIDI-capable things handy (e.g. a DAW on a computer as the clock source, and a
+hardware groovebox as the clock destination), connect one for "Follow" and the other for "Send
+to" simultaneously. This is the configuration `MidiClockSender`'s design assumes is the common
+case - qMetronome as a relay/repeater between two things that can't talk to each other directly.
+Confirm the groovebox's tempo tracks the DAW's, including tempo changes made on the DAW.
+
+### 5.2 Following and sending to the *same* device
+
+This is the combination flagged in the MIDI ADR as a real, unverified risk: if your device has a
+MIDI Thru/echo setting, sending it clock while also reading its output could create a loop
+(it echoes our clock back to us, we echo that back out, ...). Test deliberately:
+
+1. With the device's Thru/echo setting **off** (if it has one), tap both "Follow" and "Send to"
+   for the same device. The settings screen should show a heads-up text under that device's row.
+   Confirm nothing misbehaves - tempo should stay stable, not run away or stutter.
+2. If the device *has* a Thru/echo setting, turn it **on** and repeat. Watch for: tempo climbing
+   on its own, the BPM display jumping erratically, or clock activity that doesn't match what
+   either side is actually generating. If you see any of that, it confirms the loop risk the ADR
+   predicted - report back what happened and which device, since that's the trigger for adding
+   an actual guard instead of just the heads-up text.
 
 Whatever you find, send me the device name/model and what step it broke at — that's the
 real-world data the original feasibility doc flagged as unverifiable without hardware in hand.
