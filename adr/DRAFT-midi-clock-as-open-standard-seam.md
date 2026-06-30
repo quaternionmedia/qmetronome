@@ -120,4 +120,14 @@ both paths already share does the work.
 
 ## Amendments
 
-*None.*
+- **2026-06-29**: `UsbMidiConnector` converted from a class scoped to `SettingsSheet` (created
+  via `remember`, so every USB connection was lost the moment Settings closed and reopened) to a
+  process-wide singleton, `attach()`'d from `QMetronomeApp.onCreate()` alongside
+  `MetronomeEngine` and `MidiClockSender` - the same lifecycle pattern, for the same reason: a
+  USB MIDI connection is process state, not UI state. This is what makes the new starring
+  feature possible: `StarredMidiDevices` persists which connection(s) (follow, send, or both)
+  were active for a device, keyed by a stable vendor/product/serial identity
+  (`UsbMidiConnector.deviceKey()`) rather than `MidiDeviceInfo.id`, which the platform reassigns
+  on every reconnect. A `MidiManager.DeviceCallback` registered in `attach()` restores that state
+  automatically the instant a starred device reappears on the USB bus - including while Settings
+  is closed, which the old per-Settings-instance design couldn't do regardless of starring.

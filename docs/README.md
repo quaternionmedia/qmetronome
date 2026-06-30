@@ -42,9 +42,16 @@ and `adr/DRAFT-home-screen-widget-via-glance.md`.
 
 ## Release readiness
 
-- **[`publication_checklist.md`](publication_checklist.md)** — what's done,
-  what's deliberately deferred (and why), and what genuinely needs a human
-  (a real Nothing API key, final on-device sign-off) before this ships.
+- **[`publication_checklist.md`](publication_checklist.md)** — repo/code
+  readiness: what's done, what's deliberately deferred (and why), and what
+  genuinely needs a human (final on-device sign-off) before this ships.
+- **[`app-store-checklist.md`](app-store-checklist.md)** — the separate
+  question of actually publishing it: Google Play listing/signing
+  requirements, and an honest accounting of what's confirmed vs. genuinely
+  unverified about Nothing's distribution channel (there is no separate
+  Nothing app store and no separate submission process). See [`../PRIVACY.md`](../PRIVACY.md), drafted
+  because Play Console requires a privacy policy URL for every app
+  regardless of data collected.
 
 ## How `adr/` fits in
 

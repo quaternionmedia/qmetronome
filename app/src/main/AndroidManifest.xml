@@ -21,7 +21,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Qmetronome">
 
-        <!-- Nothing API key placeholder, required by the Glyph Matrix SDK -->
         <meta-data
             android:name="NothingKey"
             android:value="test" />

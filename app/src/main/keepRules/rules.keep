@@ -11,10 +11,9 @@
 #   public *;
 #}
 
-# Forward-looking only: release builds currently disable R8/optimization
-# entirely (see android.buildTypes.release.optimization in app/build.gradle.kts),
-# so nothing here is exercised yet. Kept anyway so enabling optimization later
-# doesn't silently break reflection-based dispatch.
+# R8 minification and shrinking are enabled for release builds
+# (isMinifyEnabled/isShrinkResources in app/build.gradle.kts) — these rules
+# are active and necessary.
 
 # The Glyph Matrix SDK (com.nothing.ketchum.*) is a closed third-party AAR -
 # keep it whole rather than risk obfuscating something the vendor's binary

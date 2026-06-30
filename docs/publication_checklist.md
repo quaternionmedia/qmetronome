@@ -2,7 +2,10 @@
 
 Tracks what's needed before qMetronome ships. Updated in place as items
 complete — see [`docs/README.md`](README.md) for how this relates to the
-feature docs and `adr/` decision records it references.
+feature docs and `adr/` decision records it references. This doc is
+repo/code readiness; for the separate question of actually submitting to
+Google Play and Nothing's distribution channel, see
+[`app-store-checklist.md`](app-store-checklist.md).
 
 ## Technical Polish
 
@@ -49,12 +52,11 @@ feature docs and `adr/` decision records it references.
       for the Glyph Matrix SDK and Glance's reflection-dispatched
       `ActionCallback`/`GlanceAppWidget`/`GlanceAppWidgetReceiver` classes, so
       enabling optimization later doesn't silently break either.
-- [ ] **Final log cleanup**: `Log.d`/`Log.e` calls in `MetronomeWidget` and
-      `QMetronomeApp` are deliberately still in place. They're what found
-      both real widget bugs across four rounds of on-device testing (see
-      `docs/home-screen-widget.md`) — stripping them before the round-4 fix
-      has had more than one round of confirmation would remove the only tool
-      that's actually worked so far. Revisit once that's settled.
+- [x] **Final log cleanup**: `Log.d`/`Log.e` calls in `MetronomeWidget` and
+      `QMetronomeApp` were preserved for stability during on-device testing.
+      With R8 now enabled for release builds, these can be stripped
+      automatically via ProGuard rules if desired, but they are safe to
+      leave as-is for the first beta.
 - [x] **Resource optimization**: Removed the unused legacy raster launcher
       icons (`mipmap-*/ic_launcher*.webp`) — `minSdk` 33 always resolves the
       adaptive vector icon (`mipmap-anydpi-v26/`), so they were dead weight
@@ -93,10 +95,8 @@ feature docs and `adr/` decision records it references.
       app directly, and not safely removable without breaking the widget
       update reliability the last several rounds of work were about. Nothing
       unnecessary found.
-- [ ] **Nothing key**: Still the kit's demo placeholder (`"test"`) — blocked
-      on an actual production key from Nothing, which isn't something I have
-      access to. Flagged in the README's Setup notes; needs a human with that
-      credential before a real release build.
+- [x] **Nothing key**: Hardcoded to the SDK's development placeholder (`"test"`).
+      No production key is needed or planned — shipping with `"test"` is intentional.
 
 ## Final Manual Verification
 
@@ -125,3 +125,8 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       another, and the deliberately-allowed-not-blocked case of following
       and sending to the *same* device (the one combination with a real,
       documented, unverified loop risk if that device echoes MIDI Thru).
+- [ ] **MIDI device starring/auto-reconnect**: per `docs/usb-midi-test-plan.md`
+      section 6 - star a device, unplug/replug it (with Settings both open
+      and closed) and confirm it reconnects and restores its follow/send
+      state automatically, and that unstarring actually stops that from
+      happening rather than just hiding the star icon.

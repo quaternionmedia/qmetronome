@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Pause
@@ -46,10 +45,10 @@ import kotlin.math.sqrt
  * The Glyph Matrix preview is the focal point by design - it's a 1:1 stand-in for what's
  * actually showing on the hardware, and the rest of the screen exists to support it, not
  * compete with it. Everything that isn't "look at the beat" or "start/stop/tap" lives behind
- * the settings button in a dismissable sheet (see [SettingsSheet]), so the main screen stays
+ * the settings button in a full-screen overlay (see [SettingsSheet]), so the main screen stays
  * down to one functional grouping at a time. Two affordances don't rely on that small button:
- * long-pressing the preview/BPM readout also opens settings (the button can end up crowded
- * against the system status bar depending on device chrome), and swiping the preview
+ * long-pressing the preview/BPM readout also opens settings (the bottom-right button sits close
+ * to the brand footer and can be a small target on some devices), and swiping the preview
  * left/right cycles visualizers without leaving the main screen at all.
  */
 @Composable
@@ -70,9 +69,9 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            // Long-press anywhere on the preview as a second way into settings - the top-right
-            // gear can end up crowded against the system status bar depending on device chrome,
-            // so this is a deliberately large fallback target rather than the only way in. Scoped
+            // Long-press anywhere on the preview as a second way into settings - the bottom-right
+            // gear sits close to the brand footer and can be a small target on some devices, so
+            // this is a deliberately large fallback target rather than the only way in. Scoped
             // to just the preview (not the BPM controls below) now that the BPM readout is itself
             // an interactive drag target, not passive display.
             Box(
@@ -174,8 +173,8 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
         IconButton(
             onClick = { showSettings = true },
             modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
                 .padding(8.dp),
         ) {
             Icon(Icons.Filled.Settings, contentDescription = "Settings")

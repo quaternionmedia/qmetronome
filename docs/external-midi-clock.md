@@ -122,6 +122,18 @@ text when both point at the same device instead of guessing. This specific combi
 part of clock-out I can't verify without real hardware that has a Thru setting to test against -
 see [`docs/usb-midi-test-plan.md`](usb-midi-test-plan.md).
 
+`UsbMidiConnector` is a process-wide singleton (`attach()`'d from `QMetronomeApp.onCreate()`,
+same pattern as `MetronomeEngine`/`MidiClockSender`), not an object scoped to the settings
+screen - it used to be a plain class created via `remember` inside `SettingsSheet`, which meant
+every connection was lost the moment settings closed and reopened. The singleton conversion is
+what makes starring possible: `StarredMidiDevices` persists a stable per-device key
+(vendor ID + product ID + serial number, falling back to display name -
+`UsbMidiConnector.deviceKey()`, since `MidiDeviceInfo.id` is reassigned on every reconnect) plus
+the desired follow/send state, and a `MidiManager.DeviceCallback` registered in `attach()` calls
+back into `connectForFollowing()`/`connectForSending()` the instant a starred device's
+`onDeviceAdded` fires - regardless of whether Settings is open. Unstarring forgets the saved
+follow/send state so a later re-star starts clean.
+
 ## Routing & extensibility: adding a new transport
 
 `MidiClockSource` doesn't care which transport bytes arrive from - it exposes

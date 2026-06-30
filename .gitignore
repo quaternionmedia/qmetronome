@@ -1,4 +1,10 @@
 *.iml
+# Local signing secrets
+keystore.properties
+*.jks
+*.keystore
+
+# Built-in ignores
 .gradle
 /local.properties
 /.idea/caches

@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -5,26 +7,48 @@ plugins {
 
 android {
     namespace = "media.quaternion.qmetronome"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
+    compileSdk = 35
+
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    val keystoreProperties = Properties()
+    if (keystorePropertiesFile.exists()) {
+        val stream = keystorePropertiesFile.inputStream()
+        keystoreProperties.load(stream)
+        stream.close()
     }
 
     defaultConfig {
         applicationId = "media.quaternion.qmetronome"
         minSdk = 33
-        targetSdk = 36
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
-            optimization {
-                enable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // Custom keep rules live in src/main/keepRules/*.keep (AGP auto-discovers and merges
+            // these regardless of proguardFiles()) - that's where the Glyph SDK and Glance
+            // ActionCallback/GlanceAppWidget rules already are, so there's no separate
+            // proguard-rules.pro to maintain in parallel.
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
     }

@@ -4,7 +4,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -94,5 +96,53 @@ class MidiClockSourceTest {
     @Test
     fun `measured bpm is null until at least two ticks have established an interval`() {
         assertNull(lastMeasuredBpm)
+    }
+
+    @Test
+    fun `onTransportStart fires when START arrives from the active source`() {
+        var transportStarted = false
+        MidiClockSource.onTransportStart = { transportStarted = true }
+        MidiClockSource.receiverFor(MidiClockSource.Source.USB)
+            .send(byteArrayOf(0xFA.toByte()), 0, 1, 0L)
+        assertTrue(transportStarted)
+    }
+
+    @Test
+    fun `onTransportStart fires on CONTINUE as well as START`() {
+        var transportStarted = false
+        MidiClockSource.onTransportStart = { transportStarted = true }
+        MidiClockSource.receiverFor(MidiClockSource.Source.USB)
+            .send(byteArrayOf(0xFB.toByte()), 0, 1, 0L)
+        assertTrue(transportStarted)
+    }
+
+    @Test
+    fun `onTransportStop fires when STOP arrives from the active source`() {
+        var transportStopped = false
+        MidiClockSource.onTransportStop = { transportStopped = true }
+        MidiClockSource.receiverFor(MidiClockSource.Source.USB)
+            .send(byteArrayOf(0xFC.toByte()), 0, 1, 0L)
+        assertTrue(transportStopped)
+    }
+
+    @Test
+    fun `transport commands from a non-active source are ignored`() {
+        sendTicks(MidiClockSource.Source.VIRTUAL, 1)
+        assertEquals(MidiClockSource.Source.VIRTUAL, MidiClockSource.activeSource)
+
+        var transportStarted = false
+        MidiClockSource.onTransportStart = { transportStarted = true }
+        MidiClockSource.receiverFor(MidiClockSource.Source.USB)
+            .send(byteArrayOf(0xFA.toByte()), 0, 1, 0L)
+        assertFalse(transportStarted)
+    }
+
+    @Test
+    fun `measured bpm is accurate for a known tick interval`() {
+        // 120 BPM = 500ms per beat = 20,833,333 ns per tick at 24 PPQN.
+        // Start at one step-width so tick 0's timestamp is non-zero and tick 1
+        // records the first real interval.
+        sendTicks(MidiClockSource.Source.USB, 48, startNanos = 20_833_333L, stepNanos = 20_833_333L)
+        assertEquals(120f, lastMeasuredBpm ?: 0f, 5f)
     }
 }

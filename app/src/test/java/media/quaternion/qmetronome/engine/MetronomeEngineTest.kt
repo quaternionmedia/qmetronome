@@ -1,5 +1,6 @@
 package media.quaternion.qmetronome.engine
 
+import media.quaternion.qmetronome.midi.MidiClockSource
 import media.quaternion.qmetronome.visualizers.GlyphVisualizer
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -111,5 +112,33 @@ class MetronomeEngineTest {
         MetronomeEngine.tapTempo(nowNanos = 1_000_000_000L)
         MetronomeEngine.tapTempo(nowNanos = 6_000_000_000L) // 5s gap, over the 2s timeout
         assertFalse(MetronomeEngine.state.value.isPlaying)
+    }
+
+    @Test
+    fun `engine auto-switches to midi clock on first external tick`() {
+        assertEquals(MetronomeEngine.ClockStatus.Internal, MetronomeEngine.clockStatus.value)
+
+        MidiClockSource.receiverFor(MidiClockSource.Source.VIRTUAL)
+            .send(byteArrayOf(0xF8.toByte()), 0, 1, System.nanoTime())
+
+        assertTrue(MetronomeEngine.clockStatus.value is MetronomeEngine.ClockStatus.Midi)
+    }
+
+    @Test
+    fun `engine bpm follows measured midi clock tempo`() {
+        MetronomeEngine.useMidiClock()
+        MetronomeEngine.start()
+
+        // Send 48 ticks at 120 BPM timing (20,833,333 ns per tick at 24 PPQN = 2 full beats).
+        // Start one step-width in so tick 0 has a non-zero timestamp and tick 1 records the
+        // first real interval.
+        val receiver = MidiClockSource.receiverFor(MidiClockSource.Source.USB)
+        val message = byteArrayOf(0xF8.toByte())
+        val stepNanos = 20_833_333L
+        for (i in 1..48) {
+            receiver.send(message, 0, 1, i.toLong() * stepNanos)
+        }
+
+        assertEquals(120f, MetronomeEngine.state.value.bpm, 5f)
     }
 }

@@ -23,10 +23,14 @@ decision records live in [`adr/`](adr/README.md).
   `res/xml/midi_device_info.xml`). Going the other way, `MidiClockSender` generates clock from
   `MetronomeEngine.state` and writes it to a registered set of destinations. `UsbMidiConnector`
   is the USB side of both directions - `connectForFollowing()`/`connectForSending()` are
-  independent, so a device can be followed, sent to, both, or neither. See
+  independent, so a device can be followed, sent to, both, or neither. It's a process-wide
+  singleton like `MetronomeEngine`/`MidiClockSender`, which is what lets `StarredMidiDevices`
+  work: starring a device persists which connection(s) were active for it, and a
+  `MidiManager.DeviceCallback` registered at app startup restores them automatically the moment
+  that device reappears on the USB bus, whether or not Settings is open. See
   [`docs/external-midi-clock.md`](docs/external-midi-clock.md) for the design rationale and
   [`docs/usb-midi-test-plan.md`](docs/usb-midi-test-plan.md) for how to verify either USB
-  direction against real hardware.
+  direction (including starring/auto-reconnect) against real hardware.
 - `engine/ClickPlayer` — the audible click (`ToneGenerator`), so this also works as a real
   metronome for practicing/performing musicians, with or without the Glyph Matrix.
 - `visualizers/` — the animation algorithms. See below.
@@ -36,11 +40,12 @@ decision records live in [`adr/`](adr/README.md).
   and cycles visualizers on long-press.
 - `ui/` — Compose UI. `MainScreen` keeps the Glyph Matrix preview as the dominant, focal
   element with only tempo/tap/play-stop alongside it; everything else (beats-per-bar, click
-  toggle, visualizer picker, MIDI clock status/USB connection/clock-out) lives in the dismissable
-  `SettingsSheet` rather than competing for attention on the main screen. The settings button
-  isn't the only way in: long-pressing the preview also opens settings (useful since the button
-  can end up crowded against the system status bar on some devices), and swiping the preview
-  left/right cycles visualizers without leaving the main screen. Tempo has three input methods
+  toggle, visualizer picker, MIDI clock status/USB connection/clock-out) lives behind the
+  bottom-right settings button in `SettingsSheet`, a full-screen translucent overlay (not a
+  half-open bottom sheet) so the matrix preview's flashes still glow through dimly behind it.
+  The settings button isn't the only way in: long-pressing the preview also opens settings, and
+  swiping the preview left/right cycles visualizers without leaving the main screen. Tempo has
+  three input methods
   layered for different precision needs: tap-tempo, `HoldRepeatButton` step controls either side
   of the BPM number (tap for ±1, hold for a geometrically-accelerating repeat - see its kdoc for
   why the click callback is intentionally a no-op), and dragging the BPM number itself
@@ -131,8 +136,6 @@ for why.
 - The Glyph Toy preview icon (`drawable/toy_preview.xml`) is a placeholder pixel-grid icon
   matching the kit's preview style — replace with real artwork before shipping, following the
   spec images in the Developer Kit (`23112_spec.svg` / `25111_spec.svg`).
-- `NothingKey` meta-data is set to the kit's demo placeholder (`"test"`); replace with a real
-  key if Nothing requires one for distribution.
 
 ## Testing
 
@@ -178,6 +181,12 @@ under its own terms (see [`adr/DRAFT-glyph-matrix-sdk-dependency.md`](adr/DRAFT-
 for why that dependency exists and how it's isolated). Third-party
 dependencies pulled in via Gradle (AndroidX, Kotlin, Robolectric, etc.) remain
 under their own licenses, not relicensed by this project's MIT grant.
+
+The app's privacy policy is [`PRIVACY.md`](PRIVACY.md) — short version: no data
+collection, no analytics, no network calls, settings stay on-device. See
+[`docs/app-store-checklist.md`](docs/app-store-checklist.md) for what's left
+before this can actually be submitted to Google Play and what's confirmed
+vs. genuinely unverified about Nothing's distribution channel.
 
 ## Known limitations / next steps
 

@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.glance.appwidget.updateAll
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.midi.MidiClockSender
+import media.quaternion.qmetronome.midi.UsbMidiConnector
 import media.quaternion.qmetronome.widget.MetronomeWidget
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +22,7 @@ class QMetronomeApp : Application() {
         super.onCreate()
         MetronomeEngine.attach(this)
         MidiClockSender.attach(this)
+        UsbMidiConnector.attach(this)
 
         // Push a widget update only when displayed bpm or play state actually changes - not on
         // every render-loop tick. The engine's state flow emits a new phase ~40 times a second

@@ -91,4 +91,16 @@ class MidiClockSenderTest {
 
         assertTrue(receivedBytes.isEmpty())
     }
+
+    @Test
+    fun `clock tick rate approximately matches configured bpm`() {
+        // At 240 BPM: 24 ticks/beat × 4 beats/sec = 96 ticks/sec → ~48 ticks in 500ms.
+        MidiClockSender.setEnabled(true)
+        MetronomeEngine.setBpm(240f)
+        MetronomeEngine.start()
+        Thread.sleep(500)
+
+        val tickCount = receivedBytes.count { it == 0xF8 }
+        assertTrue("expected ~48 ticks at 240 BPM in 500ms, got $tickCount", tickCount in 40..56)
+    }
 }

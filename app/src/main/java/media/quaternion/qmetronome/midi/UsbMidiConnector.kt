@@ -1,6 +1,7 @@
 package media.quaternion.qmetronome.midi
 
 import android.content.Context
+import android.hardware.usb.UsbDevice
 import android.media.midi.MidiDevice
 import android.media.midi.MidiDeviceInfo
 import android.media.midi.MidiInputPort
@@ -26,15 +27,23 @@ import kotlinx.coroutines.flow.asStateFlow
  * output - a device setting, not something this app can detect, so the UI surfaces it as a
  * heads-up rather than silently allowing or blocking it. This combination isn't something I can
  * verify without real hardware in hand - see `docs/usb-midi-test-plan.md`.
+ *
+ * A process-wide singleton, not scoped to the settings UI - [attach] registers a
+ * [MidiManager.DeviceCallback] so a starred device (see [StarredMidiDevices]) reconnects and
+ * restores its last follow/send state the moment it reappears on the bus, even while Settings
+ * isn't open.
  */
-class UsbMidiConnector(context: Context) {
+object UsbMidiConnector {
 
-    private val midiManager = context.getSystemService(MidiManager::class.java)
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private var midiManager: MidiManager? = null
+    private var starredDevices: StarredMidiDevices? = null
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     private var followingDevice: MidiDevice? = null
+    private var followingDeviceInfo: MidiDeviceInfo? = null
     private var sendingDevice: MidiDevice? = null
     private var sendingPort: MidiInputPort? = null
+    private var sendingDeviceInfo: MidiDeviceInfo? = null
 
     private val _availableDevices = MutableStateFlow<List<MidiDeviceInfo>>(emptyList())
     val availableDevices: StateFlow<List<MidiDeviceInfo>> = _availableDevices.asStateFlow()
@@ -48,11 +57,91 @@ class UsbMidiConnector(context: Context) {
     private val _sendingDeviceId = MutableStateFlow<Int?>(null)
     val sendingDeviceId: StateFlow<Int?> = _sendingDeviceId.asStateFlow()
 
+    private val _starredDeviceKeys = MutableStateFlow<Set<String>>(emptySet())
+    val starredDeviceKeys: StateFlow<Set<String>> = _starredDeviceKeys.asStateFlow()
+
+    private val deviceCallback = object : MidiManager.DeviceCallback() {
+        override fun onDeviceAdded(device: MidiDeviceInfo) {
+            refreshDevices()
+            maybeAutoReconnect(device)
+        }
+
+        override fun onDeviceRemoved(device: MidiDeviceInfo) {
+            refreshDevices()
+            if (device.id == followingDeviceInfo?.id) {
+                followingDevice = null
+                followingDeviceInfo = null
+                _followingDeviceId.value = null
+            }
+            if (device.id == sendingDeviceInfo?.id) {
+                sendingPort = null
+                sendingDevice = null
+                sendingDeviceInfo = null
+                _sendingDeviceId.value = null
+            }
+        }
+    }
+
+    /** Wires up discovery and starred-device auto-reconnect. Safe to call more than once. */
+    fun attach(context: Context) {
+        if (midiManager != null) return
+        val manager = context.applicationContext.getSystemService(MidiManager::class.java) ?: return
+        midiManager = manager
+        starredDevices = StarredMidiDevices(context.applicationContext)
+        _starredDeviceKeys.value = starredDevices?.starredKeys().orEmpty()
+        manager.registerDeviceCallback(deviceCallback, mainHandler)
+        refreshDevices()
+        // registerDeviceCallback doesn't replay devices that were already connected before this
+        // call - catch any starred device that was already plugged in when the app started.
+        _availableDevices.value.forEach(::maybeAutoReconnect)
+    }
+
     fun refreshDevices() {
         _availableDevices.value = midiManager
             ?.getDevicesForTransport(MidiManager.TRANSPORT_MIDI_BYTE_STREAM)
             ?.filter { it.type == MidiDeviceInfo.TYPE_USB }
             .orEmpty()
+    }
+
+    /** A stable identity for a device that survives reconnects, unlike [MidiDeviceInfo.id], which
+     * the system reassigns every time a device is opened. Vendor/product IDs live on the
+     * [UsbDevice] parcelable exposed via [MidiDeviceInfo.PROPERTY_USB_DEVICE] - `MidiDeviceInfo`
+     * itself has no vendor/product ID properties of its own. */
+    fun deviceKey(info: MidiDeviceInfo): String {
+        val properties = info.properties
+        val usbDevice = properties.getParcelable(MidiDeviceInfo.PROPERTY_USB_DEVICE, UsbDevice::class.java)
+        val vendorId = usbDevice?.vendorId ?: -1
+        val productId = usbDevice?.productId ?: -1
+        val serial = properties.getString(MidiDeviceInfo.PROPERTY_SERIAL_NUMBER)
+        return deviceKey(vendorId, productId, serial ?: displayName(info))
+    }
+
+    fun deviceKey(vendorId: Int, productId: Int, serialOrName: String): String =
+        "$vendorId:$productId:$serialOrName"
+
+    fun isStarred(info: MidiDeviceInfo): Boolean = starredDevices?.isStarred(deviceKey(info)) == true
+
+    /** Stars or unstars a device. Starring captures whichever connection(s) are active right now
+     * as what gets automatically restored next time it reappears; unstarring forgets that state. */
+    fun toggleStar(info: MidiDeviceInfo) {
+        val store = starredDevices ?: return
+        val key = deviceKey(info)
+        val starred = !store.isStarred(key)
+        store.setStarred(key, starred)
+        if (starred) {
+            store.setDesiredFollow(key, info.id == _followingDeviceId.value)
+            store.setDesiredSend(key, info.id == _sendingDeviceId.value)
+        }
+        _starredDeviceKeys.value = store.starredKeys()
+    }
+
+    private fun maybeAutoReconnect(info: MidiDeviceInfo) {
+        val store = starredDevices ?: return
+        if (info.type != MidiDeviceInfo.TYPE_USB) return
+        val key = deviceKey(info)
+        if (!store.isStarred(key)) return
+        if (store.desiredFollow(key) && info.id != _followingDeviceId.value) connectForFollowing(info)
+        if (store.desiredSend(key) && info.id != _sendingDeviceId.value) connectForSending(info)
     }
 
     /** Follows this device's clock - its output port feeds [MidiClockSource]. */
@@ -68,13 +157,17 @@ class UsbMidiConnector(context: Context) {
             outputPort.connect(MidiClockSource.receiverFor(MidiClockSource.Source.USB))
             closeQuietly(followingDevice)
             followingDevice = device
+            followingDeviceInfo = deviceInfo
             _followingDeviceId.value = deviceInfo.id
+            persistDesiredState(deviceInfo, following = true)
         }, mainHandler)
     }
 
     fun disconnectFollowing() {
+        followingDeviceInfo?.let { persistDesiredState(it, following = false) }
         closeQuietly(followingDevice)
         followingDevice = null
+        followingDeviceInfo = null
         _followingDeviceId.value = null
     }
 
@@ -92,16 +185,28 @@ class UsbMidiConnector(context: Context) {
             MidiClockSender.addDestination(inputPort)
             sendingPort = inputPort
             sendingDevice = device
+            sendingDeviceInfo = deviceInfo
             _sendingDeviceId.value = deviceInfo.id
+            persistDesiredState(deviceInfo, sending = true)
         }, mainHandler)
     }
 
     fun disconnectSending() {
+        sendingDeviceInfo?.let { persistDesiredState(it, sending = false) }
         sendingPort?.let { MidiClockSender.removeDestination(it) }
         sendingPort = null
         closeQuietly(sendingDevice)
         sendingDevice = null
+        sendingDeviceInfo = null
         _sendingDeviceId.value = null
+    }
+
+    private fun persistDesiredState(info: MidiDeviceInfo, following: Boolean? = null, sending: Boolean? = null) {
+        val store = starredDevices ?: return
+        val key = deviceKey(info)
+        if (!store.isStarred(key)) return
+        following?.let { store.setDesiredFollow(key, it) }
+        sending?.let { store.setDesiredSend(key, it) }
     }
 
     fun displayName(info: MidiDeviceInfo): String {
@@ -121,7 +226,5 @@ class UsbMidiConnector(context: Context) {
         }
     }
 
-    private companion object {
-        const val TAG = "UsbMidiConnector"
-    }
+    private const val TAG = "UsbMidiConnector"
 }

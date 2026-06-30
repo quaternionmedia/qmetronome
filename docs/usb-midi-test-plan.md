@@ -140,3 +140,33 @@ MIDI Thru/echo setting, sending it clock while also reading its output could cre
 
 Whatever you find, send me the device name/model and what step it broke at — that's the
 real-world data the original feasibility doc flagged as unverifiable without hardware in hand.
+
+## 6. Starring a device for auto-reconnect
+
+This is the other thing that's never run against real hardware - the auto-reconnect logic
+compiles and is unit-tested at the pure-key-generation level (`UsbMidiConnectorTest`), but the
+actual hotplug callback (`MidiManager.DeviceCallback.onDeviceAdded`) and `openDevice()` reconnect
+flow need a real unplug/replug to verify.
+
+1. Scan and "Follow" (or "Send to") a device as in section 2 or 5.
+2. Tap the star icon next to that device's name. It should switch to filled and show "Starred -
+   will auto-reconnect..." underneath.
+3. Unplug the device. The "Follow"/"Send to" button for it should clear back to its default
+   state (or the row disappear entirely, depending on whether you also re-scan).
+4. Plug the device back in **without** tapping "Scan USB MIDI" or "Follow" again. Within a
+   second or two it should reappear in the list already connected (the Follow/Send button should
+   read "Stop following"/"Stop sending"), and the "Clock" status line should resume showing a
+   measured BPM if you were following it - all without touching Settings.
+5. Repeat with Settings closed entirely after step 2 (back out, then unplug/replug) - the
+   reconnect is driven by `UsbMidiConnector.attach()`'s app-wide callback, not anything the
+   Settings screen itself sets up, so it should behave identically with Settings closed.
+6. Tap the star again to unstar, then unplug/replug once more - it should **not** auto-reconnect
+   this time, confirming the desired state is actually being forgotten on unstar, not just
+   hidden in the UI.
+
+If reconnect doesn't happen automatically, logcat for `MidiManager` (`onDeviceAdded` firing at
+all is the first thing to confirm) and for `UsbMidiConnector` would point at whether the callback
+never fired, fired but didn't recognize the device as starred (worth checking whether the
+device's `PROPERTY_SERIAL_NUMBER` is null/empty and it's falling back to display name - two
+identical-model devices with no serial would then collide on the same key), or fired and tried to
+reconnect but `openDevice()` failed.
