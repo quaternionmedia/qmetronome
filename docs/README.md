@@ -2,9 +2,11 @@
 
 What's in here, in the order you'd actually want to read it, and how it
 relates to `adr/`. The main [`README.md`](../README.md) is the entry point
-for architecture/setup/testing; this directory is feasibility investigations,
-test plans, and the project's relationship to the org's decision-record
-discipline - the *why* and *how to verify*, not the *what*.
+for architecture/setup/testing; [`CONTRIBUTING.md`](../CONTRIBUTING.md)
+covers getting a build running (with and without Android Studio) and the
+contribution norms; this directory is feasibility investigations, test plans,
+and the project's relationship to the org's decision-record discipline -
+the *why* and *how to verify*, not the *what*.
 
 ## Feature docs (feasibility → implementation → test plan, per feature)
 

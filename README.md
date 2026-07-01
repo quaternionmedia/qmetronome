@@ -3,8 +3,10 @@
 A tempo/beat visualizer and functional metronome for Nothing phones with a Glyph Matrix
 (Phone (3), Phone (4a) Pro), built on the [Glyph Matrix Developer Kit](https://github.com/Nothing-Developer-Programme/GlyphMatrix-Developer-Kit).
 
-This file is architecture/setup/testing. Feasibility investigations, manual
-test plans, and release readiness live in [`docs/`](docs/README.md);
+This file is architecture/setup/testing. New contributors should start with
+[`CONTRIBUTING.md`](CONTRIBUTING.md) — it covers building with and without
+Android Studio, the project layout, and PR norms. Feasibility investigations,
+manual test plans, and release readiness live in [`docs/`](docs/README.md);
 decision records live in [`adr/`](adr/README.md).
 
 ## Architecture
