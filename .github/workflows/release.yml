@@ -1,0 +1,115 @@
+name: Release
+
+# Fires when a version tag is pushed: git tag v1.2.3 && git push --tags
+# Produces a signed APK (sideload / GitHub Releases) and a signed AAB (Play Store),
+# then creates a GitHub Release with both attached and auto-generated release notes.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   KEYSTORE_BASE64    — base64 encoding of the upload .jks file
+#                        (run: base64 -w 0 qmetronome-upload-key.jks)
+#   KEYSTORE_PASSWORD  — keystore/store password
+#   KEY_ALIAS          — key alias (default: qmetronome-upload, from generate-release-key.bat)
+#   KEY_PASSWORD       — key password
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write   # needed to create the GitHub Release and upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: gradle/actions/wrapper-validation@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # ── Version ──────────────────────────────────────────────────────────
+      # Derive versionName and versionCode from the tag (e.g. v1.2.3 → 10203).
+      # versionCode uses major×10000 + minor×100 + patch, which keeps it strictly
+      # increasing as long as no component exceeds 99 — plenty of headroom.
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NAME="${TAG#v}"
+          MAJOR=$(echo "$NAME" | cut -d. -f1)
+          MINOR=$(echo "$NAME" | cut -d. -f2)
+          PATCH=$(echo "$NAME" | cut -d. -f3)
+          CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
+          echo "name=$NAME"   >> "$GITHUB_OUTPUT"
+          echo "code=$CODE"   >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+
+      # ── Signing ──────────────────────────────────────────────────────────
+      # Decode the base64 keystore and write keystore.properties so the existing
+      # build.gradle.kts signing config picks it up without modification.
+      # Secrets are passed via env, never interpolated directly in YAML strings.
+      - name: Write signing credentials
+        env:
+          KEYSTORE_BASE64:   ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS:         ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD:      ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > qmetronome-upload-key.jks
+          if [ ! -s qmetronome-upload-key.jks ]; then
+            echo "ERROR: KEYSTORE_BASE64 secret is empty or unset — cannot produce a signed build."
+            echo "See .github/workflows/release.yml for the required secrets."
+            exit 1
+          fi
+          printf 'storeFile=../qmetronome-upload-key.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
+
+      # ── Glyph SDK isolation (same check as CI) ────────────────────────────
+      - name: Glyph SDK import boundary
+        run: |
+          offending=$(grep -rl "import com\.nothing\.ketchum" app/src/main/java --include="*.kt" | grep -v "/glyph/" || true)
+          if [ -n "$offending" ]; then
+            echo "com.nothing.ketchum must only be imported under .../glyph/ — found it in:"
+            echo "$offending"
+            exit 1
+          fi
+
+      # ── Tests ────────────────────────────────────────────────────────────
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --console=plain
+
+      # ── Build ─────────────────────────────────────────────────────────────
+      # Both tasks read versionCode/versionName from -P flags; signing config
+      # is satisfied by the keystore.properties written above.
+      - name: Build signed release APK
+        run: |
+          ./gradlew assembleRelease \
+            -PversionCode=${{ steps.version.outputs.code }} \
+            -PversionName=${{ steps.version.outputs.name }} \
+            --console=plain
+
+      - name: Build signed release AAB
+        run: |
+          ./gradlew bundleRelease \
+            -PversionCode=${{ steps.version.outputs.code }} \
+            -PversionName=${{ steps.version.outputs.name }} \
+            --console=plain
+
+      # ── GitHub Release ────────────────────────────────────────────────────
+      # generate_release_notes pulls commit messages since the previous tag;
+      # edit the release on GitHub afterwards if you want a hand-written summary.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: qMetronome ${{ steps.version.outputs.name }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/bundle/release/app-release.aab

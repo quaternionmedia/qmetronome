@@ -21,8 +21,10 @@ android {
         applicationId = "media.quaternion.qmetronome"
         minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // When building a release from CI the tag-derived values are injected via -PversionCode
+        // and -PversionName; local and debug builds fall back to these defaults.
+        versionCode = project.findProperty("versionCode")?.toString()?.toIntOrNull() ?: 1
+        versionName = project.findProperty("versionName")?.toString() ?: "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
