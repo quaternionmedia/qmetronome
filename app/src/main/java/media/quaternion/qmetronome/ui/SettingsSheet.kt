@@ -29,11 +29,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -64,6 +68,8 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     val clockStatus by MetronomeEngine.clockStatus.collectAsState()
     val clickEnabled by MetronomeEngine.clickEnabled.collectAsState()
     val clockOutEnabled by MidiClockSender.enabled.collectAsState()
+    val visualOffsetMs by MetronomeEngine.visualOffsetMs.collectAsState()
+    val compactLandscape by MetronomeEngine.compactLandscape.collectAsState()
 
     val usbDevices by UsbMidiConnector.availableDevices.collectAsState()
     val followingUsbDeviceId by UsbMidiConnector.followingDeviceId.collectAsState()
@@ -131,6 +137,33 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                             label = { Text(candidate.displayName) },
                         )
                     }
+                }
+            }
+
+            HorizontalDivider()
+
+            SettingsSection(title = "Visual timing offset") {
+                VisualOffsetControls(
+                    offsetMs = visualOffsetMs,
+                    bpm = beat.bpm,
+                    onOffsetChanged = MetronomeEngine::setVisualOffsetMs,
+                )
+            }
+
+            HorizontalDivider()
+
+            SettingsSection(title = "Layout") {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Compact landscape layout", style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = compactLandscape, onCheckedChange = MetronomeEngine::setCompactLandscape)
+                    }
+                    Text(
+                        text = "When on, landscape mode fits the preview and controls side-by-side " +
+                            "within the screen instead of overflowing. Off keeps the full-size aesthetic.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
                 }
             }
 
@@ -241,6 +274,58 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     }
 }
 
+// ── Visual timing offset ───────────────────────────────────────────────────
+
+private enum class OffsetUnit(val label: String) {
+    Ms("ms"),
+    Frames("frames @40fps"),
+    BeatPct("beat %"),
+}
+
+@Composable
+private fun VisualOffsetControls(offsetMs: Float, bpm: Float, onOffsetChanged: (Float) -> Unit) {
+    var unit by remember { mutableStateOf(OffsetUnit.Ms) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OffsetUnit.entries.forEach { u ->
+                FilterChip(
+                    selected = unit == u,
+                    onClick = { unit = u },
+                    label = { Text(u.label) },
+                )
+            }
+        }
+
+        Slider(
+            value = offsetMs,
+            onValueChange = onOffsetChanged,
+            valueRange = -500f..500f,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        val displayValue = when (unit) {
+            OffsetUnit.Ms -> "${offsetMs.roundToInt()} ms"
+            OffsetUnit.Frames -> "${"%.1f".format(offsetMs / FRAME_MS)} frames"
+            OffsetUnit.BeatPct -> "${"%.1f".format(offsetMs / (60_000f / bpm) * 100)} % of beat"
+        }
+        Text(displayValue, style = MaterialTheme.typography.bodyMedium)
+
+        Text(
+            text = "Shifts visuals earlier (negative) or later (positive) relative to the beat timestamp. " +
+                "Use negative values to compensate for display latency — if the flash feels late, drag left. " +
+                "Reset to 0 ms if in doubt.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.secondary,
+        )
+    }
+}
+
+// ── Shared helpers ─────────────────────────────────────────────────────────
+
 @Composable
 private fun SettingsSection(title: String, content: @Composable () -> Unit) {
     Column(modifier = Modifier.padding(vertical = 16.dp)) {
@@ -249,3 +334,5 @@ private fun SettingsSection(title: String, content: @Composable () -> Unit) {
         content()
     }
 }
+
+private const val FRAME_MS = 25f

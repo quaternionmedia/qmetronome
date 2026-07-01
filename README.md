@@ -40,20 +40,24 @@ decision records live in [`adr/`](adr/README.md).
   and cycles visualizers on long-press.
 - `ui/` — Compose UI. `MainScreen` keeps the Glyph Matrix preview as the dominant, focal
   element with only tempo/tap/play-stop alongside it; everything else (beats-per-bar, click
-  toggle, visualizer picker, MIDI clock status/USB connection/clock-out) lives behind the
-  bottom-right settings button in `SettingsSheet`, a full-screen translucent overlay (not a
-  half-open bottom sheet) so the matrix preview's flashes still glow through dimly behind it.
-  The settings button isn't the only way in: long-pressing the preview also opens settings, and
-  swiping the preview left/right cycles visualizers without leaving the main screen. Tempo has
-  three input methods
-  layered for different precision needs: tap-tempo, `HoldRepeatButton` step controls either side
-  of the BPM number (tap for ±1, hold for a geometrically-accelerating repeat - see its kdoc for
-  why the click callback is intentionally a no-op), and dragging the BPM number itself
-  left/right for continuous fine adjustment. `MatrixPreview` renders the exact same frames as the
-  real hardware, so visualizers can be developed and demoed without a physical Nothing device.
-  The theme (`ui/theme/`) is strictly monochrome — black/white only, matching the Glyph Matrix
-  and Nothing's own design language — with one deliberate exception: a navy accent (`QmNavy`)
-  reserved for the small Quaternion Media credit mark (`BrandFooter`) and nothing else.
+  toggle, visualizer picker, visual timing offset, MIDI clock status/USB connection/clock-out)
+  lives behind the bottom-right settings button in `SettingsSheet`, a full-screen translucent
+  overlay (not a half-open bottom sheet) so the matrix preview's flashes still glow through
+  dimly behind it. The preview shows a dim ghost of the current visualizer at rest even when the
+  metronome is stopped (6% brightness idle frame), so the AMOLED screen never looks fully off.
+  The settings button isn't the only way in: long-pressing the preview also opens settings;
+  double-tapping the preview toggles play/stop; swiping left/right cycles visualizers; and
+  long-pressing the BPM number opens a direct-entry dialog (range 1–400 BPM). Tempo has four
+  input methods: tap-tempo, `HoldRepeatButton` step controls either side of the BPM number
+  (tap for ±1, hold for a geometrically-accelerating repeat), dragging the BPM number left/right
+  for continuous fine adjustment, and a `HoldButton` that queues BPM changes while held and
+  snaps them into effect on release — useful for live cue changes. Settings → Layout → "Compact
+  landscape layout" switches from the default full-size-overflow aesthetic to a side-by-side
+  preview+controls arrangement that fits in landscape without clipping. `MatrixPreview` renders
+  the exact same frames as the real hardware, so visualizers can be developed and demoed without
+  a physical Nothing device. The theme (`ui/theme/`) is strictly monochrome — black/white only,
+  matching the Glyph Matrix and Nothing's own design language — with one deliberate exception: a
+  navy accent (`QmNavy`) reserved for the small Quaternion Media credit mark (`BrandFooter`).
 - `widget/MetronomeWidget` — a home screen widget (Jetpack Glance), BPM + play/stop only.
   Updates are event-driven, not polled: `QMetronomeApp` collects `MetronomeEngine.state`,
   filters it down to just `(bpm, isPlaying)` with `distinctUntilChanged()`, and calls

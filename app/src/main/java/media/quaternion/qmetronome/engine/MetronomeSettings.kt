@@ -29,6 +29,18 @@ class MetronomeSettings(context: Context) {
         get() = prefs.getBoolean(KEY_CLOCK_OUT_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_CLOCK_OUT_ENABLED, value).apply()
 
+    /** How many milliseconds to shift the visual phase ahead of (negative) or behind (positive)
+     * the beat timestamp - lets performers compensate for display latency by feel or measurement. */
+    var visualOffsetMs: Float
+        get() = prefs.getFloat(KEY_VISUAL_OFFSET_MS, 0f)
+        set(value) = prefs.edit().putFloat(KEY_VISUAL_OFFSET_MS, value).apply()
+
+    /** When true and the device is in landscape, the main screen switches to a side-by-side
+     * preview+controls layout that fits within the screen height instead of overflowing. */
+    var compactLandscape: Boolean
+        get() = prefs.getBoolean(KEY_COMPACT_LANDSCAPE, false)
+        set(value) = prefs.edit().putBoolean(KEY_COMPACT_LANDSCAPE, value).apply()
+
     private companion object {
         const val PREFS_NAME = "metronome_settings"
         const val KEY_BPM = "bpm"
@@ -36,5 +48,7 @@ class MetronomeSettings(context: Context) {
         const val KEY_VISUALIZER_ID = "visualizer_id"
         const val KEY_CLICK_ENABLED = "click_enabled"
         const val KEY_CLOCK_OUT_ENABLED = "clock_out_enabled"
+        const val KEY_VISUAL_OFFSET_MS = "visual_offset_ms"
+        const val KEY_COMPACT_LANDSCAPE = "compact_landscape"
     }
 }

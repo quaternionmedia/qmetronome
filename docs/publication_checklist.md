@@ -130,3 +130,28 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       and closed) and confirm it reconnects and restores its follow/send
       state automatically, and that unstarring actually stops that from
       happening rather than just hiding the star icon.
+- [ ] **Idle glyph**: with the metronome stopped, the preview should show a
+      very faint version of the current visualizer's resting pose rather than
+      a black square. Confirm it's visible but not distracting, and that it
+      updates when the visualizer is changed from Settings.
+- [ ] **Double-tap and long-press on preview**: double-tapping the preview
+      should toggle play/stop; long-pressing should open Settings. Confirm
+      neither gesture conflicts with the horizontal swipe for visualizer
+      cycling (a brief swipe should not accidentally trigger a long-press).
+- [ ] **BPM direct entry**: long-pressing the BPM number should open a
+      numeric entry dialog. Confirm the keyboard auto-focuses, the current
+      BPM is pre-selected, values outside 1–400 are rejected, and the
+      running engine immediately reflects the new tempo on confirm.
+- [ ] **HOLD staging**: hold the HOLD button in the transport row while
+      tapping ±1 or dragging the BPM. The display should show the staged
+      value with "• staged" below it. Release HOLD and confirm the engine
+      snaps to the staged tempo in one step rather than having changed
+      continuously during the hold.
+- [ ] **Visual timing offset feel**: set a large positive or negative offset
+      (e.g. ±200 ms) in Settings → Visual timing offset, run the metronome,
+      and confirm the flash/animation visibly leads or lags the audible click
+      by a perceptible amount. Reset to 0 ms and confirm alignment restores.
+- [ ] **Compact landscape layout**: rotate to landscape with the toggle off
+      (default) — controls should overflow as before. Enable compact mode in
+      Settings, rotate again — preview and controls should sit side-by-side,
+      all controls reachable without scrolling.

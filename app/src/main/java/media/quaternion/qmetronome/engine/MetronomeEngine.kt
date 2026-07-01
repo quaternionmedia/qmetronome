@@ -30,8 +30,8 @@ import kotlin.math.roundToInt
  */
 object MetronomeEngine {
 
-    const val MIN_BPM = 20f
-    const val MAX_BPM = 320f
+    const val MIN_BPM = 1f
+    const val MAX_BPM = 400f
 
     /** Where beat timing is currently coming from. */
     sealed interface ClockStatus {
@@ -70,6 +70,12 @@ object MetronomeEngine {
     private val _clickEnabled = MutableStateFlow(false)
     val clickEnabled: StateFlow<Boolean> = _clickEnabled.asStateFlow()
 
+    private val _visualOffsetMs = MutableStateFlow(0f)
+    val visualOffsetMs: StateFlow<Float> = _visualOffsetMs.asStateFlow()
+
+    private val _compactLandscape = MutableStateFlow(false)
+    val compactLandscape: StateFlow<Boolean> = _compactLandscape.asStateFlow()
+
     @Volatile private var matrixSize = 25
     @Volatile private var lastBeatNanos = System.nanoTime()
     @Volatile private var beatIndex = 0
@@ -89,6 +95,8 @@ object MetronomeEngine {
         _visualizer.value = VisualizerRegistry.byId(store.visualizerId)
         _state.value = BeatPhase.IDLE.copy(bpm = store.bpm, beatsPerBar = store.beatsPerBar)
         _clickEnabled.value = store.clickEnabled
+        _visualOffsetMs.value = store.visualOffsetMs
+        _compactLandscape.value = store.compactLandscape
 
         MidiClockSource.onExternalActivity = { if (!usingMidiClock) useMidiClock() }
         MidiClockSource.onTransportStart = {
@@ -96,6 +104,7 @@ object MetronomeEngine {
             start()
         }
         MidiClockSource.onTransportStop = ::stop
+        emitIdleFrame()
     }
 
     /** Switches to following [MidiClockSource]. Called automatically once MIDI clock activity is seen. */
@@ -122,7 +131,10 @@ object MetronomeEngine {
     }
 
     fun setMatrixSize(size: Int) {
-        if (size > 0) matrixSize = size
+        if (size > 0) {
+            matrixSize = size
+            emitIdleFrame()
+        }
     }
 
     /**
@@ -153,9 +165,21 @@ object MetronomeEngine {
         settings?.clickEnabled = enabled
     }
 
+    fun setVisualOffsetMs(ms: Float) {
+        val clamped = ms.coerceIn(-500f, 500f)
+        _visualOffsetMs.value = clamped
+        settings?.visualOffsetMs = clamped
+    }
+
+    fun setCompactLandscape(enabled: Boolean) {
+        _compactLandscape.value = enabled
+        settings?.compactLandscape = enabled
+    }
+
     fun setVisualizer(visualizer: GlyphVisualizer) {
         _visualizer.value = visualizer
         settings?.visualizerId = visualizer.id
+        emitIdleFrame()
     }
 
     fun nextVisualizer() {
@@ -187,7 +211,7 @@ object MetronomeEngine {
         renderJob?.cancel()
         renderJob = null
         _state.update { it.copy(isPlaying = false, phase = 0f) }
-        _frame.value = IntArray(matrixSize * matrixSize)
+        emitIdleFrame()
     }
 
     fun toggle() {
@@ -220,6 +244,21 @@ object MetronomeEngine {
         clickPlayer.release()
     }
 
+    /** Renders the current visualizer at its beat-1 resting pose, scaled to [IDLE_GLYPH_SCALE]
+     * brightness, so the preview glows faintly on AMOLED when the metronome isn't running. */
+    private fun emitIdleFrame() {
+        if (_state.value.isPlaying) return
+        val idleBeat = _state.value.copy(phase = 0f, isAccent = true, isPlaying = false)
+        val rendered = try {
+            _visualizer.value.render(matrixSize, idleBeat)
+        } catch (_: Exception) {
+            IntArray(matrixSize * matrixSize) { 255 }
+        }
+        _frame.value = IntArray(rendered.size) { i ->
+            (rendered[i] * IDLE_GLYPH_SCALE).toInt().coerceIn(0, 255)
+        }
+    }
+
     /** Resets all state back to defaults. For tests only - this is a process-wide singleton, so state would otherwise leak between test cases. */
     fun resetForTesting() {
         stop()
@@ -232,6 +271,8 @@ object MetronomeEngine {
         _state.value = BeatPhase.IDLE
         _clockStatus.value = ClockStatus.Internal
         _clickEnabled.value = false
+        _visualOffsetMs.value = 0f
+        _compactLandscape.value = false
         lastTapNanos = 0L
         tapIntervalsMs.clear()
         MidiClockSource.resetForTesting()
@@ -279,10 +320,12 @@ object MetronomeEngine {
         val current = _state.value
         if (!current.isPlaying) return
         val intervalNanos = 60_000_000_000.0 / current.bpm
-        val elapsedNanos = System.nanoTime() - lastBeatNanos
-        if (usingMidiClock && elapsedNanos > intervalNanos * MIDI_SILENCE_BEATS) {
+        val rawElapsedNanos = System.nanoTime() - lastBeatNanos
+        if (usingMidiClock && rawElapsedNanos > intervalNanos * MIDI_SILENCE_BEATS) {
             useInternalClock()
         }
+        val offsetNanos = _visualOffsetMs.value * 1_000_000.0
+        val elapsedNanos = (rawElapsedNanos + offsetNanos).coerceAtLeast(0.0)
         val phase = (elapsedNanos / intervalNanos).toFloat().coerceIn(0f, 1f)
         val phaseState = current.copy(phase = phase)
         _state.value = phaseState
@@ -304,4 +347,7 @@ object MetronomeEngine {
 
     /** How many beat-intervals of silence from the MIDI clock before falling back to internal timing. */
     private const val MIDI_SILENCE_BEATS = 4
+
+    /** Fraction of full brightness used for the idle glyph preview when the metronome is stopped. */
+    private const val IDLE_GLYPH_SCALE = 0.06f
 }
