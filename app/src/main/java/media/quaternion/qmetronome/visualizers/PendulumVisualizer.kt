@@ -5,10 +5,10 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
-/** A literal swinging pendulum arm, like a mechanical metronome ticking side to side. */
-class ClassicMetronomeVisualizer : GlyphVisualizer {
-    override val id = "classic"
-    override val displayName = "Classic"
+/** A literal swinging pendulum arm, top-pivoted like a clock pendulum ticking side to side. */
+class PendulumVisualizer : GlyphVisualizer {
+    override val id = "pendulum"
+    override val displayName = "Pendulum"
 
     override fun render(matrixSize: Int, beat: BeatPhase): IntArray {
         val canvas = GlyphCanvas(matrixSize)

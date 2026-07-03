@@ -48,18 +48,26 @@ decision records live in [`adr/`](adr/README.md).
   dimly behind it. The preview shows a dim ghost of the current visualizer at rest even when the
   metronome is stopped (6% brightness idle frame), so the AMOLED screen never looks fully off.
   The settings button isn't the only way in: long-pressing the preview also opens settings;
-  double-tapping the preview toggles play/stop; swiping left/right cycles visualizers; and
-  long-pressing the BPM number opens a direct-entry dialog (range 1–400 BPM). Tempo has four
-  input methods: tap-tempo, `HoldRepeatButton` step controls either side of the BPM number
-  (tap for ±1, hold for a geometrically-accelerating repeat), dragging the BPM number left/right
-  for continuous fine adjustment, and a `HoldButton` that queues BPM changes while held and
-  snaps them into effect on release — useful for live cue changes. Settings → Layout → "Compact
-  landscape layout" switches from the default full-size-overflow aesthetic to a side-by-side
-  preview+controls arrangement that fits in landscape without clipping. `MatrixPreview` renders
-  the exact same frames as the real hardware, so visualizers can be developed and demoed without
-  a physical Nothing device. The theme (`ui/theme/`) is strictly monochrome — black/white only,
-  matching the Glyph Matrix and Nothing's own design language — with one deliberate exception: a
-  navy accent (`QmNavy`) reserved for the small Quaternion Media credit mark (`BrandFooter`).
+  double-tapping the preview toggles play/stop; swiping left/right cycles visualizers; and the
+  BPM number itself is triple-duty — tap it for tap-tempo, long-press it for a direct-entry
+  dialog (range 1–400 BPM), or drag it left/right for continuous fine adjustment (a one-time
+  hint the first time it's shown explains all three, then never appears again). The transport
+  row is TAP / play-stop / HOLD left-to-right, with play-stop enlarged as the primary action;
+  `HoldButton` queues BPM and beats-per-bar changes while pressed (a classic momentary
+  "shift key"), and can also be *latched* — long-press or double-tap it to make staging sticky,
+  indicated by turning "recording red," until a later tap on it flushes everything and unlatches.
+  Latching a beats-per-bar change doesn't take effect mid-bar; it waits for the next bar's
+  downbeat, the same way a live musician would. Settings → Layout → "Compact landscape layout"
+  switches from the default full-size-overflow aesthetic to a side-by-side preview+controls
+  arrangement that fits in landscape without clipping. `MatrixPreview` renders the exact same
+  frames as the real hardware, so visualizers can be developed and demoed without a physical
+  Nothing device. The theme (`ui/theme/`) is strictly monochrome — black/white only, matching the
+  Glyph Matrix and Nothing's own design language — with two deliberate exceptions: a navy accent
+  (`QmNavy`) for brand chrome (the two marks in `BrandMarks.kt` - `QmBrandMark` bottom-left,
+  `AppBrandMark` bottom-center - long-press either to open its GitHub page), and "recording red"
+  (`RecordingRed`) reserved for transient
+  state/activity indicators — a latched hold, a staged-but-not-yet-applied change, active MIDI
+  clock — in the spirit of a studio tally light, not a wash of color.
 - `widget/MetronomeWidget` — a home screen widget (Jetpack Glance), BPM + play/stop only.
   Updates are event-driven, not polled: `QMetronomeApp` collects `MetronomeEngine.state`,
   filters it down to just `(bpm, isPlaying)` with `distinctUntilChanged()`, and calls
@@ -104,18 +112,23 @@ built-in visualizer's `accentScale` pattern). `GlyphCanvas.line()` is available 
 
 ## Setting tempo
 
-Three input methods on the main screen, layered for different precision needs:
+Several input methods on the main screen, layered for different precision needs:
 
-- **Tap tempo**: tap the **TAP** button in rhythm; BPM is derived from a rolling average of the
-  last few taps.
+- **Tap tempo**: tap the **TAP** button, or tap the BPM number itself, in rhythm; BPM is derived
+  from a rolling average of the last few taps.
 - **Step buttons** (either side of the BPM number): tap for ±1 BPM, hold for a
   geometrically-accelerating repeat - the longer you hold, the faster it moves.
 - **Drag-to-scrub**: press and drag the BPM number itself left/right for continuous fine
   adjustment.
+- **Long-press the BPM number**: type an exact value directly.
 
-All three write to the same tempo, so mixing them (tap to get close, then drag to fine-tune) just
-works. **Settings → Clock → "Send MIDI clock"** turns qMetronome into a MIDI clock *source* for
-other apps or USB gear, the mirror image of following an external clock - see
+All of these write to the same tempo, so mixing them (tap to get close, then drag to fine-tune)
+just works. **HOLD** (momentary or latched - see the Architecture section above) sits between
+you and the engine for BPM and beats-per-bar: while held or latched, changes are staged and
+shown in "recording red" instead of applying immediately, useful for setting up the next section
+of a live performance without disturbing the current one. **Settings → Clock → "Send MIDI
+clock"** turns qMetronome into a MIDI clock *source* for other apps or USB gear, the mirror
+image of following an external clock - see
 [`docs/external-midi-clock.md`](docs/external-midi-clock.md) for both directions.
 
 ## Using the widget
@@ -139,9 +152,12 @@ for why.
 - `app/libs/glyph-matrix-sdk-2.0.aar` is the Glyph Matrix SDK from the Developer Kit.
 - `minSdk` is 33, required by the SDK itself (the Glyph Matrix only exists on phones running
   recent Android anyway).
-- The Glyph Toy preview icon (`drawable/toy_preview.xml`) is a placeholder pixel-grid icon
-  matching the kit's preview style — replace with real artwork before shipping, following the
-  spec images in the Developer Kit (`23112_spec.svg` / `25111_spec.svg`).
+- The Glyph Toy preview icon (`drawable/toy_preview.xml`) is generated pixel art, not hand-drawn:
+  it's produced directly from the same static-logo pose used by `ic_launcher_foreground.xml` and
+  `BrandMarks.kt`'s `AppBrandMark` (see that file's doc), rasterized onto a matrix via
+  `GlyphCanvas` so it reads as real Glyph Matrix pixel art rather than a smooth vector. It has
+  **not** been checked against the Developer Kit's own spec images (`23112_spec.svg` /
+  `25111_spec.svg`) for exact dimensions/format conventions - worth a look before shipping.
 
 ## Testing
 

@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -29,7 +31,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,11 +41,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.midi.MidiClockSender
 import media.quaternion.qmetronome.midi.UsbMidiConnector
 import media.quaternion.qmetronome.ui.theme.PureBlack
+import media.quaternion.qmetronome.ui.theme.RecordingRed
 import media.quaternion.qmetronome.visualizers.VisualizerRegistry
 import kotlin.math.roundToInt
 
@@ -67,6 +70,7 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     val visualizer by MetronomeEngine.visualizer.collectAsState()
     val clockStatus by MetronomeEngine.clockStatus.collectAsState()
     val clickEnabled by MetronomeEngine.clickEnabled.collectAsState()
+    val stagedBeatsPerBar by MetronomeEngine.stagedBeatsPerBar.collectAsState()
     val clockOutEnabled by MidiClockSender.enabled.collectAsState()
     val visualOffsetMs by MetronomeEngine.visualOffsetMs.collectAsState()
     val compactLandscape by MetronomeEngine.compactLandscape.collectAsState()
@@ -103,13 +107,23 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
             HorizontalDivider()
 
             SettingsSection(title = "Beats per bar") {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    IconButton(onClick = { MetronomeEngine.setBeatsPerBar(beat.beatsPerBar - 1) }) {
-                        Icon(Icons.Filled.Remove, contentDescription = "Fewer beats per bar")
+                val displayBeats = stagedBeatsPerBar ?: beat.beatsPerBar
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        IconButton(onClick = { MetronomeEngine.setBeatsPerBar(displayBeats - 1) }) {
+                            Icon(Icons.Filled.Remove, contentDescription = "Fewer beats per bar")
+                        }
+                        Text(displayBeats.toString(), style = MaterialTheme.typography.titleLarge)
+                        IconButton(onClick = { MetronomeEngine.setBeatsPerBar(displayBeats + 1) }) {
+                            Icon(Icons.Filled.Add, contentDescription = "More beats per bar")
+                        }
                     }
-                    Text(beat.beatsPerBar.toString(), style = MaterialTheme.typography.titleLarge)
-                    IconButton(onClick = { MetronomeEngine.setBeatsPerBar(beat.beatsPerBar + 1) }) {
-                        Icon(Icons.Filled.Add, contentDescription = "More beats per bar")
+                    if (stagedBeatsPerBar != null) {
+                        Text(
+                            text = "• staged",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = RecordingRed,
+                        )
                     }
                 }
             }
@@ -181,6 +195,7 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                             }
                         },
                         style = MaterialTheme.typography.bodyMedium,
+                        color = if (clockStatus is MetronomeEngine.ClockStatus.Midi) RecordingRed else Color.Unspecified,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedButton(onClick = { UsbMidiConnector.refreshDevices() }) {
@@ -251,6 +266,9 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Send MIDI clock", style = MaterialTheme.typography.bodyMedium)
+                        if (clockOutEnabled) {
+                            Box(modifier = Modifier.size(6.dp).background(RecordingRed, CircleShape))
+                        }
                         Switch(checked = clockOutEnabled, onCheckedChange = MidiClockSender::setEnabled)
                     }
                     Text(
@@ -300,19 +318,22 @@ private fun VisualOffsetControls(offsetMs: Float, bpm: Float, onOffsetChanged: (
             }
         }
 
-        Slider(
+        SteppedSlider(
             value = offsetMs,
             onValueChange = onOffsetChanged,
             valueRange = -500f..500f,
-            modifier = Modifier.fillMaxWidth(),
+            step = 10f,
+            defaultValue = 0f,
+            dialogTitle = "Set visual offset (ms)",
+            valueLabel = { ms ->
+                when (unit) {
+                    OffsetUnit.Ms -> "${ms.roundToInt()} ms"
+                    OffsetUnit.Frames -> "${"%.1f".format(ms / FRAME_MS)} frames"
+                    OffsetUnit.BeatPct -> "${"%.1f".format(ms / (60_000f / bpm) * 100)} % of beat"
+                }
+            },
+            dialogValueLabel = { "${it.roundToInt()} ms" },
         )
-
-        val displayValue = when (unit) {
-            OffsetUnit.Ms -> "${offsetMs.roundToInt()} ms"
-            OffsetUnit.Frames -> "${"%.1f".format(offsetMs / FRAME_MS)} frames"
-            OffsetUnit.BeatPct -> "${"%.1f".format(offsetMs / (60_000f / bpm) * 100)} % of beat"
-        }
-        Text(displayValue, style = MaterialTheme.typography.bodyMedium)
 
         Text(
             text = "Shifts visuals earlier (negative) or later (positive) relative to the beat timestamp. " +

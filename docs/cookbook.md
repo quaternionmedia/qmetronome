@@ -91,10 +91,20 @@ MetronomeEngine.frame          // IntArray: current rendered frame (same as Glyp
 // Control
 MetronomeEngine.setBpm(120f)
 MetronomeEngine.toggle()       // start if stopped, stop if playing
-MetronomeEngine.tap()          // tap-tempo input
+MetronomeEngine.tapTempo()     // tap-tempo input
 MetronomeEngine.setVisualizer(myVisualizer)
 MetronomeEngine.setBeatsPerBar(4)
 MetronomeEngine.setVisualOffsetMs(50f)    // -500..+500 ms
+
+// Hold/latch staging - while holdMode != Off, setBpm()/setBeatsPerBar() (and tapTempo(),
+// which calls setBpm() internally) stage instead of applying immediately.
+MetronomeEngine.beginHold()    // finger down: Off -> Momentary
+MetronomeEngine.endHold()      // finger up: Momentary -> Off (flush); no-op while Latched
+MetronomeEngine.toggleLatch()  // Off/Momentary -> Latched, or Latched -> Off (flush)
+MetronomeEngine.holdMode       // StateFlow<HoldMode>: Off / Momentary / Latched
+MetronomeEngine.stagedBpm      // StateFlow<Float?>, non-null while staging
+MetronomeEngine.stagedBeatsPerBar  // StateFlow<Int?> - commits at the next bar's downbeat if
+                                   // flushed while playing, since it can't apply mid-bar cleanly
 
 // Observe in Compose
 val beat by MetronomeEngine.state.collectAsState()
@@ -186,7 +196,10 @@ app/src/main/java/.../
     MainScreen.kt            ← root Compose screen
     SettingsSheet.kt         ← full-screen settings overlay
     MatrixPreview.kt         ← on-screen LED preview
-    HoldButton.kt            ← press-and-hold BPM staging
+    HoldButton.kt            ← BPM/beats-per-bar staging - momentary hold or sticky latch
+    SteppedSlider.kt         ← standard slider: +/- steppers + long-press numeric entry
+    NumericEntryDialog.kt    ← the numeric entry dialog itself (shared by BPM + sliders)
+    BrandMarks.kt            ← QM + qMetronome brand marks, long-press to open GitHub
   widget/
     MetronomeWidget.kt       ← Jetpack Glance home screen widget
 ```

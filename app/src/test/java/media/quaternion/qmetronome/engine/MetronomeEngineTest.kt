@@ -5,6 +5,7 @@ import media.quaternion.qmetronome.visualizers.GlyphVisualizer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -140,5 +141,102 @@ class MetronomeEngineTest {
         }
 
         assertEquals(120f, MetronomeEngine.state.value.bpm, 5f)
+    }
+
+    @Test
+    fun `setBpm and setBeatsPerBar still apply immediately when hold is off`() {
+        assertEquals(MetronomeEngine.HoldMode.Off, MetronomeEngine.holdMode.value)
+
+        MetronomeEngine.setBpm(140f)
+        MetronomeEngine.setBeatsPerBar(6)
+
+        assertEquals(140f, MetronomeEngine.state.value.bpm)
+        assertEquals(6, MetronomeEngine.state.value.beatsPerBar)
+        assertNull(MetronomeEngine.stagedBpm.value)
+        assertNull(MetronomeEngine.stagedBeatsPerBar.value)
+    }
+
+    @Test
+    fun `momentary hold stages bpm changes and flushes them on release`() {
+        MetronomeEngine.setBpm(100f)
+
+        MetronomeEngine.beginHold()
+        MetronomeEngine.setBpm(140f)
+        assertEquals(100f, MetronomeEngine.state.value.bpm)
+        assertEquals(140f, MetronomeEngine.stagedBpm.value)
+
+        MetronomeEngine.endHold()
+        assertEquals(140f, MetronomeEngine.state.value.bpm)
+        assertEquals(MetronomeEngine.HoldMode.Off, MetronomeEngine.holdMode.value)
+        assertNull(MetronomeEngine.stagedBpm.value)
+    }
+
+    @Test
+    fun `toggleLatch enters a sticky latch that only clears on a later toggle, not a release`() {
+        MetronomeEngine.setBpm(100f)
+
+        MetronomeEngine.toggleLatch()
+        assertEquals(MetronomeEngine.HoldMode.Latched, MetronomeEngine.holdMode.value)
+
+        MetronomeEngine.setBpm(150f)
+        assertEquals(100f, MetronomeEngine.state.value.bpm)
+        assertEquals(150f, MetronomeEngine.stagedBpm.value)
+
+        // beginHold/endHold model a press-release cycle that doesn't itself unlatch - only a
+        // dedicated toggleLatch() call (the unlatch tap) does.
+        MetronomeEngine.beginHold()
+        MetronomeEngine.endHold()
+        assertEquals(MetronomeEngine.HoldMode.Latched, MetronomeEngine.holdMode.value)
+        assertEquals(100f, MetronomeEngine.state.value.bpm)
+
+        MetronomeEngine.toggleLatch()
+        assertEquals(MetronomeEngine.HoldMode.Off, MetronomeEngine.holdMode.value)
+        assertEquals(150f, MetronomeEngine.state.value.bpm)
+        assertNull(MetronomeEngine.stagedBpm.value)
+    }
+
+    @Test
+    fun `tap tempo stages instead of applying live bpm while held`() {
+        val liveBpmBefore = MetronomeEngine.state.value.bpm
+        MetronomeEngine.beginHold()
+
+        MetronomeEngine.tapTempo(nowNanos = 1_000_000_000L)
+        MetronomeEngine.tapTempo(nowNanos = 1_500_000_000L) // 500ms later = 120 BPM
+
+        assertEquals(liveBpmBefore, MetronomeEngine.state.value.bpm)
+        assertEquals(120f, requireNotNull(MetronomeEngine.stagedBpm.value), 0.5f)
+    }
+
+    @Test
+    fun `a staged beats-per-bar change while playing waits for the next bar's downbeat`() {
+        MetronomeEngine.setBpm(400f) // fastest allowed tempo (~150ms/beat) keeps this test quick
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.start()
+        Thread.sleep(220) // land roughly mid-bar, not right at a boundary
+
+        MetronomeEngine.toggleLatch()
+        MetronomeEngine.setBeatsPerBar(6)
+        MetronomeEngine.toggleLatch() // the unlatch tap, while still mid-bar
+
+        assertEquals(6, MetronomeEngine.stagedBeatsPerBar.value)
+        assertEquals(4, MetronomeEngine.state.value.beatsPerBar)
+
+        Thread.sleep(900) // comfortably past the next bar boundary even with scheduling jitter
+
+        assertEquals(6, MetronomeEngine.state.value.beatsPerBar)
+        assertNull(MetronomeEngine.stagedBeatsPerBar.value)
+    }
+
+    @Test
+    fun `stopping force-clears an in-progress hold and flushes staged bpm`() {
+        MetronomeEngine.setBpm(100f)
+        MetronomeEngine.toggleLatch()
+        MetronomeEngine.setBpm(150f)
+
+        MetronomeEngine.stop()
+
+        assertEquals(MetronomeEngine.HoldMode.Off, MetronomeEngine.holdMode.value)
+        assertEquals(150f, MetronomeEngine.state.value.bpm)
+        assertNull(MetronomeEngine.stagedBpm.value)
     }
 }

@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.delay
 
@@ -16,6 +17,14 @@ import kotlinx.coroutines.delay
  * holding it down ramps up to many steps a second. All repeat behavior lives in this
  * press-state effect; the button's own `onClick` is intentionally a no-op, otherwise a quick tap
  * would double-count (once from the press-down firing, once from the click callback).
+ *
+ * [onStep] is read through [rememberUpdatedState] rather than captured directly - the repeat
+ * loop below is a single long-running coroutine keyed on [isPressed], which does *not* restart
+ * on every recomposition, so without this indirection it would keep calling whatever [onStep]
+ * closure existed at the moment the press started for the entire duration of the hold. That
+ * silently caps a hold-to-repeat gesture at a single step if [onStep] closes over a value that
+ * only updates via recomposition (e.g. a `StateFlow`-derived display value) instead of reading
+ * live state at call time - prefer having [onStep] read authoritative state fresh each call.
  */
 @Composable
 fun HoldRepeatButton(
@@ -25,14 +34,15 @@ fun HoldRepeatButton(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
+    val currentOnStep by rememberUpdatedState(onStep)
 
     LaunchedEffect(isPressed) {
         if (!isPressed) return@LaunchedEffect
-        onStep()
+        currentOnStep()
         delay(INITIAL_DELAY_MS)
         var intervalMs = FIRST_REPEAT_MS
         while (isPressed) {
-            onStep()
+            currentOnStep()
             delay(intervalMs)
             intervalMs = (intervalMs * ACCELERATION).toLong().coerceAtLeast(MIN_INTERVAL_MS)
         }

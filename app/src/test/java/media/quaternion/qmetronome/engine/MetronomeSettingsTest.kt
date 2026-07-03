@@ -29,4 +29,13 @@ class MetronomeSettingsTest {
         assertEquals("ring_expand", settings.visualizerId)
         assertEquals(true, settings.clickEnabled)
     }
+
+    @Test
+    fun `bpm hint has not been shown by default, and round-trips once set`() {
+        assertFalse(settings.hasShownBpmHint)
+
+        settings.hasShownBpmHint = true
+
+        assertEquals(true, settings.hasShownBpmHint)
+    }
 }

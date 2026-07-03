@@ -145,9 +145,12 @@ confident knowledge of.
   system activity, not a store. Once qMetronome is on Play and a user
   installs it on a supported Nothing phone, it already qualifies for that
   picker with no further submission step - this part is done in code today.
-- The Glyph Toy preview image (`drawable/toy_preview.xml`) is still a
-  placeholder pixel-grid icon, not real artwork - already tracked in the
-  README's Setup notes and `publication_checklist.md`. Worth finishing
+- The Glyph Toy preview image (`drawable/toy_preview.xml`) has been replaced
+  with generated pixel art matching the app's own static-logo pose (see
+  README's Setup notes) - no longer the bare placeholder it was. It has
+  **not** been checked against the Developer Kit's own spec images
+  (`23112_spec.svg` / `25111_spec.svg`) for exact dimension/format
+  conventions Nothing expects for a submitted toy, which is worth doing
   before this is genuinely ready, since it's what users see in the picker.
 
 **What I don't have verified knowledge of, and would be guessing at if I

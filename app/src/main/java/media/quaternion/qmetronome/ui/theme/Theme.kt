@@ -22,6 +22,13 @@ val MidGray = Color(0xFF8A8A8A)
 /** Matches the Glyph Matrix's own unlit-LED gray (see the kit's preview icon convention). */
 val UnlitGray = Color(0xFF1C1C1C)
 
+/**
+ * Reserved for transient state/activity indicators only - latch, staged changes, external clock
+ * activity - a studio tally-light accent, not a persistent theme color. Same restraint as
+ * [QmNavy]: never used in the glyph-matching content area otherwise.
+ */
+val RecordingRed = Color(0xFFE0303A)
+
 private val MonochromeColors = darkColorScheme(
     primary = PureWhite,
     onPrimary = PureBlack,

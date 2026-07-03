@@ -12,7 +12,9 @@ Tempo, time signature, visualizer choice, click on/off, and MIDI clock-out
 on/off are saved locally on your device (Android `SharedPreferences`) so
 your settings persist between sessions. None of this ever leaves your
 device - there is no server, and the app makes no network requests of its
-own.
+own. Long-pressing either of the small brand marks in the app opens a
+GitHub page in your own browser - an explicit, user-initiated link, not a
+network call the app makes on your behalf.
 
 ## Permissions
 

@@ -40,6 +40,18 @@ object MetronomeEngine {
     }
 
     /**
+     * Whether BPM/beats-per-bar changes apply immediately or get staged. [Momentary] is the
+     * classic "shift key" - held down, released, flushed. [Latched] is the same staging behavior
+     * but sticky: entered via a long-press or double-tap on HOLD, and only cleared by a
+     * subsequent tap on HOLD (or by [stop]). See [beginHold], [endHold], [toggleLatch].
+     */
+    sealed interface HoldMode {
+        data object Off : HoldMode
+        data object Momentary : HoldMode
+        data object Latched : HoldMode
+    }
+
+    /**
      * Last-resort safety net: a visualizer or clock implementation throwing should never
      * silently wedge the engine into a state where [_state] says "playing" but nothing is
      * actually ticking - see [start]'s liveness check, which is the actual recovery mechanism.
@@ -76,11 +88,30 @@ object MetronomeEngine {
     private val _compactLandscape = MutableStateFlow(false)
     val compactLandscape: StateFlow<Boolean> = _compactLandscape.asStateFlow()
 
+    private val _timeSignature = MutableStateFlow(TimeSignature.DEFAULT)
+    val timeSignature: StateFlow<TimeSignature> = _timeSignature.asStateFlow()
+
+    private val _holdMode = MutableStateFlow<HoldMode>(HoldMode.Off)
+    val holdMode: StateFlow<HoldMode> = _holdMode.asStateFlow()
+
+    private val _stagedBpm = MutableStateFlow<Float?>(null)
+    val stagedBpm: StateFlow<Float?> = _stagedBpm.asStateFlow()
+
+    private val _stagedBeatsPerBar = MutableStateFlow<Int?>(null)
+    val stagedBeatsPerBar: StateFlow<Int?> = _stagedBeatsPerBar.asStateFlow()
+
+    private val _hasShownBpmHint = MutableStateFlow(false)
+    val hasShownBpmHint: StateFlow<Boolean> = _hasShownBpmHint.asStateFlow()
+
     @Volatile private var matrixSize = 25
     @Volatile private var lastBeatNanos = System.nanoTime()
     @Volatile private var beatIndex = 0
     @Volatile private var totalBeats = 0L
     @Volatile private var usingMidiClock = false
+
+    /** A beats-per-bar change staged while latched/held, waiting for the next bar's downbeat to
+     * actually land - see [onBeat]. Unlike BPM, it can't take effect mid-bar without a transient. */
+    @Volatile private var pendingBeatsPerBarCommit: Int? = null
 
     private var renderJob: Job? = null
     private var persistBpmJob: Job? = null
@@ -94,9 +125,11 @@ object MetronomeEngine {
         settings = store
         _visualizer.value = VisualizerRegistry.byId(store.visualizerId)
         _state.value = BeatPhase.IDLE.copy(bpm = store.bpm, beatsPerBar = store.beatsPerBar)
+        _timeSignature.value = _timeSignature.value.copy(beatCount = store.beatsPerBar)
         _clickEnabled.value = store.clickEnabled
         _visualOffsetMs.value = store.visualOffsetMs
         _compactLandscape.value = store.compactLandscape
+        _hasShownBpmHint.value = store.hasShownBpmHint
 
         MidiClockSource.onExternalActivity = { if (!usingMidiClock) useMidiClock() }
         MidiClockSource.onTransportStart = {
@@ -142,8 +175,20 @@ object MetronomeEngine {
      * times a second - the engine state update stays instant, but the SharedPreferences write
      * is debounced rather than firing on every single call, otherwise a few seconds of dragging
      * would queue hundreds of disk writes for no UI-visible benefit.
+     *
+     * While [holdMode] isn't [HoldMode.Off], the value is staged instead of applied - see
+     * [beginHold]/[toggleLatch]/[flushStagedChanges].
      */
     fun setBpm(bpm: Float) {
+        val clamped = bpm.coerceIn(MIN_BPM, MAX_BPM)
+        if (_holdMode.value != HoldMode.Off) {
+            _stagedBpm.value = clamped
+            return
+        }
+        setBpmImmediate(clamped)
+    }
+
+    private fun setBpmImmediate(bpm: Float) {
         val clamped = bpm.coerceIn(MIN_BPM, MAX_BPM)
         clock.setBpm(clamped)
         _state.update { it.copy(bpm = clamped) }
@@ -154,10 +199,78 @@ object MetronomeEngine {
         }
     }
 
+    /** Same staging behavior as [setBpm]; see [applyBeatsPerBarImmediate] for why a live change
+     * commits at the next bar's downbeat instead of instantly. */
     fun setBeatsPerBar(count: Int) {
         val clamped = count.coerceIn(1, 12)
+        if (_holdMode.value != HoldMode.Off) {
+            _stagedBeatsPerBar.value = clamped
+            return
+        }
+        applyBeatsPerBarImmediate(clamped)
+    }
+
+    private fun applyBeatsPerBarImmediate(count: Int) {
+        val clamped = count.coerceIn(1, 12)
         _state.update { it.copy(beatsPerBar = clamped) }
+        _timeSignature.value = _timeSignature.value.copy(beatCount = clamped)
         settings?.beatsPerBar = clamped
+    }
+
+    /** Finger down on HOLD: starts staging BPM/beats-per-bar changes. No-op if already staging
+     * (i.e. already [HoldMode.Momentary] or [HoldMode.Latched]). */
+    fun beginHold() {
+        if (_holdMode.value != HoldMode.Off) return
+        _holdMode.value = HoldMode.Momentary
+        _stagedBpm.value = _state.value.bpm
+        _stagedBeatsPerBar.value = _state.value.beatsPerBar
+    }
+
+    /** Finger up after a momentary hold: flushes staged changes and stops staging. While
+     * [HoldMode.Latched], this is a no-op - only [toggleLatch] can end a latch. */
+    fun endHold() {
+        if (_holdMode.value != HoldMode.Momentary) return
+        flushStagedChanges()
+        _holdMode.value = HoldMode.Off
+    }
+
+    /** Promotes momentary staging to a sticky latch (long-press/double-tap on HOLD), or ends an
+     * existing latch and flushes (a subsequent tap on HOLD). */
+    fun toggleLatch() {
+        when (_holdMode.value) {
+            HoldMode.Off -> {
+                _holdMode.value = HoldMode.Latched
+                _stagedBpm.value = _state.value.bpm
+                _stagedBeatsPerBar.value = _state.value.beatsPerBar
+            }
+            HoldMode.Momentary -> _holdMode.value = HoldMode.Latched
+            HoldMode.Latched -> {
+                flushStagedChanges()
+                _holdMode.value = HoldMode.Off
+            }
+        }
+    }
+
+    /**
+     * Applies staged BPM immediately (a new tempo only ever takes effect on the next tick
+     * anyway, so there's no mid-bar transient to avoid) and applies staged beats-per-bar
+     * immediately if stopped, or defers it to the next bar's downbeat if playing - see [onBeat].
+     */
+    private fun flushStagedChanges() {
+        val stagedBpmValue = _stagedBpm.value
+        if (stagedBpmValue != null) {
+            if (stagedBpmValue != _state.value.bpm) setBpmImmediate(stagedBpmValue)
+            _stagedBpm.value = null
+        }
+        val stagedBeats = _stagedBeatsPerBar.value ?: return
+        when {
+            stagedBeats == _state.value.beatsPerBar -> _stagedBeatsPerBar.value = null
+            _state.value.isPlaying -> pendingBeatsPerBarCommit = stagedBeats
+            else -> {
+                applyBeatsPerBarImmediate(stagedBeats)
+                _stagedBeatsPerBar.value = null
+            }
+        }
     }
 
     fun setClickEnabled(enabled: Boolean) {
@@ -174,6 +287,12 @@ object MetronomeEngine {
     fun setCompactLandscape(enabled: Boolean) {
         _compactLandscape.value = enabled
         settings?.compactLandscape = enabled
+    }
+
+    /** Marks the one-time BPM-number gesture hint as shown, so it never appears again. */
+    fun markBpmHintShown() {
+        _hasShownBpmHint.value = true
+        settings?.hasShownBpmHint = true
     }
 
     fun setVisualizer(visualizer: GlyphVisualizer) {
@@ -206,11 +325,25 @@ object MetronomeEngine {
         startRenderLoop()
     }
 
+    /**
+     * Stops ticking. Also force-clears any hold/latch in progress, flushing staged BPM and
+     * committing any beats-per-bar change waiting on a bar boundary that will now never arrive -
+     * staging only makes sense during a live, attended session, so a "stuck red" latch surviving
+     * past the end of playback would be wrong, not just stale.
+     */
     fun stop() {
         clock.stop()
         renderJob?.cancel()
         renderJob = null
         _state.update { it.copy(isPlaying = false, phase = 0f) }
+        pendingBeatsPerBarCommit?.let {
+            applyBeatsPerBarImmediate(it)
+            pendingBeatsPerBarCommit = null
+        }
+        if (_holdMode.value != HoldMode.Off) {
+            flushStagedChanges()
+            _holdMode.value = HoldMode.Off
+        }
         emitIdleFrame()
     }
 
@@ -273,6 +406,12 @@ object MetronomeEngine {
         _clickEnabled.value = false
         _visualOffsetMs.value = 0f
         _compactLandscape.value = false
+        _hasShownBpmHint.value = false
+        _timeSignature.value = TimeSignature.DEFAULT
+        _holdMode.value = HoldMode.Off
+        _stagedBpm.value = null
+        _stagedBeatsPerBar.value = null
+        pendingBeatsPerBarCommit = null
         lastTapNanos = 0L
         tapIntervalsMs.clear()
         MidiClockSource.resetForTesting()
@@ -280,7 +419,14 @@ object MetronomeEngine {
 
     private fun onBeat(timestampNanos: Long, measuredBpm: Float?) {
         lastBeatNanos = timestampNanos
-        val isAccent = beatIndex == 0
+        if (beatIndex == 0) {
+            pendingBeatsPerBarCommit?.let {
+                applyBeatsPerBarImmediate(it)
+                _stagedBeatsPerBar.value = null
+                pendingBeatsPerBarCommit = null
+            }
+        }
+        val isAccent = _timeSignature.value.isAccented(beatIndex)
         val index = beatIndex
         val count = totalBeats
         _state.update {

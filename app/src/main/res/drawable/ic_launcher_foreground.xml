@@ -4,15 +4,22 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Blocky metronome silhouette, white on navy - kept simple and bold for legibility at
-         launcher-icon sizes, and to echo the Glyph Toy preview's pixel-grid aesthetic. -->
+    <!-- Old-school triangle-metronome silhouette, arm at rest and angled - the same pose
+         MetronomeVisualizer renders at idle on the Glyph Matrix (and toy_preview.xml depicts),
+         white on navy. Body/arm/weight proportions are tuned for a static logo (bigger body,
+         thinner arm, smaller weight) rather than copied from MetronomeVisualizer's own numbers,
+         which are tuned for an animated beat-flash instead - see BrandMarks.kt's file doc. Kept
+         within the adaptive icon's safe zone (the inner ~66x66 of this 108x108 viewport) so the
+         arm's tip isn't cropped by mask shapes on any launcher. -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M50,28h8v8h-8z" />
+        android:pathData="M46.74,38.16 L61.26,38.16 L73.8,77.1 L34.2,77.1 Z" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.64"
+        android:strokeLineCap="round"
+        android:pathData="M54,77.1 L82.95,48.15" />
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M48,36 L60,36 L72,78 L36,78 Z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M30,78h48v8h-48z" />
+        android:pathData="M79.32,44.52 L86.58,44.52 L86.58,51.78 L79.32,51.78 Z" />
 </vector>

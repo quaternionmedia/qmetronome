@@ -41,6 +41,11 @@ class MetronomeSettings(context: Context) {
         get() = prefs.getBoolean(KEY_COMPACT_LANDSCAPE, false)
         set(value) = prefs.edit().putBoolean(KEY_COMPACT_LANDSCAPE, value).apply()
 
+    /** Whether the one-time BPM-number gesture hint (tap/long-press/drag) has already been shown. */
+    var hasShownBpmHint: Boolean
+        get() = prefs.getBoolean(KEY_HAS_SHOWN_BPM_HINT, false)
+        set(value) = prefs.edit().putBoolean(KEY_HAS_SHOWN_BPM_HINT, value).apply()
+
     private companion object {
         const val PREFS_NAME = "metronome_settings"
         const val KEY_BPM = "bpm"
@@ -50,5 +55,6 @@ class MetronomeSettings(context: Context) {
         const val KEY_CLOCK_OUT_ENABLED = "clock_out_enabled"
         const val KEY_VISUAL_OFFSET_MS = "visual_offset_ms"
         const val KEY_COMPACT_LANDSCAPE = "compact_landscape"
+        const val KEY_HAS_SHOWN_BPM_HINT = "has_shown_bpm_hint"
     }
 }

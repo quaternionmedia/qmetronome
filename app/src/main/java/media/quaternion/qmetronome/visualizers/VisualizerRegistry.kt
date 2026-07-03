@@ -15,12 +15,16 @@ object VisualizerRegistry {
         StrobeVisualizer(),
         SpiralVisualizer(),
         SplashVisualizer(),
-        ClassicMetronomeVisualizer(),
+        PendulumVisualizer(),
         DoublePendulumVisualizer(),
         ChaosVisualizer(),
+        MetronomeVisualizer(),
+        LinearWipeVisualizer(),
     )
 
-    val default: GlyphVisualizer get() = all.first()
+    /** The traditional triangle-metronome visualizer, not [all]'s first entry - keeps the
+     * picker's order independent of which one loads on a fresh install. */
+    val default: GlyphVisualizer get() = all.first { it.id == "metronome" }
 
     fun byId(id: String?): GlyphVisualizer = all.firstOrNull { it.id == id } ?: default
 
