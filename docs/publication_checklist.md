@@ -7,6 +7,15 @@ repo/code readiness; for the separate question of actually submitting to
 Google Play and Nothing's distribution channel, see
 [`app-store-checklist.md`](app-store-checklist.md).
 
+There are two release tracks with different bars:
+
+- **Alpha (`v0.x.x`)**: debug APK, no signing secrets, sideload-only. The
+  `alpha-release.yml` workflow handles it automatically — `git tag v0.0.1 && git push --tags`
+  is the entire process. Good for developer testing without any Google Play account.
+- **Production (`v1.x.x`)**: signed APK + AAB, requires four signing secrets
+  configured in GitHub. The `release.yml` workflow handles it. Needed for Play
+  Store; the final manual verification items below apply here.
+
 ## Technical Polish
 
 - [x] **Application identity**: `applicationId`/`namespace` were still

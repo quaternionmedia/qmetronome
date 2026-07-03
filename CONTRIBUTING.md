@@ -253,16 +253,42 @@ draft is more useful than a long PR description that will be forgotten.
 
 ## Cutting a release
 
-Releases are tag-triggered. When `main` is in a state worth shipping:
+There are two tag series, each with its own workflow:
+
+### Alpha / developer builds (`v0.x.x`) — no secrets required
+
+Debug builds that anyone can sideload. No signing keys, no Google Play account.
 
 ```sh
-git tag v1.2.0 -m "Release v1.2.0"
+git tag v0.0.1 -m "Alpha v0.0.1"
 git push --tags
 ```
 
-The GitHub Actions release workflow fires, runs tests, builds a signed APK +
-AAB, and creates a GitHub Release with both attached. The repo owner controls
-the signing secrets. Contributors don't need to do anything else.
+The `alpha-release.yml` workflow fires, runs tests, builds a debug APK, and
+creates a pre-release GitHub Release with the APK attached. Developers install
+via:
+
+```sh
+adb install app-debug.apk
+```
+
+Or transfer the APK to the device and open it with "Install unknown apps"
+enabled in Android developer settings.
+
+### Production releases (`v1.x.x`) — signing secrets required
+
+Signed APK + AAB for sideloading and Play Store submission. Requires four
+secrets configured by the repo owner in Settings → Secrets and variables →
+Actions (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`).
+
+```sh
+git tag v1.0.0 -m "Release v1.0.0"
+git push --tags
+```
+
+The `release.yml` workflow fires, runs tests, builds a signed APK + AAB, and
+creates a GitHub Release with both attached. As a contributor you don't need
+the signing secrets; CI handles it on tagged releases.
 
 ---
 

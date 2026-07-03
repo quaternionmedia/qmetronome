@@ -1,0 +1,94 @@
+name: Alpha Release
+
+# Fires on v0.x.x tags — developer/alpha builds, no signing keys required.
+# Produces an unsigned debug APK (Android debug-signs it automatically)
+# and creates a pre-release GitHub Release so developers can sideload via ADB.
+#
+# Install on a device:
+#   adb install app-debug.apk
+# Or enable "Install unknown apps" in Android developer settings and open the APK directly.
+#
+# No secrets needed. For signed production releases (v1.x.x+) see release.yml.
+
+on:
+  push:
+    tags:
+      - 'v0.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  alpha-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: gradle/actions/wrapper-validation@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # ── Version ──────────────────────────────────────────────────────────
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NAME="${TAG#v}"
+          MAJOR=$(echo "$NAME" | cut -d. -f1)
+          MINOR=$(echo "$NAME" | cut -d. -f2)
+          PATCH=$(echo "$NAME" | cut -d. -f3)
+          CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
+          echo "name=$NAME"   >> "$GITHUB_OUTPUT"
+          echo "code=$CODE"   >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+
+      # ── Glyph SDK isolation (same check as CI) ────────────────────────────
+      - name: Glyph SDK import boundary
+        run: |
+          offending=$(grep -rl "import com\.nothing\.ketchum" app/src/main/java --include="*.kt" | grep -v "/glyph/" || true)
+          if [ -n "$offending" ]; then
+            echo "com.nothing.ketchum must only be imported under .../glyph/ — found it in:"
+            echo "$offending"
+            exit 1
+          fi
+
+      # ── Tests ────────────────────────────────────────────────────────────
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --console=plain
+
+      # ── Build ─────────────────────────────────────────────────────────────
+      # Debug builds are auto-signed by Android with a runner-generated debug
+      # keystore — no secrets or keystore.properties needed.
+      - name: Build debug APK
+        run: |
+          ./gradlew assembleDebug \
+            -PversionCode=${{ steps.version.outputs.code }} \
+            -PversionName=${{ steps.version.outputs.name }} \
+            --console=plain
+
+      # ── GitHub Release (pre-release) ──────────────────────────────────────
+      - name: Create pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: qMetronome ${{ steps.version.outputs.name }} (alpha)
+          tag_name: ${{ steps.version.outputs.tag }}
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            **Developer alpha — sideload only, not for production use.**
+
+            Install via ADB:
+            ```
+            adb install app-debug.apk
+            ```
+            Or transfer the APK to your device and open it with "Install unknown apps" enabled
+            in Android developer settings.
+
+            This is a debug build (larger APK, `debuggable=true`, no ProGuard). For production
+            signed releases see the `v1.x.x` tag series.
+          files: |
+            app/build/outputs/apk/debug/app-debug.apk
