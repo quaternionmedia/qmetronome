@@ -9,6 +9,20 @@ Android Studio, the project layout, and PR norms. Feasibility investigations,
 manual test plans, and release readiness live in [`docs/`](docs/README.md);
 decision records live in [`adr/`](adr/README.md).
 
+## Requirements
+
+- **Android 13 (API 33) or newer** — `minSdk`, driven by the Glyph Matrix SDK itself rather than
+  anything in this app's own code (see "Setup notes" below).
+- **Core metronome** (tap tempo, BPM/beats-per-bar, the bar queue, random mute, on-screen
+  visualizer preview, audible click, home screen widget) works on any Android 13+ device from any
+  manufacturer — no special hardware needed.
+- **The physical Glyph Matrix display** only lights up on a **Nothing Phone (3) or Phone (4a)
+  Pro**. On any other device the Glyph Toy button just shows a toast saying it's unsupported;
+  nothing crashes.
+- **MIDI clock sync** (virtual in-app-to-app, or USB) degrades gracefully on devices without MIDI
+  support (`android.software.midi` is declared optional in the manifest). USB MIDI additionally
+  needs a device with USB host/OTG support.
+
 ## Architecture
 
 - `engine/MetronomeEngine` — process-wide singleton holding tempo, beat position and the
