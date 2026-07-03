@@ -38,4 +38,41 @@ class MetronomeSettingsTest {
 
         assertEquals(true, settings.hasShownBpmHint)
     }
+
+    @Test
+    fun `mute probability and progressive mute default off, and round-trip once set`() {
+        assertEquals(0f, settings.muteProbability)
+        assertFalse(settings.progressiveMuteEnabled)
+
+        settings.muteProbability = 0.35f
+        settings.progressiveMuteEnabled = true
+
+        assertEquals(0.35f, settings.muteProbability)
+        assertEquals(true, settings.progressiveMuteEnabled)
+    }
+
+    @Test
+    fun `bar queue defaults to a single default bar, and round-trips once set`() {
+        assertEquals(listOf(TimeSignature.DEFAULT), settings.queue)
+        assertEquals(0, settings.queueIndex)
+        assertEquals(MetronomeEngine.QueueMode.LOOP, settings.queueMode)
+
+        val queue = listOf(
+            TimeSignature(beatCount = 3, unitNoteValue = 4, bpm = 90f),
+            TimeSignature(beatCount = 7, unitNoteValue = 8, bpm = 200f),
+        )
+        settings.queue = queue
+        settings.queueIndex = 1
+        settings.queueMode = MetronomeEngine.QueueMode.MANUAL
+
+        assertEquals(queue, settings.queue)
+        assertEquals(1, settings.queueIndex)
+        assertEquals(MetronomeEngine.QueueMode.MANUAL, settings.queueMode)
+    }
+
+    @Test
+    fun `a corrupt or empty persisted queue falls back to a single default bar`() {
+        settings.queue = emptyList()
+        assertEquals(listOf(TimeSignature.DEFAULT), settings.queue)
+    }
 }

@@ -13,9 +13,35 @@ decision records live in [`adr/`](adr/README.md).
 
 - `engine/MetronomeEngine` — process-wide singleton holding tempo, beat position and the
   current Glyph frame as `StateFlow`s. It's the single source of truth so the in-app preview
-  and the real Glyph Matrix always show the same thing, whether or not the app UI is open.
+  and the real Glyph Matrix always show the same thing, whether or not the app UI is open. Random
+  mute (`setMuteProbability`/`setProgressiveMuteEnabled`) skips the audible click on a
+  probabilistic subset of beats - a practice tool for not leaning on every click - without
+  touching beat position, phase, or visuals, so the visual cue and bar length never desync from
+  a muted click; progressive start ramps the chance up linearly from 0 over the first few bars
+  instead of applying at full strength immediately. `engine/TimeSignature` is a real "1x2 matrix"
+  time signature - `beatCount` (numerator) and `unitNoteValue` (denominator, e.g. the "4" in 4/4,
+  edited independently; presentational only today - nothing in the beat loop subdivides by it
+  yet) - plus its own `bpm` and `accentPattern` reserved for later. `MetronomeEngine` holds a
+  *queue* of these (`timeSignatureQueue`) rather than just one - a single-entry queue (the
+  default) behaves exactly like a plain, unchanging time signature and tempo, but adding more
+  (`addBarToQueue`) lines up a sequence of differently-metered, differently-paced bars the engine
+  cycles through at each bar boundary, applying each bar's own beat count *and* bpm as it goes
+  (`setBpm` always writes into whichever bar is currently active, mirroring `setBeatsPerBar`).
+  `QueueMode` controls how: `LOOP` (default) wraps back to the first bar after the last, `ONCE`
+  stops advancing once it reaches the last bar (holding there rather than stopping playback
+  outright), `MANUAL` never auto-advances - tapping a bar's dot in `BeatsPerBarControls` (see
+  "Using the bar queue" below) is the only way to move. Queue *position* isn't staged the way
+  editing a bar's own values is (staging-aware exactly as before) - navigating which bar you're
+  looking at is closer to "which page am I on" than a pending settings change. `engine/ClickSound`
+  + `engine/ClickPlayer` separate *which* click to play from the playback plumbing - a small tone
+  table keyed by sound (today: a bigger, longer tone for a bar's first beat vs. every other beat)
+  so a new sound is a new table row, not a rewrite.
 - `engine/ClockSource` — produces beat ticks. `InternalClockSource` drift-corrects against
-  `System.nanoTime()` so tempo doesn't slip over a long session. `midi/MidiClockSource` is the
+  `System.nanoTime()` so tempo doesn't slip over a long session, and re-checks the live bpm every
+  30ms while waiting rather than committing to one long sleep sized for whatever tempo was in
+  effect when the wait began - otherwise a drastic tempo change made while waiting out a slow
+  tempo's long interval had no effect (and the beat/animation looked frozen) until that stale
+  wait finished. `midi/MidiClockSource` is the
   external-clock implementation: the engine auto-switches to it the moment MIDI Clock activity
   arrives, and falls back to internal timing if that feed goes quiet for a few beats.
 - `midi/` — MIDI Clock (24 ppqn) support, in both directions, over both virtual (inter-app) and
@@ -41,23 +67,30 @@ decision records live in [`adr/`](adr/README.md).
   toy: it starts/stops the engine with toy selection, taps tempo on Glyph Button touch-down,
   and cycles visualizers on long-press.
 - `ui/` — Compose UI. `MainScreen` keeps the Glyph Matrix preview as the dominant, focal
-  element with only tempo/tap/play-stop alongside it; everything else (beats-per-bar, click
-  toggle, visualizer picker, visual timing offset, MIDI clock status/USB connection/clock-out)
-  lives behind the bottom-right settings button in `SettingsSheet`, a full-screen translucent
-  overlay (not a half-open bottom sheet) so the matrix preview's flashes still glow through
-  dimly behind it. The preview shows a dim ghost of the current visualizer at rest even when the
-  metronome is stopped (6% brightness idle frame), so the AMOLED screen never looks fully off.
-  The settings button isn't the only way in: long-pressing the preview also opens settings;
-  double-tapping the preview toggles play/stop; swiping left/right cycles visualizers; and the
-  BPM number itself is triple-duty — tap it for tap-tempo, long-press it for a direct-entry
-  dialog (range 1–400 BPM), or drag it left/right for continuous fine adjustment (a one-time
-  hint the first time it's shown explains all three, then never appears again). The transport
-  row is TAP / play-stop / HOLD left-to-right, with play-stop enlarged as the primary action;
-  `HoldButton` queues BPM and beats-per-bar changes while pressed (a classic momentary
-  "shift key"), and can also be *latched* — long-press or double-tap it to make staging sticky,
-  indicated by turning "recording red," until a later tap on it flushes everything and unlatches.
-  Latching a beats-per-bar change doesn't take effect mid-bar; it waits for the next bar's
-  downbeat, the same way a live musician would. Settings → Layout → "Compact landscape layout"
+  element with tempo/tap/play-stop and beats-per-bar alongside it - live meter/tempo controls
+  belong on the main screen, not a settings overlay you'd have to leave the beat to open.
+  Everything else (random mute, click toggle, visualizer picker, visual timing offset, MIDI
+  clock status/USB connection/clock-out) lives behind the bottom-right settings button in
+  `SettingsSheet`, a full-screen translucent overlay (not a half-open bottom sheet) so the
+  matrix preview's flashes still glow through dimly behind it. The preview shows a dim ghost of
+  the current visualizer at rest even when the metronome is stopped (6% brightness idle frame),
+  so the AMOLED screen never looks fully off. The settings button isn't the only way in:
+  long-pressing the preview also opens settings; double-tapping the preview toggles play/stop;
+  swiping left/right cycles visualizers; and the BPM number itself is triple-duty — tap it for
+  tap-tempo, long-press it for a direct-entry dialog (range 1–400 BPM), or drag it left/right for
+  continuous fine adjustment (a one-time hint the first time it's shown explains all three, then
+  never appears again). `BeatsPerBarControls` mirrors that same pattern (steppers, long-press to
+  type an exact value) at a visually secondary scale just below it. A second row beneath it is
+  the entry point to the bar queue - see "Using the bar queue" below - kept to explicit
+  taps/buttons rather than gestures layered onto the tempo row, since a narrow label wedged
+  between two small buttons turned out to be an unreliable place to also recognize a double-tap
+  and a swipe. The transport row is TAP /
+  play-stop / HOLD left-to-right, with play-stop enlarged as the primary action; `HoldButton`
+  queues BPM and beats-per-bar changes while pressed (a classic momentary "shift key"), and can
+  also be *latched* — long-press or double-tap it to make staging sticky, indicated by turning
+  "recording red," until a later tap on it flushes everything and unlatches. Latching a
+  beats-per-bar change doesn't take effect mid-bar; it waits for the next bar's downbeat, the
+  same way a live musician would. Settings → Layout → "Compact landscape layout"
   switches from the default full-size-overflow aesthetic to a side-by-side preview+controls
   arrangement that fits in landscape without clipping. `MatrixPreview` renders the exact same
   frames as the real hardware, so visualizers can be developed and demoed without a physical
@@ -131,6 +164,42 @@ clock"** turns qMetronome into a MIDI clock *source* for other apps or USB gear,
 image of following an external clock - see
 [`docs/external-midi-clock.md`](docs/external-midi-clock.md) for both directions.
 
+## Using the bar queue
+
+Below the tempo controls, the time signature is shown as a real "N/D" fraction (e.g. `4/4`,
+`7/8`), and beneath *that* is a second, smaller row for queuing up a sequence of differently
+metered *and differently paced* bars (e.g. three bars of 4/4 at 90 BPM then one bar of 3/4 at 140
+BPM) - every control here is an explicit tap, deliberately, not a gesture to guess at:
+
+- **Beats vs. note value**: the steppers and drag/long-press-to-type on the main number edit the
+  numerator (beat count) same as always. The note value (denominator) is edited independently,
+  via the same long-press dialog - it's presentational today (nothing in the beat loop
+  subdivides by it yet), not a second thing to keep in sync by hand.
+- **Tempo is per-bar now, not global**: switching to a different queued bar recalls *that* bar's
+  own BPM along with its own beat count - set each bar's tempo the normal way (tap/steppers/drag/
+  long-press on the BPM number) while it's the active one.
+- **`−`/`+` buttons**: `+` appends a copy of the currently-active bar (beats, note value, and
+  tempo alike) to the queue and jumps to it; `−` removes the active bar - both no-ops if it's the
+  only one left. The trash icon at the far left clears the whole queue back to a single default
+  bar, for starting over rather than removing bars one at a time.
+- **Dots**: one square per bar in the queue. A dot's *size* scales with that bar's beat count
+  *relative to the rest of the queue* (the longest bar currently queued reads as the biggest dot)
+  and its *color* gradients dark gray → white from slow to fast tempo, so the whole queue's shape
+  is readable at a glance. Tap a dot to jump to that bar; long-press a dot to remove it directly.
+  Above every dot, a small tick per beat shows that bar's own beat count - only the active bar's
+  ticks pulse live in time with playback (the same flash curve the Glyph Matrix visualizers use),
+  so every bar's shape is visible at once but only the one actually playing draws the eye.
+- **Mode icon** (far right): tap to cycle how the queue advances at each bar boundary during
+  playback - **Loop** (default, wraps back to the first bar after the last), **Once** (stops
+  advancing once it reaches the last bar, holding there rather than stopping playback outright),
+  **Manual** (never auto-advances - only tapping a dot moves it).
+
+With only one bar (the default), a single dot shows and this row is otherwise inert - there's
+nothing to queue yet, and it behaves exactly like a single, unchanging time signature and tempo.
+
+The queue, which bar is active, and the advance mode all persist across restarts, the same as
+tempo and beats-per-bar always have.
+
 ## Using the widget
 
 Long-press the home screen → **Widgets** → place qMetronome. It shows the
@@ -193,6 +262,11 @@ rather than resolved unilaterally.
 the isolation claimed in `adr/DRAFT-glyph-matrix-sdk-dependency.md`), then a
 full `assembleDebug` + `testDebugUnitTest`, on every push to `main` and every
 pull request.
+
+## Inspired by
+
+- [Avi Bortnick](https://play.google.com/store/apps/developer?id=Avi+Bortnick) on the Play Store.
+- [TimeGuru](https://play.google.com/store/apps/details?id=com.adambellard.timeguru) by Adam Bellard.
 
 ## License
 

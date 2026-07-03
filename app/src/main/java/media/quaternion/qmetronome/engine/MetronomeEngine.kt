@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import kotlin.random.Random
 
 /**
  * The single source of truth for tempo, beat position and the current Glyph frame. It is a
@@ -32,6 +33,9 @@ object MetronomeEngine {
 
     const val MIN_BPM = 1f
     const val MAX_BPM = 400f
+
+    const val MIN_BEATS_PER_BAR = 1
+    const val MAX_BEATS_PER_BAR = 24
 
     /** Where beat timing is currently coming from. */
     sealed interface ClockStatus {
@@ -50,6 +54,16 @@ object MetronomeEngine {
         data object Momentary : HoldMode
         data object Latched : HoldMode
     }
+
+    /**
+     * How the bar queue ([timeSignatureQueue]) advances at each bar boundary when it holds more
+     * than one entry - a "dead simple" way to queue up a sequence of differently-metered bars
+     * (e.g. 3 bars of 4/4 then 1 bar of 3/4) without building a full score editor.
+     * [LOOP] (the default) wraps back to the first bar after the last; [ONCE] stops advancing
+     * once it reaches the last bar, holding there; [MANUAL] never auto-advances - only
+     * [nextQueueBar]/[previousQueueBar] (e.g. a swipe) move the active bar.
+     */
+    enum class QueueMode { LOOP, ONCE, MANUAL }
 
     /**
      * Last-resort safety net: a visualizer or clock implementation throwing should never
@@ -91,6 +105,18 @@ object MetronomeEngine {
     private val _timeSignature = MutableStateFlow(TimeSignature.DEFAULT)
     val timeSignature: StateFlow<TimeSignature> = _timeSignature.asStateFlow()
 
+    /** The queue of bars to cycle through - a single entry (today's default) behaves exactly
+     * like a plain, unchanging time signature. See [QueueMode] for how playback advances through
+     * more than one. */
+    private val _timeSignatureQueue = MutableStateFlow(listOf(TimeSignature.DEFAULT))
+    val timeSignatureQueue: StateFlow<List<TimeSignature>> = _timeSignatureQueue.asStateFlow()
+
+    private val _queueIndex = MutableStateFlow(0)
+    val queueIndex: StateFlow<Int> = _queueIndex.asStateFlow()
+
+    private val _queueMode = MutableStateFlow(QueueMode.LOOP)
+    val queueMode: StateFlow<QueueMode> = _queueMode.asStateFlow()
+
     private val _holdMode = MutableStateFlow<HoldMode>(HoldMode.Off)
     val holdMode: StateFlow<HoldMode> = _holdMode.asStateFlow()
 
@@ -103,11 +129,19 @@ object MetronomeEngine {
     private val _hasShownBpmHint = MutableStateFlow(false)
     val hasShownBpmHint: StateFlow<Boolean> = _hasShownBpmHint.asStateFlow()
 
+    private val _muteProbability = MutableStateFlow(0f)
+    val muteProbability: StateFlow<Float> = _muteProbability.asStateFlow()
+
+    private val _progressiveMuteEnabled = MutableStateFlow(false)
+    val progressiveMuteEnabled: StateFlow<Boolean> = _progressiveMuteEnabled.asStateFlow()
+
     @Volatile private var matrixSize = 25
     @Volatile private var lastBeatNanos = System.nanoTime()
     @Volatile private var beatIndex = 0
     @Volatile private var totalBeats = 0L
     @Volatile private var usingMidiClock = false
+    @Volatile private var barsElapsedSincePlay = 0
+    @Volatile private var random: Random = Random.Default
 
     /** A beats-per-bar change staged while latched/held, waiting for the next bar's downbeat to
      * actually land - see [onBeat]. Unlike BPM, it can't take effect mid-bar without a transient. */
@@ -124,12 +158,20 @@ object MetronomeEngine {
         val store = MetronomeSettings(context.applicationContext)
         settings = store
         _visualizer.value = VisualizerRegistry.byId(store.visualizerId)
-        _state.value = BeatPhase.IDLE.copy(bpm = store.bpm, beatsPerBar = store.beatsPerBar)
-        _timeSignature.value = _timeSignature.value.copy(beatCount = store.beatsPerBar)
+        val restoredQueue = store.queue
+        val restoredIndex = store.queueIndex.coerceIn(0, restoredQueue.size - 1)
+        val restoredSpec = restoredQueue[restoredIndex]
+        _timeSignatureQueue.value = restoredQueue
+        _queueIndex.value = restoredIndex
+        _queueMode.value = store.queueMode
+        _timeSignature.value = restoredSpec
+        _state.value = BeatPhase.IDLE.copy(bpm = restoredSpec.bpm, beatsPerBar = restoredSpec.beatCount)
         _clickEnabled.value = store.clickEnabled
         _visualOffsetMs.value = store.visualOffsetMs
         _compactLandscape.value = store.compactLandscape
         _hasShownBpmHint.value = store.hasShownBpmHint
+        _muteProbability.value = store.muteProbability
+        _progressiveMuteEnabled.value = store.progressiveMuteEnabled
 
         MidiClockSource.onExternalActivity = { if (!usingMidiClock) useMidiClock() }
         MidiClockSource.onTransportStart = {
@@ -188,21 +230,31 @@ object MetronomeEngine {
         setBpmImmediate(clamped)
     }
 
+    /** Tempo is per-bar, like beats-per-bar - this always writes into whichever bar is currently
+     * active in the queue (see [goToQueueBar]), so navigating back to an earlier bar recalls the
+     * tempo it was set at, not whatever the most recently-edited bar's tempo happened to be. */
     private fun setBpmImmediate(bpm: Float) {
         val clamped = bpm.coerceIn(MIN_BPM, MAX_BPM)
         clock.setBpm(clamped)
         _state.update { it.copy(bpm = clamped) }
+        _timeSignature.value = _timeSignature.value.copy(bpm = clamped)
+        _timeSignatureQueue.update { queue ->
+            val index = _queueIndex.value
+            if (index !in queue.indices) return@update queue
+            queue.toMutableList().apply { this[index] = this[index].copy(bpm = clamped) }
+        }
         persistBpmJob?.cancel()
         persistBpmJob = scope.launch {
             delay(BPM_PERSIST_DEBOUNCE_MS)
             settings?.bpm = clamped
+            settings?.queue = _timeSignatureQueue.value
         }
     }
 
     /** Same staging behavior as [setBpm]; see [applyBeatsPerBarImmediate] for why a live change
      * commits at the next bar's downbeat instead of instantly. */
     fun setBeatsPerBar(count: Int) {
-        val clamped = count.coerceIn(1, 12)
+        val clamped = count.coerceIn(MIN_BEATS_PER_BAR, MAX_BEATS_PER_BAR)
         if (_holdMode.value != HoldMode.Off) {
             _stagedBeatsPerBar.value = clamped
             return
@@ -211,10 +263,123 @@ object MetronomeEngine {
     }
 
     private fun applyBeatsPerBarImmediate(count: Int) {
-        val clamped = count.coerceIn(1, 12)
+        val clamped = count.coerceIn(MIN_BEATS_PER_BAR, MAX_BEATS_PER_BAR)
         _state.update { it.copy(beatsPerBar = clamped) }
         _timeSignature.value = _timeSignature.value.copy(beatCount = clamped)
+        _timeSignatureQueue.update { queue ->
+            val index = _queueIndex.value
+            if (index !in queue.indices) return@update queue
+            queue.toMutableList().apply { this[index] = this[index].copy(beatCount = clamped) }
+        }
         settings?.beatsPerBar = clamped
+        settings?.queue = _timeSignatureQueue.value
+    }
+
+    /** The time-signature *denominator* (e.g. the "4" in 4/4) - edited independently of
+     * [beatCount][TimeSignature.beatCount], and always applied immediately (unlike BPM/
+     * beats-per-bar, it's presentational only - nothing in the beat loop subdivides by it - so
+     * there's no mid-bar transient to stage around). */
+    fun setUnitNoteValue(value: Int) {
+        val clamped = value.coerceIn(1, MAX_UNIT_NOTE_VALUE)
+        _timeSignature.value = _timeSignature.value.copy(unitNoteValue = clamped)
+        _timeSignatureQueue.update { queue ->
+            val index = _queueIndex.value
+            if (index !in queue.indices) return@update queue
+            queue.toMutableList().apply { this[index] = this[index].copy(unitNoteValue = clamped) }
+        }
+        settings?.queue = _timeSignatureQueue.value
+    }
+
+    /** Jumps directly to a bar in the queue (clamped to a valid index), making it - beats, note
+     * value, and tempo alike - the active time signature immediately. Queue *position* isn't
+     * staged the way editing a bar's own values is, since it's more "which page am I looking at"
+     * than a pending settings change. */
+    fun goToQueueBar(index: Int) {
+        val queue = _timeSignatureQueue.value
+        if (queue.isEmpty()) return
+        val clampedIndex = index.coerceIn(0, queue.size - 1)
+        _queueIndex.value = clampedIndex
+        settings?.queueIndex = clampedIndex
+        val spec = queue[clampedIndex]
+        _timeSignature.value = spec
+        _state.update { it.copy(beatsPerBar = spec.beatCount) }
+        setBpmImmediate(spec.bpm)
+    }
+
+    /** Manual navigation - e.g. a swipe on the beats-per-bar control - one bar at a time,
+     * clamped rather than wrapping (wrapping is [QueueMode.LOOP]'s job at a bar boundary). */
+    fun nextQueueBar() = goToQueueBar(_queueIndex.value + 1)
+    fun previousQueueBar() = goToQueueBar(_queueIndex.value - 1)
+
+    /** Appends a copy of the currently-active bar to the end of the queue and jumps to it. */
+    fun addBarToQueue() {
+        val queue = _timeSignatureQueue.value
+        val newBar = queue.getOrElse(_queueIndex.value) { TimeSignature.DEFAULT }
+        _timeSignatureQueue.value = queue + newBar
+        settings?.queue = _timeSignatureQueue.value
+        goToQueueBar(queue.size)
+    }
+
+    /**
+     * Removes a specific bar from the queue (e.g. long-pressing its dot) - a no-op if it's the
+     * only one left, since the queue (and therefore the active time signature) can never be
+     * empty, or if [index] is out of range. Removing a bar *other* than the active one keeps the
+     * same bar active (adjusting for the shift); removing the active one itself lands on
+     * whichever bar now occupies its old slot, clamped to the new last bar if it was the end.
+     */
+    fun removeBarFromQueue(index: Int) {
+        val queue = _timeSignatureQueue.value
+        if (queue.size <= 1 || index !in queue.indices) return
+        val updated = queue.toMutableList().apply { removeAt(index) }
+        _timeSignatureQueue.value = updated
+        settings?.queue = updated
+        val activeIndex = _queueIndex.value
+        val newActiveIndex = if (index < activeIndex) activeIndex - 1 else activeIndex
+        goToQueueBar(newActiveIndex.coerceAtMost(updated.size - 1))
+    }
+
+    /** Removes the currently-active bar - see [removeBarFromQueue]. */
+    fun removeCurrentBarFromQueue() = removeBarFromQueue(_queueIndex.value)
+
+    /** Collapses the whole queue back to a single default bar and [QueueMode.LOOP] - the "start
+     * over" counterpart to building up a queue one [addBarToQueue] at a time, for when a
+     * performer wants a clean slate rather than removing bars one by one. */
+    fun resetQueueToDefault() {
+        _timeSignatureQueue.value = listOf(TimeSignature.DEFAULT)
+        settings?.queue = _timeSignatureQueue.value
+        _queueMode.value = QueueMode.LOOP
+        settings?.queueMode = QueueMode.LOOP
+        goToQueueBar(0)
+    }
+
+    fun setQueueMode(mode: QueueMode) {
+        _queueMode.value = mode
+        settings?.queueMode = mode
+    }
+
+    /**
+     * Pure decision logic for [advanceQueueAtBarBoundary] - returns the index to advance to, or
+     * null if nothing should change ([QueueMode.MANUAL], a single-entry queue, or [QueueMode.ONCE]
+     * having already reached the last bar - it stays there rather than stopping playback
+     * outright, since the performer decides when to actually stop). Exposed (not private) so the
+     * decision is directly unit-testable without driving a real beat loop.
+     */
+    fun nextQueueIndexAfterBar(currentIndex: Int, queueSize: Int, mode: QueueMode): Int? {
+        if (queueSize <= 1) return null
+        if (mode == QueueMode.MANUAL) return null
+        val next = currentIndex + 1
+        return when {
+            next < queueSize -> next
+            mode == QueueMode.LOOP -> 0
+            else -> null // ONCE: stay on the last bar
+        }
+    }
+
+    /** Called at each bar boundary (see [onBeat]) once the *previous* bar has fully played out. */
+    private fun advanceQueueAtBarBoundary() {
+        val queue = _timeSignatureQueue.value
+        val next = nextQueueIndexAfterBar(_queueIndex.value, queue.size, _queueMode.value) ?: return
+        goToQueueBar(next)
     }
 
     /** Finger down on HOLD: starts staging BPM/beats-per-bar changes. No-op if already staging
@@ -295,6 +460,40 @@ object MetronomeEngine {
         settings?.hasShownBpmHint = true
     }
 
+    /** Chance (0..1) that any given beat's click is skipped - see [onBeat]. Only the audible
+     * click is affected; beat position, phase and visuals are untouched, so bar length and the
+     * visual cue never desync from a muted click. */
+    fun setMuteProbability(probability: Float) {
+        val clamped = probability.coerceIn(0f, 1f)
+        _muteProbability.value = clamped
+        settings?.muteProbability = clamped
+    }
+
+    /** When enabled, [muteProbability] ramps up linearly from 0 over [PROGRESSIVE_MUTE_RAMP_BARS]
+     * bars after [start] instead of applying at full strength immediately. */
+    fun setProgressiveMuteEnabled(enabled: Boolean) {
+        _progressiveMuteEnabled.value = enabled
+        settings?.progressiveMuteEnabled = enabled
+    }
+
+    /** For tests only - makes mute-probability rolls deterministic. */
+    fun seedRandomForTesting(seed: Long) {
+        random = Random(seed)
+    }
+
+    /** The mute chance actually in effect [barsElapsed] bars into playback - the configured
+     * target immediately, or ramped up linearly from 0 over [PROGRESSIVE_MUTE_RAMP_BARS] bars
+     * when progressive start is on. Exposed (not private) so it's directly unit-testable without
+     * needing to drive a real beat loop or intercept [ClickPlayer]. */
+    fun effectiveMuteProbability(barsElapsed: Int): Float {
+        val target = _muteProbability.value
+        return if (_progressiveMuteEnabled.value && barsElapsed < PROGRESSIVE_MUTE_RAMP_BARS) {
+            target * (barsElapsed / PROGRESSIVE_MUTE_RAMP_BARS.toFloat())
+        } else {
+            target
+        }
+    }
+
     fun setVisualizer(visualizer: GlyphVisualizer) {
         _visualizer.value = visualizer
         settings?.visualizerId = visualizer.id
@@ -319,6 +518,8 @@ object MetronomeEngine {
         if (_state.value.isPlaying && renderJob?.isActive == true) return
         beatIndex = 0
         totalBeats = 0
+        barsElapsedSincePlay = 0
+        goToQueueBar(0)
         lastBeatNanos = System.nanoTime()
         _state.update { it.copy(isPlaying = true, beatIndex = 0, phase = 0f, isAccent = true) }
         clock.start(scope, _state.value.bpm, ::onBeat)
@@ -407,11 +608,18 @@ object MetronomeEngine {
         _visualOffsetMs.value = 0f
         _compactLandscape.value = false
         _hasShownBpmHint.value = false
+        _muteProbability.value = 0f
+        _progressiveMuteEnabled.value = false
         _timeSignature.value = TimeSignature.DEFAULT
+        _timeSignatureQueue.value = listOf(TimeSignature.DEFAULT)
+        _queueIndex.value = 0
+        _queueMode.value = QueueMode.LOOP
         _holdMode.value = HoldMode.Off
         _stagedBpm.value = null
         _stagedBeatsPerBar.value = null
         pendingBeatsPerBarCommit = null
+        barsElapsedSincePlay = 0
+        random = Random.Default
         lastTapNanos = 0L
         tapIntervalsMs.clear()
         MidiClockSource.resetForTesting()
@@ -425,6 +633,9 @@ object MetronomeEngine {
                 _stagedBeatsPerBar.value = null
                 pendingBeatsPerBarCommit = null
             }
+            // Skip the very first bar's downbeat (totalBeats == 0) - start() already put the
+            // queue on bar 0, so this only fires once a bar has actually completed.
+            if (totalBeats > 0) advanceQueueAtBarBoundary()
         }
         val isAccent = _timeSignature.value.isAccented(beatIndex)
         val index = beatIndex
@@ -441,13 +652,16 @@ object MetronomeEngine {
         if (usingMidiClock) {
             _clockStatus.value = ClockStatus.Midi(measuredBpm, MidiClockSource.activeSource?.name)
         }
-        if (_clickEnabled.value) {
+        val probability = effectiveMuteProbability(barsElapsedSincePlay)
+        val muted = probability > 0f && random.nextFloat() < probability
+        if (_clickEnabled.value && !muted) {
             try {
-                clickPlayer.playClick(isAccent)
+                clickPlayer.playClick(if (isAccent) ClickSound.BAR else ClickSound.REGULAR)
             } catch (e: Exception) {
                 Log.e(TAG, "ClickPlayer failed; continuing without audio for this beat", e)
             }
         }
+        if (beatIndex == 0) barsElapsedSincePlay++
         totalBeats++
         beatIndex = (beatIndex + 1) % _state.value.beatsPerBar.coerceAtLeast(1)
     }
@@ -496,4 +710,11 @@ object MetronomeEngine {
 
     /** Fraction of full brightness used for the idle glyph preview when the metronome is stopped. */
     private const val IDLE_GLYPH_SCALE = 0.06f
+
+    /** How many bars a progressive mute ramp takes to reach its configured target probability. */
+    private const val PROGRESSIVE_MUTE_RAMP_BARS = 8
+
+    /** Upper bound for [setUnitNoteValue] - generous enough for any real time signature (32nd
+     * notes) without pretending every integer in between is a musically meaningful denominator. */
+    const val MAX_UNIT_NOTE_VALUE = 32
 }

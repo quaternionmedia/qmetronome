@@ -48,20 +48,41 @@ class InternalClockSource : ClockSource {
         this.bpm = bpm
         running = true
         tickJob = scope.launch {
-            var nextTickNanos = System.nanoTime()
+            var lastFireNanos = System.nanoTime()
+            var nextTickNanos = lastFireNanos
             while (isActive && running) {
+                val intervalNanos = (60_000_000_000.0 / this@InternalClockSource.bpm).toLong()
                 val now = System.nanoTime()
+
+                // A tempo change made mid-wait otherwise has no effect until this wait finishes -
+                // which can be tens of seconds at a slow tempo, and looks exactly like the beat
+                // (and therefore the animation, which derives its phase from time-since-last-
+                // beat) has frozen solid until the metronome is stopped and restarted. If the
+                // *current* bpm's interval has already elapsed since the last beat, resync to
+                // now instead of waiting out a schedule computed from a stale, since-changed bpm
+                // - the same treatment a process-suspension gap already needed below.
+                if (now - lastFireNanos >= intervalNanos) {
+                    nextTickNanos = now
+                }
+
                 val delayMillis = (nextTickNanos - now) / 1_000_000
+                if (delayMillis > POLL_SLICE_MS) {
+                    // Don't commit to a single long sleep sized for the bpm at this instant -
+                    // sleep in short slices and re-check against the live bpm each time, so a
+                    // tempo change is noticed within one slice instead of only once whatever the
+                    // wait was originally sized for finishes.
+                    delay(POLL_SLICE_MS)
+                    continue
+                }
                 if (delayMillis > 0) delay(delayMillis)
                 onBeat(nextTickNanos, null)
-                val intervalNanos = (60_000_000_000.0 / this@InternalClockSource.bpm).toLong()
-                nextTickNanos += intervalNanos
-                // If we fell badly behind (e.g. process was suspended), resync instead of
-                // firing a burst of catch-up ticks.
-                val behindBy = System.nanoTime() - nextTickNanos
-                if (behindBy > intervalNanos) {
-                    nextTickNanos = System.nanoTime() + intervalNanos
-                }
+                lastFireNanos = nextTickNanos
+                // Re-read bpm fresh rather than reusing intervalNanos from above - onBeat() may
+                // have just changed the tempo itself (e.g. the bar queue advancing to a bar with
+                // a different bpm), and that change must govern the very next beat. Reusing the
+                // pre-beat interval here would silently apply the new tempo one beat late.
+                val postBeatIntervalNanos = (60_000_000_000.0 / this@InternalClockSource.bpm).toLong()
+                nextTickNanos += postBeatIntervalNanos
             }
         }
     }
@@ -74,5 +95,10 @@ class InternalClockSource : ClockSource {
         running = false
         tickJob?.cancel()
         tickJob = null
+    }
+
+    private companion object {
+        /** How often the tick loop re-checks the live bpm while waiting out a long interval. */
+        const val POLL_SLICE_MS = 30L
     }
 }

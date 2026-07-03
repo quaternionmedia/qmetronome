@@ -31,6 +31,13 @@ import kotlin.math.roundToInt
  * already claimed by numeric entry, so the reset gesture is a different one on the same label
  * (mirroring the double-tap-on-preview-toggles-playback precedent elsewhere in this app) rather
  * than adding a second visible control.
+ *
+ * [currentValue] defaults to closing over [value] itself, which is enough for a caller whose
+ * state updates recompose fast relative to [HoldRepeatButton]'s repeat interval - but a hold can
+ * fire several steps before recomposition catches up, and every one of those calls would then
+ * see the same stale [value] and collapse into a single effective step (the same bug BPM/
+ * beats-per-bar hit before their call sites started reading the backing `StateFlow` fresh at call
+ * time). Callers backed by a `StateFlow` should pass `currentValue = { theFlow.value }` instead.
  */
 @Composable
 fun SteppedSlider(
@@ -41,6 +48,7 @@ fun SteppedSlider(
     defaultValue: Float,
     dialogTitle: String,
     modifier: Modifier = Modifier,
+    currentValue: () -> Float = { value },
     valueLabel: (Float) -> String = { it.roundToInt().toString() },
     dialogValueLabel: (Float) -> String = valueLabel,
     dialogParse: (String) -> Float? = { it.toFloatOrNull() },
@@ -53,7 +61,7 @@ fun SteppedSlider(
         modifier = modifier.fillMaxWidth(),
     ) {
         HoldRepeatButton(
-            onStep = { onValueChange((value - step).coerceIn(valueRange)) },
+            onStep = { onValueChange((currentValue() - step).coerceIn(valueRange)) },
             modifier = Modifier.size(40.dp),
         ) {
             Icon(Icons.Filled.Remove, contentDescription = "Decrease")
@@ -77,7 +85,7 @@ fun SteppedSlider(
             )
         }
         HoldRepeatButton(
-            onStep = { onValueChange((value + step).coerceIn(valueRange)) },
+            onStep = { onValueChange((currentValue() + step).coerceIn(valueRange)) },
             modifier = Modifier.size(40.dp),
         ) {
             Icon(Icons.Filled.Add, contentDescription = "Increase")

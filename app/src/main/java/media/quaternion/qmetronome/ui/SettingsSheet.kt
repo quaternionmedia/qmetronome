@@ -19,9 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Button
@@ -70,10 +68,11 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     val visualizer by MetronomeEngine.visualizer.collectAsState()
     val clockStatus by MetronomeEngine.clockStatus.collectAsState()
     val clickEnabled by MetronomeEngine.clickEnabled.collectAsState()
-    val stagedBeatsPerBar by MetronomeEngine.stagedBeatsPerBar.collectAsState()
     val clockOutEnabled by MidiClockSender.enabled.collectAsState()
     val visualOffsetMs by MetronomeEngine.visualOffsetMs.collectAsState()
     val compactLandscape by MetronomeEngine.compactLandscape.collectAsState()
+    val muteProbability by MetronomeEngine.muteProbability.collectAsState()
+    val progressiveMuteEnabled by MetronomeEngine.progressiveMuteEnabled.collectAsState()
 
     val usbDevices by UsbMidiConnector.availableDevices.collectAsState()
     val followingUsbDeviceId by UsbMidiConnector.followingDeviceId.collectAsState()
@@ -106,25 +105,31 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
 
             HorizontalDivider()
 
-            SettingsSection(title = "Beats per bar") {
-                val displayBeats = stagedBeatsPerBar ?: beat.beatsPerBar
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        IconButton(onClick = { MetronomeEngine.setBeatsPerBar(displayBeats - 1) }) {
-                            Icon(Icons.Filled.Remove, contentDescription = "Fewer beats per bar")
-                        }
-                        Text(displayBeats.toString(), style = MaterialTheme.typography.titleLarge)
-                        IconButton(onClick = { MetronomeEngine.setBeatsPerBar(displayBeats + 1) }) {
-                            Icon(Icons.Filled.Add, contentDescription = "More beats per bar")
-                        }
+            SettingsSection(title = "Random mute") {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SteppedSlider(
+                        value = muteProbability,
+                        onValueChange = MetronomeEngine::setMuteProbability,
+                        currentValue = { MetronomeEngine.muteProbability.value },
+                        valueRange = 0f..1f,
+                        step = 0.05f,
+                        defaultValue = 0f,
+                        dialogTitle = "Set mute probability (%)",
+                        valueLabel = { "${(it * 100).roundToInt()}%" },
+                        dialogValueLabel = { "${(it * 100).roundToInt()}" },
+                        dialogParse = { it.toFloatOrNull()?.div(100f) },
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Progressive start", style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = progressiveMuteEnabled, onCheckedChange = MetronomeEngine::setProgressiveMuteEnabled)
                     }
-                    if (stagedBeatsPerBar != null) {
-                        Text(
-                            text = "• staged",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = RecordingRed,
-                        )
-                    }
+                    Text(
+                        text = "Randomly skips the click on some beats - a practice tool for internalizing " +
+                            "tempo rather than leaning on every click. Progressive start ramps the chance up " +
+                            "from 0% over the first few bars instead of starting at full strength.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
                 }
             }
 
@@ -321,6 +326,7 @@ private fun VisualOffsetControls(offsetMs: Float, bpm: Float, onOffsetChanged: (
         SteppedSlider(
             value = offsetMs,
             onValueChange = onOffsetChanged,
+            currentValue = { MetronomeEngine.visualOffsetMs.value },
             valueRange = -500f..500f,
             step = 10f,
             defaultValue = 0f,

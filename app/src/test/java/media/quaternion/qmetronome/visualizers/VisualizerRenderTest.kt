@@ -21,6 +21,7 @@ class VisualizerRenderTest {
         BeatPhase.IDLE.copy(isPlaying = true, phase = 0.5f, beatIndex = 2, isAccent = false, beatsPerBar = 3),
         BeatPhase.IDLE.copy(isPlaying = true, phase = 0.99f, beatIndex = 0, isAccent = true, beatsPerBar = 1),
         BeatPhase.IDLE.copy(isPlaying = true, phase = 1f, beatIndex = 7, isAccent = false, beatsPerBar = 12),
+        BeatPhase.IDLE.copy(isPlaying = true, phase = 0.6f, beatIndex = 19, isAccent = false, beatsPerBar = 24),
     )
 
     @Test

@@ -69,12 +69,12 @@ class MetronomeEngineTest {
     }
 
     @Test
-    fun `setBeatsPerBar clamps to 1 through 12`() {
+    fun `setBeatsPerBar clamps to 1 through 24`() {
         MetronomeEngine.setBeatsPerBar(0)
         assertEquals(1, MetronomeEngine.state.value.beatsPerBar)
 
         MetronomeEngine.setBeatsPerBar(99)
-        assertEquals(12, MetronomeEngine.state.value.beatsPerBar)
+        assertEquals(24, MetronomeEngine.state.value.beatsPerBar)
     }
 
     @Test
@@ -225,6 +225,251 @@ class MetronomeEngineTest {
 
         assertEquals(6, MetronomeEngine.state.value.beatsPerBar)
         assertNull(MetronomeEngine.stagedBeatsPerBar.value)
+    }
+
+    @Test
+    fun `a drastic tempo increase takes effect promptly, not after the old slow tempo's stale wait`() {
+        // Regression test for a real bug: InternalClockSource used to commit to a single sleep
+        // sized for whatever bpm was in effect when the wait began. Dropping to a very slow
+        // tempo and then speeding back up left the beat - and therefore the animation, which
+        // derives its phase from time-since-last-beat - looking frozen for however long was left
+        // of the *old* slow interval (up to ~60s at MIN_BPM), only clearing once that stale wait
+        // finally elapsed or the metronome was stopped and restarted.
+        MetronomeEngine.setBpm(MetronomeEngine.MIN_BPM) // 1 bpm = a 60-second interval
+        MetronomeEngine.start()
+        Thread.sleep(100) // let the clock commit to its long wait for the second beat
+
+        val totalBeatsBeforeSpeedUp = MetronomeEngine.state.value.totalBeats
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 400 bpm = a 150ms interval
+
+        // If the clock were still honoring the stale ~60s wait, this would time out long before
+        // a new beat ever arrived. With the fix, one should land within roughly the new tempo's
+        // interval plus polling slack, not anywhere close to the old interval.
+        Thread.sleep(500)
+
+        assertTrue(
+            "expected at least one beat to fire promptly after a drastic speed-up, not only " +
+                "after the old slow tempo's full ~60s interval - got " +
+                "totalBeats=${MetronomeEngine.state.value.totalBeats} (was $totalBeatsBeforeSpeedUp)",
+            MetronomeEngine.state.value.totalBeats > totalBeatsBeforeSpeedUp,
+        )
+    }
+
+    @Test
+    fun `effective mute probability is the flat target when progressive start is off`() {
+        MetronomeEngine.setMuteProbability(0.5f)
+        MetronomeEngine.setProgressiveMuteEnabled(false)
+
+        assertEquals(0.5f, MetronomeEngine.effectiveMuteProbability(barsElapsed = 0), 0.001f)
+        assertEquals(0.5f, MetronomeEngine.effectiveMuteProbability(barsElapsed = 100), 0.001f)
+    }
+
+    @Test
+    fun `effective mute probability ramps linearly across the progressive-start window`() {
+        MetronomeEngine.setMuteProbability(0.8f)
+        MetronomeEngine.setProgressiveMuteEnabled(true)
+
+        assertEquals(0f, MetronomeEngine.effectiveMuteProbability(barsElapsed = 0), 0.001f)
+        assertEquals(0.8f * 4 / 8, MetronomeEngine.effectiveMuteProbability(barsElapsed = 4), 0.001f)
+        assertEquals(0.8f, MetronomeEngine.effectiveMuteProbability(barsElapsed = 8), 0.001f)
+        assertEquals(0.8f, MetronomeEngine.effectiveMuteProbability(barsElapsed = 20), 0.001f)
+    }
+
+    @Test
+    fun `setMuteProbability clamps to 0 through 1`() {
+        MetronomeEngine.setMuteProbability(-0.5f)
+        assertEquals(0f, MetronomeEngine.muteProbability.value, 0.001f)
+
+        MetronomeEngine.setMuteProbability(1.5f)
+        assertEquals(1f, MetronomeEngine.muteProbability.value, 0.001f)
+    }
+
+    @Test
+    fun `the default queue has a single entry and never auto-advances`() {
+        assertEquals(1, MetronomeEngine.timeSignatureQueue.value.size)
+        assertEquals(0, MetronomeEngine.queueIndex.value)
+        assertNull(MetronomeEngine.nextQueueIndexAfterBar(currentIndex = 0, queueSize = 1, MetronomeEngine.QueueMode.LOOP))
+    }
+
+    @Test
+    fun `addBarToQueue appends a copy of the active bar and jumps to it`() {
+        MetronomeEngine.setBeatsPerBar(5)
+
+        MetronomeEngine.addBarToQueue()
+
+        val queue = MetronomeEngine.timeSignatureQueue.value
+        assertEquals(2, queue.size)
+        assertEquals(1, MetronomeEngine.queueIndex.value)
+        assertEquals(5, queue[0].beatCount)
+        assertEquals(5, queue[1].beatCount)
+    }
+
+    @Test
+    fun `setBeatsPerBar edits only the currently active queue entry`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.addBarToQueue() // now on a second entry, a copy with beatCount 4
+
+        MetronomeEngine.setBeatsPerBar(7)
+
+        val queue = MetronomeEngine.timeSignatureQueue.value
+        assertEquals(4, queue[0].beatCount)
+        assertEquals(7, queue[1].beatCount)
+    }
+
+    @Test
+    fun `goToQueueBar clamps to a valid index and updates the active time signature`() {
+        MetronomeEngine.setBeatsPerBar(3)
+        MetronomeEngine.addBarToQueue()
+        MetronomeEngine.setBeatsPerBar(6)
+
+        MetronomeEngine.goToQueueBar(-5)
+        assertEquals(0, MetronomeEngine.queueIndex.value)
+        assertEquals(3, MetronomeEngine.state.value.beatsPerBar)
+
+        MetronomeEngine.goToQueueBar(99)
+        assertEquals(1, MetronomeEngine.queueIndex.value)
+        assertEquals(6, MetronomeEngine.state.value.beatsPerBar)
+    }
+
+    @Test
+    fun `removeCurrentBarFromQueue never drops below one entry`() {
+        MetronomeEngine.removeCurrentBarFromQueue()
+        assertEquals(1, MetronomeEngine.timeSignatureQueue.value.size)
+
+        MetronomeEngine.addBarToQueue()
+        MetronomeEngine.removeCurrentBarFromQueue()
+        assertEquals(1, MetronomeEngine.timeSignatureQueue.value.size)
+        assertEquals(0, MetronomeEngine.queueIndex.value)
+    }
+
+    @Test
+    fun `removeBarFromQueue keeps the same bar active when removing a different bar`() {
+        MetronomeEngine.setBeatsPerBar(3) // bar 0
+        MetronomeEngine.addBarToQueue() // bar 1, active
+        MetronomeEngine.setBeatsPerBar(5)
+        MetronomeEngine.addBarToQueue() // bar 2, active
+        MetronomeEngine.setBeatsPerBar(7)
+        MetronomeEngine.goToQueueBar(0) // back to bar 0, now active
+
+        MetronomeEngine.removeBarFromQueue(1) // remove the middle bar, not the active one
+
+        val queue = MetronomeEngine.timeSignatureQueue.value
+        assertEquals(2, queue.size)
+        assertEquals(3, queue[0].beatCount)
+        assertEquals(7, queue[1].beatCount) // old bar 2 shifted down to index 1
+        assertEquals(0, MetronomeEngine.queueIndex.value) // stayed on the same (bar-0) bar
+        assertEquals(3, MetronomeEngine.state.value.beatsPerBar)
+    }
+
+    @Test
+    fun `removeBarFromQueue does nothing for an out-of-range index`() {
+        MetronomeEngine.addBarToQueue()
+
+        MetronomeEngine.removeBarFromQueue(99)
+
+        assertEquals(2, MetronomeEngine.timeSignatureQueue.value.size)
+    }
+
+    @Test
+    fun `tempo is per-bar - switching bars recalls each bar's own bpm`() {
+        MetronomeEngine.setBpm(90f) // bar 0
+        MetronomeEngine.addBarToQueue() // bar 1, a copy - starts at bpm 90 too
+        MetronomeEngine.setBpm(150f) // now bar 1 is 150
+
+        MetronomeEngine.goToQueueBar(0)
+        assertEquals(90f, MetronomeEngine.state.value.bpm, 0.01f)
+
+        MetronomeEngine.goToQueueBar(1)
+        assertEquals(150f, MetronomeEngine.state.value.bpm, 0.01f)
+    }
+
+    @Test
+    fun `a queue advance's tempo change governs the very next beat, not one beat late`() {
+        // Regression test: InternalClockSource used to reuse the pre-beat interval to schedule
+        // the beat *after* next, so a tempo change made during onBeat() itself (the bar queue
+        // advancing to a bar with a different bpm) took effect one beat later than it should.
+        MetronomeEngine.setBpm(60f) // bar 0: 1000ms/beat
+        MetronomeEngine.setBeatsPerBar(1) // every beat is a bar boundary
+        MetronomeEngine.addBarToQueue() // bar 1, a copy of bar 0
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // bar 1: 150ms/beat
+        MetronomeEngine.goToQueueBar(0) // start on bar 0 (slow)
+
+        MetronomeEngine.start()
+        // Beat 1 fires ~immediately on bar 0's slow tempo (the queue never advances on the very
+        // first beat). Beat 2 fires ~1000ms later, still using bar 0's tempo for that interval -
+        // but *at* beat 2 the queue advances to bar 1's fast tempo, which must govern the
+        // interval before beat 3, not the interval after it (which would push beat 3 out to
+        // ~2000ms instead of ~1150ms if the bug were still present). Both bars are 1 beat long,
+        // so the queue flips back to bar 0 *at* beat 3 too - beat 4 correctly waits out bar 0's
+        // full 1000ms (due ~2150ms), so 1500ms is chosen to land after a fixed beat 3 (~1150ms)
+        // but well before both a buggy beat 3 (~2000ms) and the always-correctly-delayed beat 4.
+        // state.totalBeats is 0-indexed (it's captured before the post-beat increment), so
+        // "a third beat has fired" reads as totalBeats == 2, not 3.
+        Thread.sleep(1500)
+
+        assertTrue(
+            "expected a third beat within 1500ms of starting - totalBeats=" +
+                "${MetronomeEngine.state.value.totalBeats}",
+            MetronomeEngine.state.value.totalBeats >= 2,
+        )
+    }
+
+    @Test
+    fun `setUnitNoteValue edits only the active bar's denominator, clamped`() {
+        MetronomeEngine.setUnitNoteValue(8) // bar 0 -> 4/8... well, x/8
+        MetronomeEngine.addBarToQueue() // bar 1, a copy (unitNoteValue 8)
+        MetronomeEngine.setUnitNoteValue(2)
+
+        val queue = MetronomeEngine.timeSignatureQueue.value
+        assertEquals(8, queue[0].unitNoteValue)
+        assertEquals(2, queue[1].unitNoteValue)
+
+        MetronomeEngine.setUnitNoteValue(0)
+        assertEquals(1, MetronomeEngine.timeSignatureQueue.value[1].unitNoteValue)
+
+        MetronomeEngine.setUnitNoteValue(999)
+        assertEquals(MetronomeEngine.MAX_UNIT_NOTE_VALUE, MetronomeEngine.timeSignatureQueue.value[1].unitNoteValue)
+    }
+
+    @Test
+    fun `nextQueueIndexAfterBar loops back to the first bar after the last in LOOP mode`() {
+        assertEquals(1, MetronomeEngine.nextQueueIndexAfterBar(0, queueSize = 3, MetronomeEngine.QueueMode.LOOP))
+        assertEquals(2, MetronomeEngine.nextQueueIndexAfterBar(1, queueSize = 3, MetronomeEngine.QueueMode.LOOP))
+        assertEquals(0, MetronomeEngine.nextQueueIndexAfterBar(2, queueSize = 3, MetronomeEngine.QueueMode.LOOP))
+    }
+
+    @Test
+    fun `nextQueueIndexAfterBar stays on the last bar once reached in ONCE mode`() {
+        assertEquals(1, MetronomeEngine.nextQueueIndexAfterBar(0, queueSize = 3, MetronomeEngine.QueueMode.ONCE))
+        assertNull(MetronomeEngine.nextQueueIndexAfterBar(2, queueSize = 3, MetronomeEngine.QueueMode.ONCE))
+    }
+
+    @Test
+    fun `nextQueueIndexAfterBar never advances in MANUAL mode`() {
+        assertNull(MetronomeEngine.nextQueueIndexAfterBar(0, queueSize = 3, MetronomeEngine.QueueMode.MANUAL))
+        assertNull(MetronomeEngine.nextQueueIndexAfterBar(2, queueSize = 3, MetronomeEngine.QueueMode.MANUAL))
+    }
+
+    @Test
+    fun `a multi-bar queue in LOOP mode actually advances during real playback`() {
+        MetronomeEngine.setBeatsPerBar(1) // one beat per bar, so every beat is a bar boundary
+        MetronomeEngine.addBarToQueue()
+        MetronomeEngine.goToQueueBar(0)
+        MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.LOOP)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat = 150ms/bar, keeps this quick
+
+        MetronomeEngine.start()
+        // The first beat fires immediately without advancing (totalBeats == 0 guard); the second
+        // beat, around the 150ms mark, is the first real bar-boundary advance (0 -> 1). Land well
+        // after that but comfortably before the third beat would flip it back to 0.
+        Thread.sleep(230)
+
+        assertTrue(
+            "expected at least the first advance (queue index 0 -> 1) to have happened by now - " +
+                "totalBeats=${MetronomeEngine.state.value.totalBeats} queueIndex=${MetronomeEngine.queueIndex.value}",
+            MetronomeEngine.state.value.totalBeats >= 1,
+        )
+        assertEquals(1, MetronomeEngine.queueIndex.value)
     }
 
     @Test

@@ -46,6 +46,53 @@ class MetronomeSettings(context: Context) {
         get() = prefs.getBoolean(KEY_HAS_SHOWN_BPM_HINT, false)
         set(value) = prefs.edit().putBoolean(KEY_HAS_SHOWN_BPM_HINT, value).apply()
 
+    /** Chance (0..1) that any given beat's click is skipped - a practice tool for internalizing
+     * tempo without leaning on every click. Defaults to 0 - off until explicitly turned up. */
+    var muteProbability: Float
+        get() = prefs.getFloat(KEY_MUTE_PROBABILITY, 0f)
+        set(value) = prefs.edit().putFloat(KEY_MUTE_PROBABILITY, value).apply()
+
+    /** When true, muteProbability ramps up from 0 over the first few bars of playback instead of
+     * applying at full strength immediately. */
+    var progressiveMuteEnabled: Boolean
+        get() = prefs.getBoolean(KEY_PROGRESSIVE_MUTE_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_PROGRESSIVE_MUTE_ENABLED, value).apply()
+
+    /** The bar queue - beats/note value/tempo per bar - as "beatCount:unitNoteValue:bpm" rows
+     * joined by "|". No JSON dependency needed for something this shape-stable. [accentPattern]
+     * isn't persisted - there's no UI to set a custom one yet, so every restored bar reads back
+     * with the default (beat 0 only) accent. A missing, empty, or corrupt entry falls back to a
+     * single default bar rather than an empty queue, which [MetronomeEngine] never allows. */
+    var queue: List<TimeSignature>
+        get() {
+            val encoded = prefs.getString(KEY_QUEUE, null) ?: return listOf(TimeSignature.DEFAULT)
+            val bars = encoded.split("|").mapNotNull { bar ->
+                val parts = bar.split(":")
+                val beatCount = parts.getOrNull(0)?.toIntOrNull()
+                val unitNoteValue = parts.getOrNull(1)?.toIntOrNull()
+                val bpm = parts.getOrNull(2)?.toFloatOrNull()
+                if (beatCount == null || unitNoteValue == null || bpm == null) return@mapNotNull null
+                TimeSignature(beatCount = beatCount, unitNoteValue = unitNoteValue, bpm = bpm)
+            }
+            return bars.ifEmpty { listOf(TimeSignature.DEFAULT) }
+        }
+        set(value) {
+            val encoded = value.joinToString("|") { "${it.beatCount}:${it.unitNoteValue}:${it.bpm}" }
+            prefs.edit().putString(KEY_QUEUE, encoded).apply()
+        }
+
+    /** Which bar in [queue] was active - clamped to the restored queue's actual size by the
+     * caller, since the queue length itself isn't known until it's decoded. */
+    var queueIndex: Int
+        get() = prefs.getInt(KEY_QUEUE_INDEX, 0)
+        set(value) = prefs.edit().putInt(KEY_QUEUE_INDEX, value).apply()
+
+    var queueMode: MetronomeEngine.QueueMode
+        get() = MetronomeEngine.QueueMode.entries.getOrElse(prefs.getInt(KEY_QUEUE_MODE, 0)) {
+            MetronomeEngine.QueueMode.LOOP
+        }
+        set(value) = prefs.edit().putInt(KEY_QUEUE_MODE, value.ordinal).apply()
+
     private companion object {
         const val PREFS_NAME = "metronome_settings"
         const val KEY_BPM = "bpm"
@@ -56,5 +103,10 @@ class MetronomeSettings(context: Context) {
         const val KEY_VISUAL_OFFSET_MS = "visual_offset_ms"
         const val KEY_COMPACT_LANDSCAPE = "compact_landscape"
         const val KEY_HAS_SHOWN_BPM_HINT = "has_shown_bpm_hint"
+        const val KEY_MUTE_PROBABILITY = "mute_probability"
+        const val KEY_PROGRESSIVE_MUTE_ENABLED = "progressive_mute_enabled"
+        const val KEY_QUEUE = "queue"
+        const val KEY_QUEUE_INDEX = "queue_index"
+        const val KEY_QUEUE_MODE = "queue_mode"
     }
 }

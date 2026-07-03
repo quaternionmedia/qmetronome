@@ -22,6 +22,10 @@ val MidGray = Color(0xFF8A8A8A)
 /** Matches the Glyph Matrix's own unlit-LED gray (see the kit's preview icon convention). */
 val UnlitGray = Color(0xFF1C1C1C)
 
+/** The "slow" end of the bar-queue dot tempo gradient (see MainScreen.BarQueueDots) - dark but
+ * still clearly visible against the pure-black background, unlike the near-invisible UnlitGray. */
+val DimGray = Color(0xFF454545)
+
 /**
  * Reserved for transient state/activity indicators only - latch, staged changes, external clock
  * activity - a studio tally-light accent, not a persistent theme color. Same restraint as

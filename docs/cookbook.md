@@ -93,8 +93,11 @@ MetronomeEngine.setBpm(120f)
 MetronomeEngine.toggle()       // start if stopped, stop if playing
 MetronomeEngine.tapTempo()     // tap-tempo input
 MetronomeEngine.setVisualizer(myVisualizer)
-MetronomeEngine.setBeatsPerBar(4)
+MetronomeEngine.setBeatsPerBar(4)       // numerator - always edits whichever bar is active
+MetronomeEngine.setUnitNoteValue(8)     // denominator - independent of beatCount, no UI staging
 MetronomeEngine.setVisualOffsetMs(50f)    // -500..+500 ms
+MetronomeEngine.setMuteProbability(0.3f)          // 0..1 chance a beat's click is skipped
+MetronomeEngine.setProgressiveMuteEnabled(true)   // ramp that chance up over the first few bars
 
 // Hold/latch staging - while holdMode != Off, setBpm()/setBeatsPerBar() (and tapTempo(),
 // which calls setBpm() internally) stage instead of applying immediately.
@@ -105,6 +108,26 @@ MetronomeEngine.holdMode       // StateFlow<HoldMode>: Off / Momentary / Latched
 MetronomeEngine.stagedBpm      // StateFlow<Float?>, non-null while staging
 MetronomeEngine.stagedBeatsPerBar  // StateFlow<Int?> - commits at the next bar's downbeat if
                                    // flushed while playing, since it can't apply mid-bar cleanly
+
+// Bar queue - a single-entry queue (the default) behaves like a plain time signature and tempo.
+// setBeatsPerBar()/setUnitNoteValue()/setBpm() always edit whichever bar is currently active.
+MetronomeEngine.timeSignatureQueue  // StateFlow<List<TimeSignature>> - beatCount+unitNoteValue+bpm each
+MetronomeEngine.queueIndex          // StateFlow<Int> - which bar is active
+MetronomeEngine.queueMode           // StateFlow<QueueMode>: LOOP (default) / ONCE / MANUAL
+MetronomeEngine.addBarToQueue()          // appends a copy of the active bar, jumps to it
+MetronomeEngine.removeBarFromQueue(1)    // remove a specific bar by index; no-op if it's the only one
+MetronomeEngine.removeCurrentBarFromQueue()  // shorthand for removeBarFromQueue(queueIndex.value)
+MetronomeEngine.resetQueueToDefault()    // collapse back to a single default bar + LOOP mode
+MetronomeEngine.nextQueueBar()           // manual navigation, clamped (not wrapping)
+MetronomeEngine.previousQueueBar()
+MetronomeEngine.goToQueueBar(2)          // jump directly (applies that bar's beats *and* bpm), clamped
+MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.ONCE)
+// The queue, queueIndex and queueMode all persist across restarts (see "Settings persistence"
+// below) - setBpm()/setBeatsPerBar()/setUnitNoteValue()/goToQueueBar()/addBarToQueue()/
+// removeBarFromQueue()/setQueueMode() each write through automatically.
+
+// Click sounds - ClickPlayer.playClick(ClickSound.REGULAR / .BAR), a small tone table
+// (ClickPlayer's soundSpecs) rather than an inline branch, so a new sound is a new table row.
 
 // Observe in Compose
 val beat by MetronomeEngine.state.collectAsState()
@@ -180,6 +203,9 @@ app/src/main/java/.../
     MetronomeSettings.kt     ← SharedPreferences wrapper
     BeatPhase.kt             ← data class: bpm, phase, isAccent, isPlaying
     ClockSource.kt           ← internal drift-corrected clock
+    TimeSignature.kt         ← beatCount/unitNoteValue/bpm/accent pattern; engine holds a queue of these
+    ClickPlayer.kt           ← ToneGenerator wrapper; ClickSound -> tone/duration table
+    ClickSound.kt            ← which click to play (REGULAR/BAR today) - add sounds here
   visualizers/
     GlyphVisualizer.kt       ← interface + GlyphCanvas
     VisualizerRegistry.kt    ← the list; add new ones here
@@ -199,6 +225,7 @@ app/src/main/java/.../
     HoldButton.kt            ← BPM/beats-per-bar staging - momentary hold or sticky latch
     SteppedSlider.kt         ← standard slider: +/- steppers + long-press numeric entry
     NumericEntryDialog.kt    ← the numeric entry dialog itself (shared by BPM + sliders)
+    TimeSignatureEntryDialog.kt ← beats + note value, two independent fields, one dialog
     BrandMarks.kt            ← QM + qMetronome brand marks, long-press to open GitHub
   widget/
     MetronomeWidget.kt       ← Jetpack Glance home screen widget
