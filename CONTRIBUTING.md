@@ -16,8 +16,8 @@ hardware.
 
 | Tool | Required version | Notes |
 |---|---|---|
-| JDK | 21 (Temurin recommended) | CI uses Temurin 21; other JDK 21 distributions work |
-| Android SDK | platform 35, build-tools 35.x | See setup paths below |
+| JDK | 21 | Android Studio bundles one; Temurin 21 for CLI-only setups |
+| Android SDK | platform 35, build-tools 35.x | Android Studio manages this automatically |
 | Git | any modern version | |
 | Android Studio *(optional)* | Ladybug 2024.2+ | For Compose previews and the layout editor; not required to build |
 
@@ -26,6 +26,16 @@ automatically on first run — you don't install Gradle separately.
 
 The Glyph Matrix SDK (`app/libs/glyph-matrix-sdk-2.0.aar`) is committed to
 the repo — no separate SDK download or account is required.
+
+**Windows note:** on Windows, use `gradlew.bat` instead of `./gradlew`
+everywhere in this doc. `./gradlew` requires Git Bash; `gradlew.bat` works
+in PowerShell and CMD without any extra tools. Gradle also requires `JAVA_HOME`
+to be set — see the setup paths below for where to find it.
+
+> New to Android development? [`docs/onboarding.md`](docs/onboarding.md) walks
+> through every step with annotated output and "if this goes wrong" notes.
+> Experienced but just need the commands? [`docs/cookbook.md`](docs/cookbook.md)
+> is the quick reference.
 
 ---
 
@@ -57,9 +67,15 @@ the repo — no separate SDK download or account is required.
 
 5. **Run the tests.** In the terminal panel at the bottom:
    ```sh
-   ./gradlew test
+   ./gradlew test        # macOS/Linux or Android Studio's built-in terminal
+   gradlew.bat test      # Windows PowerShell / CMD
    ```
    All tests run on the JVM via Robolectric — no device or emulator needed.
+
+   > **Windows:** Android Studio's built-in terminal (View → Tool Windows → Terminal)
+   > already has `JAVA_HOME` configured — both `./gradlew` and `gradlew.bat` work
+   > there. In an external PowerShell window you need `JAVA_HOME` set first; see
+   > the CLI setup below or [`docs/onboarding.md`](docs/onboarding.md).
 
 ---
 
@@ -68,19 +84,31 @@ the repo — no separate SDK download or account is required.
 Any editor works for code — VS Code with the Kotlin extension, IntelliJ IDEA
 Community, Neovim, whatever. You need the Android SDK separately.
 
-### 1 — Install JDK 21
+### 1 — JDK 21
 
-[Temurin 21](https://adoptium.net/) is the CI distribution. Set `JAVA_HOME`
-to the JDK root:
+**Windows with Android Studio already installed:** use the bundled JDK — no
+separate download needed:
+
+```powershell
+# PowerShell — add to your $PROFILE for persistence
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+$env:PATH      = "$env:JAVA_HOME\bin;$env:PATH"
+```
+
+**Everyone else:** download [Temurin 21](https://adoptium.net/) (the CI
+distribution) and set `JAVA_HOME`:
 
 ```sh
-# Linux / macOS (add to ~/.bashrc or ~/.zshrc)
+# macOS / Linux (add to ~/.zshrc or ~/.bashrc)
 export JAVA_HOME=/path/to/jdk-21
 export PATH="$JAVA_HOME/bin:$PATH"
 
-# Windows (PowerShell — set permanently via System Properties → Environment Variables)
-$env:JAVA_HOME = "C:\path\to\jdk-21"
+# Windows without Android Studio (PowerShell)
+$env:JAVA_HOME = "C:\path\to\temurin-21"
+$env:PATH      = "$env:JAVA_HOME\bin;$env:PATH"
 ```
+
+Verify: `java -version` should print `openjdk version "21…"`.
 
 ### 2 — Install the Android SDK
 
@@ -109,20 +137,26 @@ If Android Studio is installed elsewhere on the machine (but you want to use
 a different editor), point to its SDK instead:
 
 ```sh
-# Linux/macOS — path is usually:
-export ANDROID_HOME=~/Library/Android/sdk            # macOS
-export ANDROID_HOME=~/Android/Sdk                    # Linux
+# macOS
+export ANDROID_HOME=~/Library/Android/sdk
+# Linux
+export ANDROID_HOME=~/Android/Sdk
+```
 
-# Windows — path is usually:
+```powershell
+# Windows PowerShell
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 ```
 
 ### 3 — Tell Gradle where the SDK is
 
-Create `local.properties` in the project root (alongside `settings.gradle.kts`):
+**Android Studio users:** Android Studio already created `local.properties`
+with `sdk.dir=` pointing to your SDK. Skip this step — you're done.
+
+**CLI-only setups:** create `local.properties` in the project root:
 
 ```properties
-# Linux/macOS
+# macOS/Linux
 sdk.dir=/home/yourname/android-sdk
 
 # Windows — use forward slashes or escape backslashes
@@ -140,20 +174,30 @@ automatically and `local.properties` isn't required.
 git clone https://github.com/quaternionmedia/qmetronome.git
 cd qmetronome
 
-# First build — downloads Gradle 9.4.1 and all Maven dependencies
-./gradlew assembleDebug          # Linux/macOS
-gradlew.bat assembleDebug        # Windows
+# First build — downloads Gradle 9.4.1 and all Maven dependencies (~300 MB, cached after)
+./gradlew assembleDebug          # macOS/Linux
+gradlew.bat assembleDebug        # Windows PowerShell/CMD
 
 # Run all unit tests (JVM only, no device needed)
-./gradlew test
+./gradlew test                   # macOS/Linux
+gradlew.bat test                 # Windows
 ```
 
 ### 5 — Install on a device
 
+Enable USB debugging on your Android 13+ device, then:
+
 ```sh
-# Enable USB debugging on your Android 13+ device, then:
+# macOS/Linux (adb is in $ANDROID_HOME/platform-tools/)
 adb install app/build/outputs/apk/debug/app-debug.apk
+
+# Windows — if adb isn't in PATH, use the full path:
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" install app\build\outputs\apk\debug\app-debug.apk
 ```
+
+To add `adb` to your PATH permanently on Windows, add
+`%LOCALAPPDATA%\Android\Sdk\platform-tools` to System Properties → Environment
+Variables → Path.
 
 ---
 
@@ -198,7 +242,8 @@ audio; bar 1 must read distinctly from other beats).
 ### Before every PR
 
 ```sh
-./gradlew test assembleDebug   # tests + compile check
+./gradlew test assembleDebug       # macOS/Linux
+gradlew.bat test assembleDebug     # Windows
 ```
 
 CI runs the same tasks (plus the Glyph SDK import-boundary check) on every

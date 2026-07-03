@@ -8,6 +8,16 @@ contribution norms; this directory is feasibility investigations, test plans,
 and the project's relationship to the org's decision-record discipline -
 the *why* and *how to verify*, not the *what*.
 
+## Getting started
+
+- **[`onboarding.md`](onboarding.md)** — step-by-step first build for
+  someone new to Android development: JDK/SDK setup for Windows and
+  macOS/Linux (with and without Android Studio), annotated expected output,
+  and "if this goes wrong" notes.
+- **[`cookbook.md`](cookbook.md)** — quick-reference for experienced
+  contributors: build/device/release commands, visualizer recipe,
+  engine API, MIDI shortcuts, and common errors.
+
 ## Feature docs (feasibility → implementation → test plan, per feature)
 
 Each of these follows the same shape: an investigation written before the
