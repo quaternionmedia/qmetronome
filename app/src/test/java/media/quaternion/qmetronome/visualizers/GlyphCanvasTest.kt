@@ -36,6 +36,29 @@ class GlyphCanvasTest {
     }
 
     @Test
+    fun `max never lowers an existing pixel`() {
+        val canvas = GlyphCanvas(5)
+        canvas.set(2, 2, 200)
+        canvas.max(2, 2, 50)
+        assertEquals("max must not darken a brighter existing pixel", 200, canvas.pixels[2 * 5 + 2])
+    }
+
+    @Test
+    fun `max raises a pixel below the target brightness`() {
+        val canvas = GlyphCanvas(5)
+        canvas.set(2, 2, 50)
+        canvas.max(2, 2, 200)
+        assertEquals(200, canvas.pixels[2 * 5 + 2])
+    }
+
+    @Test
+    fun `max out of bounds does not throw`() {
+        val canvas = GlyphCanvas(5)
+        canvas.max(-1, 0, 255)
+        canvas.max(5, 0, 255)
+    }
+
+    @Test
     fun `filledCircle and ring tolerate zero, negative and huge radii without throwing`() {
         val canvas = GlyphCanvas(13)
         canvas.filledCircle(6f, 6f, 0f, 255)
@@ -68,5 +91,22 @@ class GlyphCanvasTest {
     fun `line out of bounds does not throw`() {
         val canvas = GlyphCanvas(13)
         canvas.line(-5f, -5f, 50f, 50f, 200)
+    }
+
+    @Test
+    fun `seeding from an initial frame copies it rather than aliasing it`() {
+        val original = IntArray(5 * 5) { 100 }
+        val canvas = GlyphCanvas(5, initial = original)
+
+        canvas.set(0, 0, 255)
+
+        assertEquals("drawing on the canvas must not mutate the array it was seeded from", 100, original[0])
+        assertEquals(255, canvas.pixels[0])
+    }
+
+    @Test
+    fun `with no initial frame, pixels start at zero`() {
+        val canvas = GlyphCanvas(5, initial = null)
+        assertTrue(canvas.pixels.all { it == 0 })
     }
 }

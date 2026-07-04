@@ -21,7 +21,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -48,7 +50,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -58,7 +59,6 @@ import kotlinx.coroutines.delay
 import media.quaternion.qmetronome.engine.BeatPhase
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.engine.TimeSignature
-import media.quaternion.qmetronome.ui.theme.DimGray
 import media.quaternion.qmetronome.ui.theme.PureWhite
 import media.quaternion.qmetronome.ui.theme.RecordingRed
 import media.quaternion.qmetronome.visualizers.decayEase
@@ -406,65 +406,56 @@ private fun BeatsPerBarControls() {
     fun currentBeats(): Int = MetronomeEngine.stagedBeatsPerBar.value ?: MetronomeEngine.state.value.beatsPerBar
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            HoldRepeatButton(
-                onStep = { MetronomeEngine.setBeatsPerBar(currentBeats() - 1) },
-                modifier = Modifier.size(32.dp),
-            ) {
-                Icon(Icons.Filled.Remove, contentDescription = "Fewer beats per bar", modifier = Modifier.size(14.dp))
-            }
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .padding(horizontal = 8.dp)
-                    .pointerInput(Unit) {
-                        detectTapGestures(onLongPress = { showDialog = true })
-                    },
-            ) {
-                // "N/D" - a real time signature, numerator (beats, the steppers above edit this)
-                // over denominator (note value, edited independently via the long-press dialog).
-                Text(
-                    text = "$displayBeats/${timeSignature.unitNoteValue}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.secondary,
-                )
-                if (holdMode != MetronomeEngine.HoldMode.Off) {
-                    Text(
-                        text = "• staged",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = RecordingRed,
-                    )
-                }
-            }
-            HoldRepeatButton(
-                onStep = { MetronomeEngine.setBeatsPerBar(currentBeats() + 1) },
-                modifier = Modifier.size(32.dp),
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "More beats per bar", modifier = Modifier.size(14.dp))
-            }
-        }
+        // A real time signature - numerator over denominator, no fraction slash, each with its
+        // own steppers - rather than a single "N/D" line with the denominator only reachable via
+        // the long-press dialog. The denominator's steppers are the same size as the numerator's
+        // (both peers now, not one primary/one hidden), but the whole pair sits a notch smaller
+        // than BPM's own steppers above it to keep the visual hierarchy - tempo first, meter
+        // second - the numerator row still carries the "• staged" label, since only beatCount
+        // (not unitNoteValue) is staging-aware. Zero gap between the two rows (rather than even a
+        // small spacer) is what actually reads as "one time signature" instead of two unrelated
+        // stepper rows that happen to be stacked - a thin shared vertical rhythm, not a gap.
+        TimeSignatureNumberRow(
+            value = displayBeats,
+            onDecrement = { MetronomeEngine.setBeatsPerBar(currentBeats() - 1) },
+            onIncrement = { MetronomeEngine.setBeatsPerBar(currentBeats() + 1) },
+            onLongPress = { showDialog = true },
+            contentDescriptionNoun = "beats per bar",
+            stagedLabel = holdMode != MetronomeEngine.HoldMode.Off,
+        )
+        TimeSignatureNumberRow(
+            value = timeSignature.unitNoteValue,
+            // Same "read the authoritative value fresh at call time" fix as currentBeats() above -
+            // unitNoteValue isn't staged, but a hold-repeat gesture can still fire several times
+            // before recomposition catches up, so closing over the recomposition-time
+            // timeSignature.unitNoteValue directly would have the same collapse-to-one-step bug.
+            onDecrement = { MetronomeEngine.setUnitNoteValue(MetronomeEngine.timeSignature.value.unitNoteValue - 1) },
+            onIncrement = { MetronomeEngine.setUnitNoteValue(MetronomeEngine.timeSignature.value.unitNoteValue + 1) },
+            onLongPress = { showDialog = true },
+            contentDescriptionNoun = "note value",
+            stagedLabel = false,
+        )
 
         Spacer(Modifier.height(4.dp))
 
-        // A fixed height, bottom-aligned, rather than sizing to content - BarQueueDots' dot
-        // sizes and tick-row heights change as bars are added/removed/switched, and letting the
-        // row size to that would change this Column's total height on every such change, which
-        // (being centered in the parent layout) visibly shifted the BPM/transport rows above and
-        // below it up and down. A fixed band with everything bottom-aligned keeps every dot's own
-        // baseline level regardless of its size, and keeps the rest of the screen still.
+        // A fixed height, center-aligned, rather than sizing to content - BarQueueDots' bar
+        // heights change as bars are added/removed/switched, and letting the row size to that
+        // would change this Column's total height on every such change, which (being centered in
+        // the parent layout) visibly shifted the BPM/transport rows above and below it up and
+        // down. A fixed band keeps the row's footprint constant; center-aligning (rather than
+        // bottom-aligning) keeps every bar's own centerline level with the icon buttons' own
+        // centerline regardless of the bar's height, instead of everything sharing a bottom edge.
         Row(
             modifier = Modifier
                 .height(QUEUE_ROW_HEIGHT)
                 .horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.Bottom,
+            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             QueueIconButton(
                 icon = Icons.Filled.Delete,
                 contentDescription = "Clear the queue and reset to a single default bar",
+                showDestructiveBadge = true,
                 onClick = MetronomeEngine::resetQueueToDefault,
             )
 
@@ -522,19 +513,77 @@ private fun BeatsPerBarControls() {
     }
 }
 
+/** One number of the time signature (numerator or denominator) with its own +/- steppers -
+ * deliberately a notch smaller than BPM's own steppers to keep the visual hierarchy (tempo
+ * first, meter second), and a fixed minimum width so the numerator and denominator rows stay
+ * aligned with each other regardless of digit count (e.g. "4" vs "24"). Long-press opens the
+ * combined [TimeSignatureEntryDialog] from either number. */
+@Composable
+private fun TimeSignatureNumberRow(
+    value: Int,
+    onDecrement: () -> Unit,
+    onIncrement: () -> Unit,
+    onLongPress: () -> Unit,
+    contentDescriptionNoun: String,
+    stagedLabel: Boolean,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        HoldRepeatButton(
+            onStep = onDecrement,
+            modifier = Modifier.size(TIME_SIG_STEPPER_SIZE),
+        ) {
+            Icon(Icons.Filled.Remove, contentDescription = "Fewer $contentDescriptionNoun", modifier = Modifier.size(TIME_SIG_ICON_SIZE))
+        }
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .widthIn(min = TIME_SIG_NUMBER_MIN_WIDTH)
+                .pointerInput(Unit) {
+                    detectTapGestures(onLongPress = { onLongPress() })
+                },
+        ) {
+            // No fillMaxWidth() here - this Column only has a *minimum* width (widthIn(min=...)),
+            // not a fixed one, so a fillMaxWidth() child would demand all available width from
+            // whatever unconstrained ancestor is above it, ballooning the Column - and therefore
+            // this whole Row - out to (and past) the screen edge, pushing the "+" stepper off it
+            // entirely. The Column's own horizontalAlignment already centers this Text within
+            // whatever width it actually settles on.
+            Text(
+                text = value.toString(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            if (stagedLabel) {
+                Text(
+                    text = "• staged",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = RecordingRed,
+                )
+            }
+        }
+        HoldRepeatButton(
+            onStep = onIncrement,
+            modifier = Modifier.size(TIME_SIG_STEPPER_SIZE),
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "More $contentDescriptionNoun", modifier = Modifier.size(TIME_SIG_ICON_SIZE))
+        }
+    }
+}
+
 /**
- * One pixel-block dot per bar in the queue - a minimal, always-visible (even for the default
- * single bar) page indicator, since swiping alone gave no feedback about whether it did anything.
- * Square, not round, and strictly grayscale - "on theme" with the rest of the app's blocky
- * monochrome look; red is deliberately reserved for staged/latched state elsewhere (see
- * [RecordingRed]'s own kdoc), not repurposed here for tempo since it reads as an error/warning
- * rather than "fast". Each dot's *size* scales with that bar's beat count *relative to the rest of
- * the queue* (not the full 1..24 theoretical range, which made everyday differences like 3 vs 7
- * beats barely register) and its *color* gradients dark gray (slow) to white (fast) by that bar's
- * own tempo - a way to see the whole queue's shape at a glance, since tempo is now per-bar. Tap a
- * dot to jump to it; long-press to remove it. Above every dot, [BeatTicks] shows that bar's own
- * beats - only the active bar's row pulses live, so every bar's shape is visible at once but only
- * the one actually playing draws the eye.
+ * One rectangle per bar in the queue - a minimal, always-visible (even for the default single
+ * bar) page indicator, since swiping alone gave no feedback about whether it did anything.
+ * Deliberately mirrors the physical Glyph Matrix's own queue indicator
+ * ([media.quaternion.qmetronome.visualizers.QueueOverlay]) rather than keeping a separate visual
+ * language on-screen: a bar's *width* scales with its beat count relative to the rest of the
+ * queue (not the full 1..24 theoretical range, which made everyday differences like 3 vs 7 beats
+ * barely register), and its *height* scales with its own tempo - the same two axes, split the
+ * same way, so the on-screen row and the glyph read as one consistent idea instead of two
+ * different ones. The one bar actually active reads at full brightness; the rest are dimmed to
+ * the same ratio the glyph overlay uses. Tap a bar to jump to it; long-press to remove it.
  */
 @Composable
 private fun BarQueueDots(
@@ -548,64 +597,53 @@ private fun BarQueueDots(
     val maxBeats = queue.maxOf { it.beatCount }
     val beatSpan = (maxBeats - minBeats).coerceAtLeast(1)
 
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Bottom) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         queue.forEachIndexed { index, spec ->
             val isActive = index == activeIndex
-            val sizeFraction = if (maxBeats == minBeats) {
+            val widthFraction = if (maxBeats == minBeats) {
                 1f
             } else {
                 (spec.beatCount - minBeats).toFloat() / beatSpan
             }
-            val baseDotSize = MIN_DOT_SIZE + (MAX_DOT_SIZE - MIN_DOT_SIZE) * sizeFraction
-            val dotSize = if (isActive) baseDotSize + ACTIVE_DOT_BOOST else baseDotSize
-            val speedFraction = ((spec.bpm - MetronomeEngine.MIN_BPM) / (MetronomeEngine.MAX_BPM - MetronomeEngine.MIN_BPM))
+            val heightFraction = ((spec.bpm - MetronomeEngine.MIN_BPM) / (MetronomeEngine.MAX_BPM - MetronomeEngine.MIN_BPM))
                 .coerceIn(0f, 1f)
-            // Dark gray = slow, white = fast - plain grayscale rather than red, which read as an
-            // error/warning state instead of a tempo indicator; red stays reserved for staged/
-            // latched state elsewhere (see RecordingRed's own kdoc).
-            val baseColor = lerp(DimGray, PureWhite, speedFraction)
-            val dotColor = if (isActive) baseColor else baseColor.copy(alpha = 0.45f)
+            val barWidth = MIN_BAR_WIDTH + (MAX_BAR_WIDTH - MIN_BAR_WIDTH) * widthFraction
+            val barHeight = MIN_BAR_HEIGHT + (MAX_BAR_HEIGHT - MIN_BAR_HEIGHT) * heightFraction
+            val baseAlpha = if (isActive) ACTIVE_BAR_ALPHA else INACTIVE_BAR_ALPHA
 
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                BeatTicks(
-                    beatCount = spec.beatCount,
-                    beatIndex = if (isActive) beat.beatIndex else -1,
-                    phase = if (isActive) beat.phase else 0f,
-                )
-                Spacer(Modifier.height(3.dp))
-                Box(
-                    modifier = Modifier
-                        .size(dotSize.coerceAtLeast(MIN_DOT_HIT_TARGET))
-                        .pointerInput(index) {
-                            detectTapGestures(
-                                onTap = { onDotClick(index) },
-                                onLongPress = { onDotRemove(index) },
-                            )
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(modifier = Modifier.size(dotSize).background(dotColor))
-                }
-            }
-        }
-    }
-}
-
-/** A small upward tick per beat, the active bar's current beat pulsing with the same [decayEase]
- * flash curve the Glyph Matrix visualizers use, so the beat can be followed along with by eye
- * even without the physical matrix. [beatIndex] of -1 (an inactive bar) shows every tick at rest. */
-@Composable
-private fun BeatTicks(beatCount: Int, beatIndex: Int, phase: Float) {
-    Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.Bottom) {
-        repeat(beatCount) { index ->
-            val isCurrent = index == beatIndex
-            val flash = if (isCurrent) decayEase(phase) else 0f
             Box(
                 modifier = Modifier
-                    .width(2.dp)
-                    .height(6.dp)
-                    .background(PureWhite.copy(alpha = if (isCurrent) (0.35f + 0.65f * flash) else 0.15f)),
-            )
+                    .width(barWidth.coerceAtLeast(MIN_BAR_HIT_WIDTH))
+                    .height(MAX_BAR_HEIGHT)
+                    .pointerInput(index) {
+                        detectTapGestures(
+                            onTap = { onDotClick(index) },
+                            onLongPress = { onDotRemove(index) },
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                // The bar is divided into one segment per beat - beats "represented as part of
+                // the larger rectangle" rather than a separate tick row above it. Beat 0 at the
+                // top, later beats stacked downward, so playback animates top-to-bottom. Only the
+                // active bar's current beat animates (via the same decayEase flash curve the
+                // Glyph Matrix visualizers use); every other segment sits at a flat brightness -
+                // active bar segments brighter than inactive bars', so which bar is playing still
+                // reads at a glance between pulses.
+                Column(modifier = Modifier.width(barWidth).height(barHeight)) {
+                    for (beatIdx in 0 until spec.beatCount) {
+                        val isCurrentBeat = isActive && beatIdx == beat.beatIndex
+                        val flash = if (isCurrentBeat) decayEase(beat.phase) else 0f
+                        val segmentAlpha = baseAlpha + (1f - baseAlpha) * flash
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .background(PureWhite.copy(alpha = segmentAlpha)),
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -613,12 +651,16 @@ private fun BeatTicks(beatCount: Int, beatIndex: Int, phase: Float) {
 /** The minimal icon-only tap target shared by every bar-queue control (add/remove/mode-cycle) -
  * a plain [Box] + [clickable] rather than a Material [IconButton], which carries its own
  * min-touch-target padding/ripple sizing that reads as heavier than this row's otherwise
- * pixel-block-minimal controls. */
+ * pixel-block-minimal controls. [showDestructiveBadge] adds a small red dot flagging a
+ * destructive action (e.g. the reset-queue trash icon), the same accent used for staged/latched
+ * state elsewhere, repurposed here as a "this can't be undone" cue rather than "in progress."
+ */
 @Composable
 private fun QueueIconButton(
     icon: ImageVector,
     contentDescription: String,
     enabled: Boolean = true,
+    showDestructiveBadge: Boolean = false,
     onClick: () -> Unit,
 ) {
     Box(
@@ -632,6 +674,14 @@ private fun QueueIconButton(
             contentDescription = contentDescription,
             modifier = Modifier.size(15.dp).alpha(if (enabled) 1f else 0.3f),
         )
+        if (showDestructiveBadge && enabled) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(6.dp)
+                    .background(RecordingRed, CircleShape),
+            )
+        }
     }
 }
 
@@ -666,13 +716,19 @@ private const val BPM_HINT_DURATION_MS = 4000L
 private const val CONTROLS_ALPHA = 0.82f
 private val PLAY_PAUSE_SIZE = 76.dp
 private val PLAY_PAUSE_ICON_SIZE = 40.dp
-private val MIN_DOT_SIZE = 8.dp
-private val MAX_DOT_SIZE = 22.dp
-private val ACTIVE_DOT_BOOST = 4.dp
-private val MIN_DOT_HIT_TARGET = 22.dp
+private val MIN_BAR_WIDTH = 8.dp
+private val MAX_BAR_WIDTH = 22.dp
+private val MIN_BAR_HEIGHT = 6.dp
+private val MAX_BAR_HEIGHT = 30.dp
+private val MIN_BAR_HIT_WIDTH = 22.dp
+private const val INACTIVE_BAR_ALPHA = 0.35f
+private const val ACTIVE_BAR_ALPHA = 0.7f
+private val TIME_SIG_STEPPER_SIZE = 26.dp
+private val TIME_SIG_ICON_SIZE = 11.dp
+private val TIME_SIG_NUMBER_MIN_WIDTH = 20.dp
 
-/** Fixed height for the whole queue row (ticks + dots + icon buttons) - tall enough for the
- * tallest possible content (max tick height + spacer + largest active dot) plus a little buffer,
- * so the row's footprint never changes as bars are added/removed/resized. See the row's own kdoc
- * for why a content-sized row caused the rest of the screen to visibly shift. */
-private val QUEUE_ROW_HEIGHT = 44.dp
+/** Fixed height for the whole queue row (bars + icon buttons) - tall enough for the tallest
+ * possible bar plus a little buffer, so the row's footprint never changes as bars are
+ * added/removed/resized. See the row's own kdoc for why a content-sized row caused the rest of
+ * the screen to visibly shift. */
+private val QUEUE_ROW_HEIGHT = 40.dp

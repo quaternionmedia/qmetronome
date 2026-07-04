@@ -92,9 +92,14 @@ MetronomeEngine.frame          // IntArray: current rendered frame (same as Glyp
 MetronomeEngine.setBpm(120f)
 MetronomeEngine.toggle()       // start if stopped, stop if playing
 MetronomeEngine.tapTempo()     // tap-tempo input
-MetronomeEngine.setVisualizer(myVisualizer)
+MetronomeEngine.setVisualizer(myVisualizer)      // also pins it to whichever bar is active
+MetronomeEngine.setVisualizerEnabled(false)      // hide the visualizer itself; independent of
+                                                  // setQueueOverlayEnabled - run either, both, neither
 MetronomeEngine.setBeatsPerBar(4)       // numerator - always edits whichever bar is active
-MetronomeEngine.setUnitNoteValue(8)     // denominator - independent of beatCount, no UI staging
+MetronomeEngine.setUnitNoteValue(8)     // denominator - independent of beatCount, no UI staging;
+                                         // rescales bpm to preserve tempo (bpm/unitNoteValue held
+                                         // constant), e.g. 6/4@120 -> 3/2 becomes 3/2@60, same feel
+MetronomeEngine.rescaledBpmForUnitNoteValueChange(120f, 4, 2)  // the rescale math, exposed for testing
 MetronomeEngine.setVisualOffsetMs(50f)    // -500..+500 ms
 MetronomeEngine.setMuteProbability(0.3f)          // 0..1 chance a beat's click is skipped
 MetronomeEngine.setProgressiveMuteEnabled(true)   // ramp that chance up over the first few bars
@@ -110,8 +115,9 @@ MetronomeEngine.stagedBeatsPerBar  // StateFlow<Int?> - commits at the next bar'
                                    // flushed while playing, since it can't apply mid-bar cleanly
 
 // Bar queue - a single-entry queue (the default) behaves like a plain time signature and tempo.
-// setBeatsPerBar()/setUnitNoteValue()/setBpm() always edit whichever bar is currently active.
-MetronomeEngine.timeSignatureQueue  // StateFlow<List<TimeSignature>> - beatCount+unitNoteValue+bpm each
+// setBeatsPerBar()/setUnitNoteValue()/setBpm()/setVisualizer() always edit whichever bar is active.
+MetronomeEngine.timeSignatureQueue  // StateFlow<List<TimeSignature>> - beatCount+unitNoteValue+bpm+
+                                     // visualizerId each (visualizerId null = follow the global pick)
 MetronomeEngine.queueIndex          // StateFlow<Int> - which bar is active
 MetronomeEngine.queueMode           // StateFlow<QueueMode>: LOOP (default) / ONCE / MANUAL
 MetronomeEngine.addBarToQueue()          // appends a copy of the active bar, jumps to it
@@ -128,6 +134,12 @@ MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.ONCE)
 
 // Click sounds - ClickPlayer.playClick(ClickSound.REGULAR / .BAR), a small tone table
 // (ClickPlayer's soundSpecs) rather than an inline branch, so a new sound is a new table row.
+
+// Glyph queue background - QueueOverlay.apply() blends a per-bar-row (sheet-music-like, one
+// horizontal row per bar, beats ticking left to right), per-beat-tick ambient background into the
+// rendered frame (max-blended, not overwritten, so it sits behind and interacts with whatever
+// visualizer is selected) whenever timeSignatureQueue.size > 1 and setQueueOverlayEnabled(true);
+// a no-op otherwise, applied once centrally in MetronomeEngine so every visualizer gets it free.
 
 // Observe in Compose
 val beat by MetronomeEngine.state.collectAsState()
@@ -209,6 +221,7 @@ app/src/main/java/.../
   visualizers/
     GlyphVisualizer.kt       ← interface + GlyphCanvas
     VisualizerRegistry.kt    ← the list; add new ones here
+    QueueOverlay.kt          ← bakes the bar-queue dot indicator into the rendered frame
     *Visualizer.kt           ← implementations
   midi/
     MidiClockSource.kt       ← follows external clock

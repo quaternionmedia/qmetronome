@@ -58,11 +58,14 @@ class MetronomeSettings(context: Context) {
         get() = prefs.getBoolean(KEY_PROGRESSIVE_MUTE_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_PROGRESSIVE_MUTE_ENABLED, value).apply()
 
-    /** The bar queue - beats/note value/tempo per bar - as "beatCount:unitNoteValue:bpm" rows
-     * joined by "|". No JSON dependency needed for something this shape-stable. [accentPattern]
-     * isn't persisted - there's no UI to set a custom one yet, so every restored bar reads back
-     * with the default (beat 0 only) accent. A missing, empty, or corrupt entry falls back to a
-     * single default bar rather than an empty queue, which [MetronomeEngine] never allows. */
+    /** The bar queue - beats/note value/tempo/visualizer per bar - as
+     * "beatCount:unitNoteValue:bpm:visualizerId" rows joined by "|" (the last field empty when no
+     * visualizer has been pinned to that bar - see [TimeSignature.visualizerId]). No JSON
+     * dependency needed for something this shape-stable. [accentPattern] isn't persisted - there's
+     * no UI to set a custom one yet, so every restored bar reads back with the default (beat 0
+     * only) accent. A missing, empty, or corrupt entry falls back to a single default bar rather
+     * than an empty queue, which [MetronomeEngine] never allows. Tolerates rows encoded before
+     * [TimeSignature.visualizerId] existed (a missing 4th field decodes the same as an empty one). */
     var queue: List<TimeSignature>
         get() {
             val encoded = prefs.getString(KEY_QUEUE, null) ?: return listOf(TimeSignature.DEFAULT)
@@ -71,13 +74,14 @@ class MetronomeSettings(context: Context) {
                 val beatCount = parts.getOrNull(0)?.toIntOrNull()
                 val unitNoteValue = parts.getOrNull(1)?.toIntOrNull()
                 val bpm = parts.getOrNull(2)?.toFloatOrNull()
+                val visualizerId = parts.getOrNull(3)?.takeIf { it.isNotEmpty() }
                 if (beatCount == null || unitNoteValue == null || bpm == null) return@mapNotNull null
-                TimeSignature(beatCount = beatCount, unitNoteValue = unitNoteValue, bpm = bpm)
+                TimeSignature(beatCount = beatCount, unitNoteValue = unitNoteValue, bpm = bpm, visualizerId = visualizerId)
             }
             return bars.ifEmpty { listOf(TimeSignature.DEFAULT) }
         }
         set(value) {
-            val encoded = value.joinToString("|") { "${it.beatCount}:${it.unitNoteValue}:${it.bpm}" }
+            val encoded = value.joinToString("|") { "${it.beatCount}:${it.unitNoteValue}:${it.bpm}:${it.visualizerId ?: ""}" }
             prefs.edit().putString(KEY_QUEUE, encoded).apply()
         }
 
@@ -92,6 +96,18 @@ class MetronomeSettings(context: Context) {
             MetronomeEngine.QueueMode.LOOP
         }
         set(value) = prefs.edit().putInt(KEY_QUEUE_MODE, value.ordinal).apply()
+
+    /** Whether the ambient per-bar/per-beat background is drawn into the Glyph frame at all -
+     * on by default, since it's purely cosmetic and off is just an opt-out. */
+    var queueOverlayEnabled: Boolean
+        get() = prefs.getBoolean(KEY_QUEUE_OVERLAY_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_QUEUE_OVERLAY_ENABLED, value).apply()
+
+    /** Whether the selected visualizer itself renders at all - on by default, independent of
+     * [queueOverlayEnabled] so either, both, or neither can be running. */
+    var visualizerEnabled: Boolean
+        get() = prefs.getBoolean(KEY_VISUALIZER_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_VISUALIZER_ENABLED, value).apply()
 
     private companion object {
         const val PREFS_NAME = "metronome_settings"
@@ -108,5 +124,7 @@ class MetronomeSettings(context: Context) {
         const val KEY_QUEUE = "queue"
         const val KEY_QUEUE_INDEX = "queue_index"
         const val KEY_QUEUE_MODE = "queue_mode"
+        const val KEY_QUEUE_OVERLAY_ENABLED = "queue_overlay_enabled"
+        const val KEY_VISUALIZER_ENABLED = "visualizer_enabled"
     }
 }

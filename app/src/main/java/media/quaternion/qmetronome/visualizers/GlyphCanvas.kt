@@ -7,10 +7,16 @@ import kotlin.math.sqrt
 /**
  * Small drawing helpers over a flat brightness array so new [GlyphVisualizer]s can be written
  * without hand-rolling index math or bounds checks.
+ *
+ * [initial], when given, seeds [pixels] with a *copy* of that frame (never the same array
+ * instance) so drawing on top of an already-rendered frame - see [QueueOverlay] - never mutates
+ * the caller's array in place. That matters because the caller's array may already be published
+ * on a `StateFlow`; mutating a previously-emitted array instead of producing a new one would
+ * silently break collector notification.
  */
-class GlyphCanvas(val size: Int) {
+class GlyphCanvas(val size: Int, initial: IntArray? = null) {
 
-    val pixels = IntArray(size * size)
+    val pixels = initial?.copyOf() ?: IntArray(size * size)
 
     val center: Float = (size - 1) / 2f
 
@@ -25,6 +31,16 @@ class GlyphCanvas(val size: Int) {
         if (x < 0 || x >= size || y < 0 || y >= size) return
         val index = y * size + x
         pixels[index] = (pixels[index] + brightness).coerceIn(0, 255)
+    }
+
+    /** Sets a pixel to whichever is brighter: its current value or [brightness]. Unlike [add],
+     * this never pushes a pixel *past* the brighter of the two inputs - the right primitive for
+     * layering a background structure under already-rendered content (see [QueueOverlay]) without
+     * visibly capping or oversaturating whatever's already there. */
+    fun max(x: Int, y: Int, brightness: Int) {
+        if (x < 0 || x >= size || y < 0 || y >= size) return
+        val index = y * size + x
+        pixels[index] = maxOf(pixels[index], brightness.coerceIn(0, 255))
     }
 
     fun fill(brightness: Int) {

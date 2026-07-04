@@ -2,6 +2,7 @@ package media.quaternion.qmetronome.engine
 
 import media.quaternion.qmetronome.midi.MidiClockSource
 import media.quaternion.qmetronome.visualizers.GlyphVisualizer
+import media.quaternion.qmetronome.visualizers.VisualizerRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -314,6 +315,162 @@ class MetronomeEngineTest {
         val queue = MetronomeEngine.timeSignatureQueue.value
         assertEquals(4, queue[0].beatCount)
         assertEquals(7, queue[1].beatCount)
+    }
+
+    @Test
+    fun `rescaledBpmForUnitNoteValueChange preserves the whole-note pulse across denominators`() {
+        assertEquals(240f, MetronomeEngine.rescaledBpmForUnitNoteValueChange(120f, 4, 8), 0.01f)
+        assertEquals(60f, MetronomeEngine.rescaledBpmForUnitNoteValueChange(120f, 4, 2), 0.01f)
+        assertEquals(120f, MetronomeEngine.rescaledBpmForUnitNoteValueChange(120f, 4, 4), 0.01f)
+        // A jump big enough to want more than MAX_BPM clamps rather than overflowing the pulse.
+        assertEquals(
+            MetronomeEngine.MAX_BPM,
+            MetronomeEngine.rescaledBpmForUnitNoteValueChange(120f, 4, 32),
+            0.01f,
+        )
+    }
+
+    @Test
+    fun `setUnitNoteValue from 4 to 8 doubles bpm, preserving the same underlying tempo`() {
+        MetronomeEngine.setBpm(120f)
+        MetronomeEngine.setUnitNoteValue(8)
+        assertEquals(240f, MetronomeEngine.state.value.bpm, 0.01f)
+        assertEquals(8, MetronomeEngine.timeSignature.value.unitNoteValue)
+    }
+
+    @Test
+    fun `setUnitNoteValue from 4 to 2 halves bpm - the 6-4 vs 3-2 same-tempo scenario`() {
+        MetronomeEngine.setBpm(120f)
+        MetronomeEngine.setBeatsPerBar(6) // 6/4 at 120 - six evenly-spaced clicks per bar
+        MetronomeEngine.setUnitNoteValue(2) // -> 3/2, same bar duration, three clicks instead
+        assertEquals(60f, MetronomeEngine.state.value.bpm, 0.01f)
+        assertEquals(2, MetronomeEngine.timeSignature.value.unitNoteValue)
+    }
+
+    @Test
+    fun `setUnitNoteValue to the current value does not touch bpm`() {
+        MetronomeEngine.setBpm(120f)
+        MetronomeEngine.setUnitNoteValue(4) // already 4 - the TimeSignature.DEFAULT denominator
+        assertEquals(120f, MetronomeEngine.state.value.bpm, 0.01f)
+    }
+
+    @Test
+    fun `setBeatsPerBar alone does not touch bpm`() {
+        MetronomeEngine.setBpm(120f)
+        MetronomeEngine.setBeatsPerBar(7)
+        assertEquals(120f, MetronomeEngine.state.value.bpm, 0.01f)
+    }
+
+    @Test
+    fun `setUnitNoteValue edits only the currently active queue entry's unitNoteValue and bpm`() {
+        MetronomeEngine.setBpm(120f)
+        MetronomeEngine.addBarToQueue() // second entry, a copy at bpm 120
+
+        MetronomeEngine.setUnitNoteValue(8)
+
+        val queue = MetronomeEngine.timeSignatureQueue.value
+        assertEquals(4, queue[0].unitNoteValue)
+        assertEquals(120f, queue[0].bpm, 0.01f)
+        assertEquals(8, queue[1].unitNoteValue)
+        assertEquals(240f, queue[1].bpm, 0.01f)
+    }
+
+    @Test
+    fun `a fresh default bar has no pinned visualizer - null means follow the global selection`() {
+        assertNull(MetronomeEngine.timeSignatureQueue.value[0].visualizerId)
+    }
+
+    @Test
+    fun `setVisualizer pins the choice to the currently active queue entry, not every bar`() {
+        val first = VisualizerRegistry.all[0]
+        val second = VisualizerRegistry.all[1]
+        MetronomeEngine.setVisualizer(first)
+        MetronomeEngine.addBarToQueue() // second entry, a copy - inherits bar 0's pin (first)
+
+        MetronomeEngine.setVisualizer(second) // re-pins only the now-active bar 1
+
+        val queue = MetronomeEngine.timeSignatureQueue.value
+        assertEquals(first.id, queue[0].visualizerId)
+        assertEquals(second.id, queue[1].visualizerId)
+    }
+
+    @Test
+    fun `goToQueueBar restores each bar's own pinned visualizer`() {
+        val first = VisualizerRegistry.all[0]
+        val second = VisualizerRegistry.all[1]
+        MetronomeEngine.setVisualizer(first)
+        MetronomeEngine.addBarToQueue()
+        MetronomeEngine.setVisualizer(second)
+
+        MetronomeEngine.goToQueueBar(0)
+        assertEquals(first.id, MetronomeEngine.visualizer.value.id)
+
+        MetronomeEngine.goToQueueBar(1)
+        assertEquals(second.id, MetronomeEngine.visualizer.value.id)
+    }
+
+    @Test
+    fun `setQueueOverlayEnabled defaults to true and round-trips`() {
+        assertTrue(MetronomeEngine.queueOverlayEnabled.value)
+
+        MetronomeEngine.setQueueOverlayEnabled(false)
+        assertFalse(MetronomeEngine.queueOverlayEnabled.value)
+
+        MetronomeEngine.setQueueOverlayEnabled(true)
+        assertTrue(MetronomeEngine.queueOverlayEnabled.value)
+    }
+
+    @Test
+    fun `setVisualizerEnabled defaults to true and round-trips independently of the queue overlay`() {
+        assertTrue(MetronomeEngine.visualizerEnabled.value)
+
+        MetronomeEngine.setVisualizerEnabled(false)
+        assertFalse(MetronomeEngine.visualizerEnabled.value)
+        assertTrue("disabling the visualizer must not also disable the queue overlay", MetronomeEngine.queueOverlayEnabled.value)
+
+        MetronomeEngine.setVisualizerEnabled(true)
+        assertTrue(MetronomeEngine.visualizerEnabled.value)
+    }
+
+    @Test
+    fun `disabling the visualizer still lets the queue overlay draw onto a blank frame`() {
+        MetronomeEngine.setVisualizerEnabled(false)
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.addBarToQueue() // a queue, so the overlay isn't a no-op
+
+        MetronomeEngine.start()
+        Thread.sleep(60)
+
+        assertTrue("a frame should still be emitted with the visualizer disabled", MetronomeEngine.frame.value.isNotEmpty())
+        assertTrue(
+            "the overlay should still be visibly drawing onto the blank base frame",
+            MetronomeEngine.frame.value.any { it > 0 },
+        )
+    }
+
+    @Test
+    fun `changing unit note value while held stages the rescaled bpm instead of applying it immediately`() {
+        MetronomeEngine.setBpm(120f)
+
+        MetronomeEngine.beginHold()
+        MetronomeEngine.setUnitNoteValue(8)
+        assertEquals(120f, MetronomeEngine.state.value.bpm, 0.01f)
+        assertEquals(240f, MetronomeEngine.stagedBpm.value)
+
+        MetronomeEngine.endHold()
+        assertEquals(240f, MetronomeEngine.state.value.bpm, 0.01f)
+    }
+
+    @Test
+    fun `changing unit note value after already staging a bpm rescales from the staged value, not the stale committed one`() {
+        MetronomeEngine.setBpm(120f)
+
+        MetronomeEngine.beginHold()
+        MetronomeEngine.setBpm(150f) // stages 150, committed bpm is still 120
+        MetronomeEngine.setUnitNoteValue(8) // should rescale from 150, not the stale 120
+
+        assertEquals(300f, MetronomeEngine.stagedBpm.value)
+        assertEquals(120f, MetronomeEngine.state.value.bpm, 0.01f) // still uncommitted
     }
 
     @Test

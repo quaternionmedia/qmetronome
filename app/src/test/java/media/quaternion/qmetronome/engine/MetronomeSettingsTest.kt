@@ -75,4 +75,29 @@ class MetronomeSettingsTest {
         settings.queue = emptyList()
         assertEquals(listOf(TimeSignature.DEFAULT), settings.queue)
     }
+
+    @Test
+    fun `a bar's pinned visualizer round-trips through the queue encoding`() {
+        val queue = listOf(
+            TimeSignature(beatCount = 4, bpm = 90f, visualizerId = "pulse"),
+            TimeSignature(beatCount = 6, bpm = 140f, visualizerId = null),
+        )
+        settings.queue = queue
+        assertEquals(queue, settings.queue)
+    }
+
+    @Test
+    fun `a queue encoded before visualizerId existed (3 fields, no trailing colon) decodes with a null visualizerId`() {
+        settings.queue = listOf(TimeSignature(beatCount = 4, unitNoteValue = 4, bpm = 96f))
+        // Simulate pre-this-feature data by writing the old 3-field row shape directly.
+        val prefs = RuntimeEnvironment.getApplication()
+            .getSharedPreferences("metronome_settings", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putString("queue", "4:4:96.0").apply()
+
+        val decoded = settings.queue
+        assertEquals(1, decoded.size)
+        assertEquals(4, decoded[0].beatCount)
+        assertEquals(96f, decoded[0].bpm)
+        assertEquals(null, decoded[0].visualizerId)
+    }
 }

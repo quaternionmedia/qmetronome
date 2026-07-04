@@ -73,6 +73,8 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     val compactLandscape by MetronomeEngine.compactLandscape.collectAsState()
     val muteProbability by MetronomeEngine.muteProbability.collectAsState()
     val progressiveMuteEnabled by MetronomeEngine.progressiveMuteEnabled.collectAsState()
+    val queueOverlayEnabled by MetronomeEngine.queueOverlayEnabled.collectAsState()
+    val visualizerEnabled by MetronomeEngine.visualizerEnabled.collectAsState()
 
     val usbDevices by UsbMidiConnector.availableDevices.collectAsState()
     val followingUsbDeviceId by UsbMidiConnector.followingDeviceId.collectAsState()
@@ -145,17 +147,35 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
             HorizontalDivider()
 
             SettingsSection(title = "Visualizer") {
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    VisualizerRegistry.all.forEach { candidate ->
-                        FilterChip(
-                            selected = candidate.id == visualizer.id,
-                            onClick = { MetronomeEngine.setVisualizer(candidate) },
-                            label = { Text(candidate.displayName) },
-                        )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        VisualizerRegistry.all.forEach { candidate ->
+                            FilterChip(
+                                selected = candidate.id == visualizer.id,
+                                onClick = { MetronomeEngine.setVisualizer(candidate) },
+                                label = { Text(candidate.displayName) },
+                            )
+                        }
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Beat visualizer", style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = visualizerEnabled, onCheckedChange = MetronomeEngine::setVisualizerEnabled)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Bar queue background", style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = queueOverlayEnabled, onCheckedChange = MetronomeEngine::setQueueOverlayEnabled)
+                    }
+                    Text(
+                        text = "Independent toggles - run either, both, or neither. The beat visualizer " +
+                            "is the animated pattern above (pendulum, sweep, etc.); the bar queue " +
+                            "background is the ambient per-bar/per-beat pattern baked into the Glyph " +
+                            "Matrix (and its on-screen preview) when more than one bar is queued.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
                 }
             }
 

@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import media.quaternion.qmetronome.midi.MidiClockSource
 import media.quaternion.qmetronome.visualizers.GlyphVisualizer
+import media.quaternion.qmetronome.visualizers.QueueOverlay
 import media.quaternion.qmetronome.visualizers.VisualizerRegistry
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -117,6 +118,18 @@ object MetronomeEngine {
     private val _queueMode = MutableStateFlow(QueueMode.LOOP)
     val queueMode: StateFlow<QueueMode> = _queueMode.asStateFlow()
 
+    /** Whether [QueueOverlay]'s ambient per-bar/per-beat background is drawn into the Glyph
+     * frame at all - on by default, but purely cosmetic, so it's fully optional. */
+    private val _queueOverlayEnabled = MutableStateFlow(true)
+    val queueOverlayEnabled: StateFlow<Boolean> = _queueOverlayEnabled.asStateFlow()
+
+    /** Whether the selected [GlyphVisualizer] itself renders at all - independent of
+     * [queueOverlayEnabled], so a performer can run either, both, or neither. Disabled, the base
+     * frame is blank rather than skipped, so the queue overlay (if enabled) still draws onto a
+     * clean canvas instead of whatever the visualizer last rendered. */
+    private val _visualizerEnabled = MutableStateFlow(true)
+    val visualizerEnabled: StateFlow<Boolean> = _visualizerEnabled.asStateFlow()
+
     private val _holdMode = MutableStateFlow<HoldMode>(HoldMode.Off)
     val holdMode: StateFlow<HoldMode> = _holdMode.asStateFlow()
 
@@ -166,12 +179,17 @@ object MetronomeEngine {
         _queueMode.value = store.queueMode
         _timeSignature.value = restoredSpec
         _state.value = BeatPhase.IDLE.copy(bpm = restoredSpec.bpm, beatsPerBar = restoredSpec.beatCount)
+        // The active bar's own visualizer choice (if it's ever pinned one) wins over the plain
+        // last-used global visualizer restored above.
+        restoredSpec.visualizerId?.let { _visualizer.value = VisualizerRegistry.byId(it) }
         _clickEnabled.value = store.clickEnabled
         _visualOffsetMs.value = store.visualOffsetMs
         _compactLandscape.value = store.compactLandscape
         _hasShownBpmHint.value = store.hasShownBpmHint
         _muteProbability.value = store.muteProbability
         _progressiveMuteEnabled.value = store.progressiveMuteEnabled
+        _queueOverlayEnabled.value = store.queueOverlayEnabled
+        _visualizerEnabled.value = store.visualizerEnabled
 
         MidiClockSource.onExternalActivity = { if (!usingMidiClock) useMidiClock() }
         MidiClockSource.onTransportStart = {
@@ -249,6 +267,12 @@ object MetronomeEngine {
             settings?.bpm = clamped
             settings?.queue = _timeSignatureQueue.value
         }
+        // The queue overlay's dot height reflects bpm, and this is the one function every
+        // bpm-committing path (direct edits, goToQueueBar switching bars, the denominator
+        // rescale) funnels through - refreshing here is what makes the glyph update immediately
+        // while stopped, not just once playback starts. No-ops while playing (renderFrame owns
+        // the frame then).
+        emitIdleFrame()
     }
 
     /** Same staging behavior as [setBpm]; see [applyBeatsPerBarImmediate] for why a live change
@@ -273,14 +297,28 @@ object MetronomeEngine {
         }
         settings?.beatsPerBar = clamped
         settings?.queue = _timeSignatureQueue.value
+        // The queue overlay's dot width reflects beat count - see setBpmImmediate's matching call.
+        emitIdleFrame()
     }
 
-    /** The time-signature *denominator* (e.g. the "4" in 4/4) - edited independently of
-     * [beatCount][TimeSignature.beatCount], and always applied immediately (unlike BPM/
-     * beats-per-bar, it's presentational only - nothing in the beat loop subdivides by it - so
-     * there's no mid-bar transient to stage around). */
+    /**
+     * The time-signature *denominator* (e.g. the "4" in 4/4) - edited independently of
+     * [beatCount][TimeSignature.beatCount]. The field itself is always applied immediately (no
+     * mid-bar transient to stage around), but changing it rescales bpm to preserve the underlying
+     * tempo - see [rescaledBpmForUnitNoteValueChange] - so e.g. switching a bar from 6/4 to 3/2
+     * redistributes the same bar duration into 3 clicks instead of 6, rather than silently
+     * doubling the felt tempo because "bpm" numerically didn't change.
+     */
     fun setUnitNoteValue(value: Int) {
         val clamped = value.coerceIn(1, MAX_UNIT_NOTE_VALUE)
+        val oldValue = _timeSignature.value.unitNoteValue
+        if (clamped != oldValue) {
+            // Read whatever bpm is currently in effect - staged if a hold is already staging one,
+            // committed otherwise - so this rescale never computes from a stale base and then
+            // clobbers an in-flight staged change out from under the user.
+            val effectiveBpm = _stagedBpm.value ?: _state.value.bpm
+            setBpm(rescaledBpmForUnitNoteValueChange(effectiveBpm, oldValue, clamped))
+        }
         _timeSignature.value = _timeSignature.value.copy(unitNoteValue = clamped)
         _timeSignatureQueue.update { queue ->
             val index = _queueIndex.value
@@ -288,6 +326,21 @@ object MetronomeEngine {
             queue.toMutableList().apply { this[index] = this[index].copy(unitNoteValue = clamped) }
         }
         settings?.queue = _timeSignatureQueue.value
+    }
+
+    /**
+     * Tempo-preserving denominator math for [setUnitNoteValue]: rescales [currentBpm] so the
+     * "pulse" (`bpm / unitNoteValue` - a tempo-invariant whole-notes-per-minute equivalent, e.g.
+     * quarter note = 120bpm and half note = 60bpm are the same pulse, 30) is unchanged when the
+     * denominator moves from [oldValue] to [newValue], instead of leaving the numeric bpm
+     * untouched - which would silently change the felt tempo, since bpm is literally "clicks per
+     * minute" regardless of note value. Clamped like every other bpm change. Exposed (not
+     * private) so this is directly unit-testable without driving engine state, the same way
+     * [nextQueueIndexAfterBar] is.
+     */
+    fun rescaledBpmForUnitNoteValueChange(currentBpm: Float, oldValue: Int, newValue: Int): Float {
+        if (oldValue == newValue || oldValue <= 0) return currentBpm
+        return (currentBpm * (newValue.toFloat() / oldValue.toFloat())).coerceIn(MIN_BPM, MAX_BPM)
     }
 
     /** Jumps directly to a bar in the queue (clamped to a valid index), making it - beats, note
@@ -303,6 +356,16 @@ object MetronomeEngine {
         val spec = queue[clampedIndex]
         _timeSignature.value = spec
         _state.update { it.copy(beatsPerBar = spec.beatCount) }
+        // Switch the visualizer *before* setBpmImmediate() below, which is what actually refreshes
+        // the idle-frame preview while stopped - switching after would mean that refresh still
+        // rendered with the outgoing visualizer.
+        spec.visualizerId?.let { id ->
+            val visualizer = VisualizerRegistry.byId(id)
+            if (visualizer.id != _visualizer.value.id) {
+                _visualizer.value = visualizer
+                settings?.visualizerId = visualizer.id
+            }
+        }
         setBpmImmediate(spec.bpm)
     }
 
@@ -355,6 +418,18 @@ object MetronomeEngine {
     fun setQueueMode(mode: QueueMode) {
         _queueMode.value = mode
         settings?.queueMode = mode
+    }
+
+    fun setQueueOverlayEnabled(enabled: Boolean) {
+        _queueOverlayEnabled.value = enabled
+        settings?.queueOverlayEnabled = enabled
+        emitIdleFrame()
+    }
+
+    fun setVisualizerEnabled(enabled: Boolean) {
+        _visualizerEnabled.value = enabled
+        settings?.visualizerEnabled = enabled
+        emitIdleFrame()
     }
 
     /**
@@ -494,9 +569,19 @@ object MetronomeEngine {
         }
     }
 
+    /** Picking a visualizer also pins it to whichever bar is currently active - see
+     * [TimeSignature.visualizerId] - the same "always edits whichever bar is active" pattern
+     * [setBpm]/[setBeatsPerBar] already follow. */
     fun setVisualizer(visualizer: GlyphVisualizer) {
         _visualizer.value = visualizer
         settings?.visualizerId = visualizer.id
+        _timeSignature.value = _timeSignature.value.copy(visualizerId = visualizer.id)
+        _timeSignatureQueue.update { queue ->
+            val index = _queueIndex.value
+            if (index !in queue.indices) return@update queue
+            queue.toMutableList().apply { this[index] = this[index].copy(visualizerId = visualizer.id) }
+        }
+        settings?.queue = _timeSignatureQueue.value
         emitIdleFrame()
     }
 
@@ -579,18 +664,27 @@ object MetronomeEngine {
     }
 
     /** Renders the current visualizer at its beat-1 resting pose, scaled to [IDLE_GLYPH_SCALE]
-     * brightness, so the preview glows faintly on AMOLED when the metronome isn't running. */
+     * brightness, so the preview glows faintly on AMOLED when the metronome isn't running. The
+     * queue overlay is applied *after* that dimming, at its own full computed brightness, rather
+     * than also being scaled down to near-invisibility - the whole point of showing it while idle
+     * is so browsing the queue (switching bars, editing a bar's beats/tempo) stays visible on the
+     * glyph without having to start playback first. */
     private fun emitIdleFrame() {
         if (_state.value.isPlaying) return
         val idleBeat = _state.value.copy(phase = 0f, isAccent = true, isPlaying = false)
-        val rendered = try {
-            _visualizer.value.render(matrixSize, idleBeat)
-        } catch (_: Exception) {
-            IntArray(matrixSize * matrixSize) { 255 }
+        val rendered = if (!_visualizerEnabled.value) {
+            IntArray(matrixSize * matrixSize)
+        } else {
+            try {
+                _visualizer.value.render(matrixSize, idleBeat)
+            } catch (_: Exception) {
+                IntArray(matrixSize * matrixSize) { 255 }
+            }
         }
-        _frame.value = IntArray(rendered.size) { i ->
+        val dimmed = IntArray(rendered.size) { i ->
             (rendered[i] * IDLE_GLYPH_SCALE).toInt().coerceIn(0, 255)
         }
+        _frame.value = withQueueOverlay(dimmed, idleBeat.beatIndex, idleBeat.phase)
     }
 
     /** Resets all state back to defaults. For tests only - this is a process-wide singleton, so state would otherwise leak between test cases. */
@@ -614,6 +708,8 @@ object MetronomeEngine {
         _timeSignatureQueue.value = listOf(TimeSignature.DEFAULT)
         _queueIndex.value = 0
         _queueMode.value = QueueMode.LOOP
+        _queueOverlayEnabled.value = true
+        _visualizerEnabled.value = true
         _holdMode.value = HoldMode.Off
         _stagedBpm.value = null
         _stagedBeatsPerBar.value = null
@@ -693,10 +789,24 @@ object MetronomeEngine {
         // kill the render loop coroutine - that would silently wedge isPlaying=true forever with
         // nothing actually ticking. Skip the frame and keep going instead.
         try {
-            _frame.value = _visualizer.value.render(matrixSize, phaseState)
+            val base = if (_visualizerEnabled.value) {
+                _visualizer.value.render(matrixSize, phaseState)
+            } else {
+                IntArray(matrixSize * matrixSize)
+            }
+            _frame.value = withQueueOverlay(base, phaseState.beatIndex, phaseState.phase)
         } catch (e: Exception) {
             Log.e(TAG, "Visualizer '${_visualizer.value.id}' threw during render(); skipping frame", e)
         }
+    }
+
+    /** Bakes the ambient per-bar/per-beat background (see [QueueOverlay]) into an already-rendered
+     * frame - a no-op when there's nothing to indicate, so a single-entry queue (the common case)
+     * leaves every visualizer's own frame completely untouched. */
+    private fun withQueueOverlay(rendered: IntArray, beatIndex: Int, phase: Float): IntArray {
+        val queue = _timeSignatureQueue.value
+        if (queue.size <= 1 || !_queueOverlayEnabled.value) return rendered
+        return QueueOverlay.apply(rendered, matrixSize, queue, _queueIndex.value, beatIndex, phase, MIN_BPM, MAX_BPM)
     }
 
     private const val TAG = "MetronomeEngine"

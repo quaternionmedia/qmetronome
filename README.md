@@ -33,9 +33,12 @@ decision records live in [`adr/`](adr/README.md).
   touching beat position, phase, or visuals, so the visual cue and bar length never desync from
   a muted click; progressive start ramps the chance up linearly from 0 over the first few bars
   instead of applying at full strength immediately. `engine/TimeSignature` is a real "1x2 matrix"
-  time signature - `beatCount` (numerator) and `unitNoteValue` (denominator, e.g. the "4" in 4/4,
-  edited independently; presentational only today - nothing in the beat loop subdivides by it
-  yet) - plus its own `bpm` and `accentPattern` reserved for later. `MetronomeEngine` holds a
+  time signature - `beatCount` (numerator) and `unitNoteValue` (denominator, e.g. the "4" in 4/4)
+  edited independently, plus its own `bpm` and `accentPattern` reserved for later. Changing
+  `unitNoteValue` rescales `bpm` to preserve the underlying tempo (`bpm / unitNoteValue` held
+  constant - the same "half note = 60 / quarter note = 120" equivalence real notation uses), so
+  switching a bar between, say, 6/4 and 3/2 redistributes the same bar duration into 3 clicks
+  instead of 6 rather than silently doubling the felt tempo. `MetronomeEngine` holds a
   *queue* of these (`timeSignatureQueue`) rather than just one - a single-entry queue (the
   default) behaves exactly like a plain, unchanging time signature and tempo, but adding more
   (`addBarToQueue`) lines up a sequence of differently-metered, differently-paced bars the engine
@@ -83,8 +86,9 @@ decision records live in [`adr/`](adr/README.md).
 - `ui/` — Compose UI. `MainScreen` keeps the Glyph Matrix preview as the dominant, focal
   element with tempo/tap/play-stop and beats-per-bar alongside it - live meter/tempo controls
   belong on the main screen, not a settings overlay you'd have to leave the beat to open.
-  Everything else (random mute, click toggle, visualizer picker, visual timing offset, MIDI
-  clock status/USB connection/clock-out) lives behind the bottom-right settings button in
+  Everything else (random mute, click toggle, visualizer picker, independent beat-visualizer/
+  bar-queue-background toggles, visual timing offset, MIDI clock status/USB connection/clock-out)
+  lives behind the bottom-right settings button in
   `SettingsSheet`, a full-screen translucent overlay (not a half-open bottom sheet) so the
   matrix preview's flashes still glow through dimly behind it. The preview shows a dim ghost of
   the current visualizer at rest even when the metronome is stopped (6% brightness idle frame),
@@ -180,29 +184,48 @@ image of following an external clock - see
 
 ## Using the bar queue
 
-Below the tempo controls, the time signature is shown as a real "N/D" fraction (e.g. `4/4`,
-`7/8`), and beneath *that* is a second, smaller row for queuing up a sequence of differently
+Below the tempo controls, the time signature is shown as two independently-steppable numbers
+stacked vertically (numerator over denominator, no fraction slash - a real time signature, not a
+fraction), and beneath *that* is a second, smaller row for queuing up a sequence of differently
 metered *and differently paced* bars (e.g. three bars of 4/4 at 90 BPM then one bar of 3/4 at 140
 BPM) - every control here is an explicit tap, deliberately, not a gesture to guess at:
 
-- **Beats vs. note value**: the steppers and drag/long-press-to-type on the main number edit the
-  numerator (beat count) same as always. The note value (denominator) is edited independently,
-  via the same long-press dialog - it's presentational today (nothing in the beat loop
-  subdivides by it yet), not a second thing to keep in sync by hand.
+- **Beats and note value, each with their own steppers**: the top number (beat count) and bottom
+  number (note value, e.g. the "4" in 4/4) are edited independently, each with its own +/-,
+  sized a notch smaller than BPM's own steppers to keep the visual hierarchy (tempo first, meter
+  second). Changing the note value rescales BPM to keep the underlying tempo the same (see
+  "Architecture" above), so switching a bar between e.g. 6/4 and 3/2 changes how the clicks are
+  distributed without secretly speeding up or slowing down. Long-press either number to type both
+  values directly.
 - **Tempo is per-bar now, not global**: switching to a different queued bar recalls *that* bar's
   own BPM along with its own beat count - set each bar's tempo the normal way (tap/steppers/drag/
   long-press on the BPM number) while it's the active one.
 - **`−`/`+` buttons**: `+` appends a copy of the currently-active bar (beats, note value, and
   tempo alike) to the queue and jumps to it; `−` removes the active bar - both no-ops if it's the
-  only one left. The trash icon at the far left clears the whole queue back to a single default
-  bar, for starting over rather than removing bars one at a time.
-- **Dots**: one square per bar in the queue. A dot's *size* scales with that bar's beat count
-  *relative to the rest of the queue* (the longest bar currently queued reads as the biggest dot)
-  and its *color* gradients dark gray → white from slow to fast tempo, so the whole queue's shape
-  is readable at a glance. Tap a dot to jump to that bar; long-press a dot to remove it directly.
-  Above every dot, a small tick per beat shows that bar's own beat count - only the active bar's
-  ticks pulse live in time with playback (the same flash curve the Glyph Matrix visualizers use),
-  so every bar's shape is visible at once but only the one actually playing draws the eye.
+  only one left. The trash icon at the far left - flagged with a small red dot as a destructive,
+  unrecoverable action - clears the whole queue back to a single default bar, for starting over
+  rather than removing bars one at a time.
+- **Bars**: one rectangle per bar in the queue - the precise control surface for the queue. A
+  bar's *width* scales with its beat count *relative to the rest of the queue* (the longest bar
+  currently queued reads as the widest rectangle) and its *height* scales with its own tempo
+  (faster reads taller), so the whole queue's shape is readable at a glance. Each bar is itself
+  divided into one segment per beat, so the beat count reads directly off the rectangle rather
+  than a separate row above it; only the active bar's current-beat segment pulses. The one bar
+  actually active reads brighter than the rest. Tap a bar to jump to it; long-press to remove it
+  directly.
+
+Separately, an ambient version of the same "which bar, which beat" idea is baked directly into the
+Glyph Matrix frame itself (and its on-screen `MatrixPreview` mirror, since they're the same
+underlying data) via `visualizers/QueueOverlay` - loosely emulating a line of sheet music, the
+usable circle splits into one horizontal row per bar, stacked top-to-bottom in queue order (taller
+rows for faster bars), with beats ticking left to right within each row and only the active bar's
+current beat pulsing. It's blended in behind whichever visualizer is selected rather than clipping
+it, so the two interact - the beat visualizer's own bright motion shows through unchanged, and the
+tick structure fills in wherever it's dark. This is deliberately a passive, ambient cue rather
+than a second control surface: once a queue gets busy enough for individual bars to blur together
+on the small shared canvas, the dedicated bar row above is still the precise way to navigate it.
+Both update live - bars added/removed/edited, the active bar changing - whether or not the
+metronome is playing.
 - **Mode icon** (far right): tap to cycle how the queue advances at each bar boundary during
   playback - **Loop** (default, wraps back to the first bar after the last), **Once** (stops
   advancing once it reaches the last bar, holding there rather than stopping playback outright),
