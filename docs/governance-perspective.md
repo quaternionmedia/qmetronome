@@ -1,14 +1,21 @@
 # Governance perspective: this project as a mobile/cross-platform experiment
 
 qmetronome is Quaternion Media's first mobile/device-hardware project. The
-org's decision-record discipline (`adr/`) and constitution apply by adoption,
-but two of the constitution's enforcement mechanisms were built around
-self-hosted server infrastructure and don't transfer cleanly to a sideloaded
-Android app built against a closed hardware-vendor SDK. Rather than quietly
-building exceptions into this project's docs to paper over the mismatch, the
-gaps are named here and fed back to the org as an open question, per the
-constitution's own "decisions are documented or they didn't happen" rule
-(P6) and its drafts-vs-perspectives separation.
+org's decision-record discipline (`adr/`) and constitution apply by adoption
+(vendored as a submodule at [`governance/qm`](../governance/qm), pinned in
+[`adr/README.md`](../adr/README.md)), but two of the constitution's
+enforcement mechanisms were built around self-hosted server infrastructure
+and don't transfer cleanly to a sideloaded Android app built against a
+closed hardware-vendor SDK. Rather than quietly building exceptions into
+this project's docs to paper over the mismatch, the gaps are named here and
+fed back to the org as an open question, per the constitution's own
+"decisions are documented or they didn't happen" rule (P6) and its
+drafts-vs-perspectives separation. For the full, record-by-record disposition
+(not just these two headline gaps) see
+[`adr/DRAFT-constitution-adoption-scope.md`](../adr/DRAFT-constitution-adoption-scope.md) -
+this document stays focused on the two gaps worth surfacing to the org as
+open questions, that ADR is this project's own binding internal decision
+about every record in the pinned corpus.
 
 ## The two gaps, briefly
 
@@ -46,7 +53,11 @@ assistants draft, humans ratify — and lives in the org repo, not here.
 ## Turning the isolation claim into enforcement, not just an assertion
 
 The Glyph SDK ADR's mitigant is an import boundary (`com.nothing.ketchum.*`
-confined to `glyph/`), checkable today by a one-line grep. Wiring that into
-CI as an actual gate - the same "teeth" pattern the org's SBOM gate uses,
-pointed at a boundary a server-image scanner can't see - is tracked as
-repo-setup work, not asserted here as already done.
+confined to `glyph/`) - the same "teeth" pattern the org's SBOM gate uses,
+pointed at a boundary a server-image scanner can't see. This runs today as a
+dedicated step in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
+on every push and PR, not just asserted here. A second CI step added
+alongside it lints `adr/DRAFT-*.md` files for the constitution's banned
+pre-ratification vocabulary (a real violation this repo hit once - see the
+squashed Amendment in `adr/DRAFT-midi-clock-as-open-standard-seam.md`'s
+history - prompted adding the check rather than trusting discipline alone).

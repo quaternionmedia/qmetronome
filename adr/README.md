@@ -131,12 +131,22 @@ outside Amendments.
 
 ## CI enforcement
 
-The standard scaffold (ADR lint, SBOM license gate) is org-designed around
-server-runtime images and is not yet adapted for an Android APK's dependency
-surface - see the open question above. What qmetronome runs today instead:
-a CI check restricting which files may import `com.nothing.ketchum.*` (the
-closed Glyph Matrix SDK) to `glyph/`, as the seam-boundary enforcement for
-the disposition recorded in `DRAFT-glyph-matrix-sdk-dependency.md`.
+The org's standard SBOM license gate is designed around server-runtime
+images and is not yet adapted for an Android APK's dependency surface - see
+`adr/DRAFT-constitution-adoption-scope.md`'s Consequences section for the
+baseline dependency-license audit done manually in the meantime. What
+qmetronome runs today in `.github/workflows/ci.yml`:
+
+- **ADR draft vocabulary lint** - fails the build if any `adr/DRAFT-*.md`
+  file contains banned pre-ratification revision-history language (see "The
+  one rule that prevents most drift" above). This is the org's standard ADR
+  lint, adapted here after this project hit the violation it's designed to
+  catch (a dated Amendment on a still-Proposed document, squashed - see
+  `DRAFT-midi-clock-as-open-standard-seam.md`).
+- **Glyph SDK import-boundary check** - restricts which files may import
+  `com.nothing.ketchum.*` (the closed Glyph Matrix SDK) to `glyph/`, as the
+  seam-boundary enforcement for the disposition recorded in
+  `DRAFT-glyph-matrix-sdk-dependency.md`.
 
 ## Index
 

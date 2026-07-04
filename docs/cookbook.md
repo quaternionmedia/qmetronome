@@ -85,7 +85,7 @@ Done. `VisualizerRenderTest` automatically covers every entry in `all` — run
 
 ```kotlin
 // State (read-only, observe as StateFlow)
-MetronomeEngine.state          // BeatPhase: bpm, phase, isAccent, isPlaying
+MetronomeEngine.state          // BeatPhase: bpm, phase, isAccent, isPlaying, beatsPerBar, beatIndex, totalBeats
 MetronomeEngine.frame          // IntArray: current rendered frame (same as Glyph Matrix)
 
 // Control
@@ -227,6 +227,7 @@ app/src/main/java/.../
     MidiClockSource.kt       ← follows external clock
     MidiClockSender.kt       ← sends clock out
     UsbMidiConnector.kt      ← USB device management + starring
+    StarredMidiDevices.kt    ← persists starred devices + their follow/send state, keyed by deviceKey()
     VirtualMidiClockService  ← makes app appear as MIDI input
   glyph/
     GlyphMatrixToyService.kt ← Glyph SDK lifecycle (isolated here)
@@ -236,10 +237,12 @@ app/src/main/java/.../
     SettingsSheet.kt         ← full-screen settings overlay
     MatrixPreview.kt         ← on-screen LED preview
     HoldButton.kt            ← BPM/beats-per-bar staging - momentary hold or sticky latch
+    HoldRepeatButton.kt      ← icon button that repeats on hold with ramping speed (queue +/- steppers)
     SteppedSlider.kt         ← standard slider: +/- steppers + long-press numeric entry
     NumericEntryDialog.kt    ← the numeric entry dialog itself (shared by BPM + sliders)
     TimeSignatureEntryDialog.kt ← beats + note value, two independent fields, one dialog
     BrandMarks.kt            ← QM + qMetronome brand marks, long-press to open GitHub
   widget/
     MetronomeWidget.kt       ← Jetpack Glance home screen widget
+    MetronomeWidgetReceiver.kt ← GlanceAppWidgetReceiver - the manifest-registered entry point
 ```

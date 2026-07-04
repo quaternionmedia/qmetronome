@@ -177,3 +177,43 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       (default) — controls should overflow as before. Enable compact mode in
       Settings, rotate again — preview and controls should sit side-by-side,
       all controls reachable without scrolling.
+- [ ] **Random mute + progressive mute ramp**: enable random mute at a mid
+      probability and confirm clicks actually drop out audibly and
+      unpredictably (not on a fixed pattern); separately, enable progressive
+      mute and confirm the mute probability visibly ramps over the configured
+      duration rather than jumping straight to its target.
+- [ ] **Latch mode**: distinct from the existing HOLD-staging item above —
+      long-press or double-tap the HOLD button (not the preview) to promote
+      staging into a sticky latch, confirm BPM/beats-per-bar edits keep
+      staging without holding the button down, and confirm a subsequent plain
+      tap on HOLD flushes the staged values and exits latch cleanly. Also
+      confirm `stop()` force-clears an active latch rather than leaving it
+      stuck engaged across a stop/start cycle.
+- [ ] **Bar queue end-to-end**: add several bars with different beats-per-bar/
+      BPM/unit-note-value combinations, confirm each recalls its own tempo
+      correctly on tap-to-jump, confirm long-press removes a bar, confirm the
+      trash/reset button (always showing its red destructive-action badge)
+      clears the whole queue back to a single default bar, and cycle through
+      all three `QueueMode`s (confirm playback order/looping behavior matches
+      each mode's intent).
+- [ ] **Per-bar visualizer pinning**: pin a specific visualizer to one bar in
+      the queue (distinct from the global visualizer pick), jump to that bar
+      via tap and via normal playback advance, and confirm the pinned
+      visualizer is the one that actually renders both times rather than the
+      global default.
+- [ ] **Tempo-preserving denominator changes**: change a bar's unit note
+      value (e.g. 6/4 ↔ 3/2 style) and confirm the audible tempo is unchanged
+      (BPM rescales to compensate) rather than the metronome suddenly
+      speeding up or slowing down.
+- [ ] **Ambient glyph background (`QueueOverlay`) on hardware**: with a
+      multi-bar queue active, confirm the per-bar row overlay actually renders
+      on the physical Glyph Matrix (not just the on-screen `MatrixPreview`)
+      and blends *behind* the active visualizer (brightens, never masks or
+      clips it) — this pixel-blending behavior is unit-tested against
+      `IntArray` output but has never been confirmed against the real LED
+      hardware's brightness/gamma response.
+- [ ] **v0.0.21 visualizer toggles**: in Settings, exercise all four
+      combinations of "Bar queue background" and "Beat visualizer" (both on,
+      both off, each on alone) and confirm the Glyph Matrix output matches
+      each combination — in particular, confirm "both off" shows a blank/idle
+      glyph rather than a stale frame from before the toggle was flipped.

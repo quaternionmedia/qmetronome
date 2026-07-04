@@ -42,15 +42,26 @@ and `adr/DRAFT-home-screen-widget-via-glance.md`.
 
 ## Project governance
 
+The org's constitution is vendored as a git submodule at
+[`../governance/qm`](../governance/qm), pinned to a specific commit in
+`adr/README.md`'s "Adopted org records" table.
+
 - **[`governance-perspective.md`](governance-perspective.md)** — this
   project is the org's first mobile/cross-platform-device project, and two
   of the `qm` constitution's enforcement mechanisms (built around self-hosted
   server infrastructure) don't transfer cleanly to a sideloaded app with a
   closed hardware-vendor SDK. Named explicitly rather than papered over, fed
-  back to the org as an open question. See `adr/README.md`'s "this project is
-  a deliberate experiment" section and
-  `adr/DRAFT-glyph-matrix-sdk-dependency.md` /
-  `adr/DRAFT-android-kotlin-platform-stack.md` for the two specific gaps.
+  back to the org as an open question.
+- **`adr/DRAFT-constitution-adoption-scope.md`** — the full, record-by-record
+  disposition (adopted in full / adopted-but-scoped / not-applicable) for
+  every record in the pinned corpus, including the baseline dependency-license
+  audit the constitution requires at adoption. `governance-perspective.md`
+  covers two headline gaps worth surfacing to the org; this ADR is the
+  complete internal decision.
+- `adr/README.md`'s "this project is a deliberate experiment" section,
+  `adr/DRAFT-glyph-matrix-sdk-dependency.md`, and
+  `adr/DRAFT-android-kotlin-platform-stack.md` are the two specific
+  gaps' own dedicated records.
 
 ## Release readiness
 
@@ -64,6 +75,9 @@ and `adr/DRAFT-home-screen-widget-via-glance.md`.
   Nothing app store and no separate submission process). See [`../PRIVACY.md`](../PRIVACY.md), drafted
   because Play Console requires a privacy policy URL for every app
   regardless of data collected.
+- **[`google-play-setup.md`](google-play-setup.md)** — the Play Console
+  account/app-creation steps `app-store-checklist.md`'s listing requirements
+  assume are already done.
 
 ## How `adr/` fits in
 

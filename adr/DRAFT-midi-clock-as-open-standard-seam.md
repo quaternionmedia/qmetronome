@@ -1,4 +1,4 @@
-# ADR-XXXX — MIDI Clock as the Bidirectional Sync Seam
+# ADR-XXXX — MIDI Clock as an Open-Standard Seam
 
 | | |
 |---|---|
@@ -44,6 +44,18 @@ platform API:
    `disconnectSending()` are called. Both destination types are just
    `MidiReceiver`s to `MidiClockSender` - it doesn't know or care which is
    which.
+3. **USB device state is process state, not UI state** - `UsbMidiConnector`
+   is a process-wide singleton, `attach()`'d from `QMetronomeApp.onCreate()`
+   alongside `MetronomeEngine` and `MidiClockSender`, the same lifecycle
+   pattern for the same reason: a USB MIDI connection must survive Settings
+   closing and reopening, which a UI-scoped instance couldn't. This is also
+   what makes device starring possible: `StarredMidiDevices` persists which
+   connection(s) (follow, send, or both) were active for a device, keyed by
+   a stable vendor/product/serial identity (`UsbMidiConnector.deviceKey()`)
+   rather than `MidiDeviceInfo.id`, which the platform reassigns on every
+   reconnect. A `MidiManager.DeviceCallback` registered in `attach()`
+   restores that state automatically the instant a starred device reappears
+   on the USB bus, including while Settings is closed.
 
 Because it always derives from `MetronomeEngine.state` rather than from
 wherever that tempo originated, a qmetronome instance that's currently
@@ -120,14 +132,4 @@ both paths already share does the work.
 
 ## Amendments
 
-- **2026-06-29**: `UsbMidiConnector` converted from a class scoped to `SettingsSheet` (created
-  via `remember`, so every USB connection was lost the moment Settings closed and reopened) to a
-  process-wide singleton, `attach()`'d from `QMetronomeApp.onCreate()` alongside
-  `MetronomeEngine` and `MidiClockSender` - the same lifecycle pattern, for the same reason: a
-  USB MIDI connection is process state, not UI state. This is what makes the new starring
-  feature possible: `StarredMidiDevices` persists which connection(s) (follow, send, or both)
-  were active for a device, keyed by a stable vendor/product/serial identity
-  (`UsbMidiConnector.deviceKey()`) rather than `MidiDeviceInfo.id`, which the platform reassigns
-  on every reconnect. A `MidiManager.DeviceCallback` registered in `attach()` restores that state
-  automatically the instant a starred device reappears on the USB bus - including while Settings
-  is closed, which the old per-Settings-instance design couldn't do regardless of starring.
+*None.*

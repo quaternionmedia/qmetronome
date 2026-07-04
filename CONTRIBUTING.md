@@ -294,6 +294,15 @@ If your change adds a component with a non-obvious architectural justification
 (a new singleton, a new persistence layer, a new permission), a brief ADR
 draft is more useful than a long PR description that will be forgotten.
 
+This process is itself adopted from Quaternion Media's org-wide constitution,
+vendored as a submodule at [`governance/qm`](governance/qm) and pinned in
+[`adr/README.md`](adr/README.md). Which org records actually apply to a
+sideloaded mobile app (as opposed to the org's server/infra defaults) is
+decided in
+[`adr/DRAFT-constitution-adoption-scope.md`](adr/DRAFT-constitution-adoption-scope.md) —
+worth a read before assuming a constitution rule does or doesn't apply to a
+change you're making.
+
 ---
 
 ## Cutting a release

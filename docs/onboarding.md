@@ -248,7 +248,9 @@ This works the same on all platforms once the JDK is set up:
 gradlew.bat test       # Windows
 ```
 
-28 tests should pass. If any fail, the output tells you which test and why —
+Every test should pass (the suite spans a growing number of files, so don't
+be surprised if the count doesn't match what you've seen quoted elsewhere).
+If any fail, the output tells you which test and why —
 read the full message before assuming the worst. A failure here usually means
 a test is exercising a real constraint (the visualizer contracts are strict:
 "more light at beat start than mid-decay").

@@ -37,8 +37,9 @@ import kotlin.math.roundToInt
  * pulsing would fight the platform's update economics for a worse result than just looking at
  * the Glyph Matrix or the app - see docs/home-screen-widget.md for why that was ruled out
  * rather than attempted. Updates are event-driven: [media.quaternion.qmetronome.QMetronomeApp] calls
- * [updateAll] whenever bpm/play-state actually changes, and [ToggleMetronomeAction] calls
- * [update] directly after handling a tap, so this never polls.
+ * [updateAll] whenever bpm/play-state actually changes, and [ToggleMetronomeAction] only calls
+ * [MetronomeEngine.toggle] - the resulting state change flows back through that same
+ * [updateAll] path rather than the action updating the widget directly, so this never polls.
  */
 class MetronomeWidget : GlanceAppWidget() {
 

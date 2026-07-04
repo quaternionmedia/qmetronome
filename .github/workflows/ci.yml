@@ -35,5 +35,19 @@ jobs:
             exit 1
           fi
 
+      - name: ADR draft vocabulary lint
+        # Pre-ratification ADRs (adr/DRAFT-*.md) are squashed and rewritten in place as
+        # understanding changes - per adr/README.md and governance/qm's decision-record-discipline
+        # record, they must never carry revision-history language about themselves. This is the
+        # enforcement side of that rule (already violated once in this repo - see the squashed
+        # Amendment in adr/DRAFT-midi-clock-as-open-standard-seam.md's history).
+        run: |
+          offending=$(grep -lEi "previously|originally|earlier draft|re-review|renumber|retroactive|supersedes the .* (stance|finding)|\bcorrected\b" adr/DRAFT-*.md 2>/dev/null || true)
+          if [ -n "$offending" ]; then
+            echo "Pre-ratification ADRs must be squashed, not narrate their own revision history - found banned vocabulary in:"
+            echo "$offending"
+            exit 1
+          fi
+
       - name: Build and test
         run: ./gradlew assembleDebug testDebugUnitTest --console=plain
