@@ -1,0 +1,3 @@
+[submodule "governance/qm"]
+	path = governance/qm
+	url = https://github.com/quaternionmedia/qm.git

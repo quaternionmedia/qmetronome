@@ -49,9 +49,13 @@ This project adopts the QM constitution by reference. Org records bind this
 project; project records may tighten them, never relax them. A genuine
 exception is an amendment ratified at org level.
 
+The `qm` corpus is vendored as a git submodule at [`governance/qm`](../governance/qm)
+rather than referenced only by a written pin, so the exact adopted snapshot is
+checked out and diffable, not just named.
+
 | Corpus | Pin (tag/commit) | Records adopted |
 |---|---|---|
-| qm-constitution | `<pending - first mobile/cross-platform instance, see note above>` | all Accepted QM records at pin, with the open questions above pending org-level resolution |
+| qm-constitution | `6b893e33176751c5b036a9380901397b2d77e7ba` (`governance/qm`, no tags cut yet - pinned to `main`'s tip at adoption time) | none yet - every record in the corpus at this pin is still filed `DRAFT-*` org-side, so nothing is formally `Accepted` to adopt yet. This pin exists so this project's own four `DRAFT-*` ADRs (which name specific open questions against the constitution) point at a fixed, diffable snapshot instead of a moving target. Re-pin (a reviewed commit here) once the org ratifies records and again whenever this project's own open questions get resolved upstream. |
 
 Bumping the pin is a reviewed commit in this project.
 

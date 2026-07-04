@@ -90,6 +90,19 @@ There are two release tracks with different bars:
       debugging thread. [`docs/README.md`](README.md) is the new top-level
       index tying every doc to its corresponding ADR.
 
+## Repository Governance
+
+These are GitHub repo-settings changes, not code - deliberately left as manual
+steps for whoever has admin access, rather than attempted via `gh api` against
+a guessed ruleset.
+
+- [ ] **Branch protection on `main`**: no ruleset has been decided yet. Typical
+      starting point to consider: require the `ci.yml` status check to pass
+      before merging, require at least one PR review, disallow force-push and
+      branch deletion. Decide the exact rules and apply them via GitHub's
+      Settings → Branches UI (or `gh api repos/:owner/:repo/branches/main/protection`
+      once the ruleset is decided) - not something to configure blind.
+
 ## Compliance & Meta
 
 - [x] **Iconography**: Launcher icon finalized (navy/white monochrome
