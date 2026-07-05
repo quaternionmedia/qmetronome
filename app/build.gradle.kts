@@ -5,6 +5,33 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+/** Fallback versionName for local/debug builds, so the in-app version footer (Settings -> the
+ * very bottom) shows something real instead of a hardcoded placeholder - only `alpha-release.yml`
+ * builds from a tag actually pass `-PversionName`. `git describe` against the last reachable tag
+ * (e.g. "v0.0.23-6-geb34487-dirty" six commits past v0.0.23, with uncommitted changes) is far more
+ * useful for telling one dev build apart from another than a static "1.0" ever was.
+ *
+ * Uses `providers.exec` (not a raw `ProcessBuilder`) - configuration-cache-compatible, unlike
+ * starting a process directly at configuration time, which Gradle 9 rejects outright. */
+fun gitVersionName(): String = runCatching {
+    providers.exec {
+        commandLine("git", "describe", "--tags", "--always", "--dirty")
+        workingDir = rootDir
+        isIgnoreExitValue = true
+    }.standardOutput.asText.get().trim().ifBlank { null }
+}.getOrNull() ?: "dev"
+
+/** Fallback versionCode for local/debug builds - Android requires a positive int, so `git
+ * describe`'s string output can't be reused here directly. Commit count is monotonically
+ * increasing and always resolvable, unlike trying to parse a tag that might not exist yet. */
+fun gitCommitCount(): Int = runCatching {
+    providers.exec {
+        commandLine("git", "rev-list", "--count", "HEAD")
+        workingDir = rootDir
+        isIgnoreExitValue = true
+    }.standardOutput.asText.get().trim().toIntOrNull()
+}.getOrNull() ?: 1
+
 android {
     namespace = "media.quaternion.qmetronome"
     compileSdk = 35
@@ -22,9 +49,11 @@ android {
         minSdk = 33
         targetSdk = 35
         // When building a release from CI the tag-derived values are injected via -PversionCode
-        // and -PversionName; local and debug builds fall back to these defaults.
-        versionCode = project.findProperty("versionCode")?.toString()?.toIntOrNull() ?: 1
-        versionName = project.findProperty("versionName")?.toString() ?: "1.0"
+        // and -PversionName; local and debug builds fall back to git-derived values (see
+        // gitVersionName()/gitCommitCount() above) so the in-app version footer is still
+        // meaningful instead of a static placeholder.
+        versionCode = project.findProperty("versionCode")?.toString()?.toIntOrNull() ?: gitCommitCount()
+        versionName = project.findProperty("versionName")?.toString() ?: gitVersionName()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

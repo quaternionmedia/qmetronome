@@ -35,6 +35,12 @@ object MetronomeEngine {
     const val MIN_BPM = 1f
     const val MAX_BPM = 400f
 
+    /** Bounds in effect when [extendedBpmRangeEnabled] is on - generous, round numbers covering
+     * anything from a near-static drone pulse to a tremolo-fast click, displayed as BPH/BPS (see
+     * `bpmDisplayValue`/`bpmDisplayUnit` in `MainScreen.kt`) rather than a literal "0.1 BPM". */
+    const val EXTENDED_MIN_BPM = 0.1f
+    const val EXTENDED_MAX_BPM = 3000f
+
     const val MIN_BEATS_PER_BAR = 1
     const val MAX_BEATS_PER_BAR = 24
 
@@ -105,6 +111,11 @@ object MetronomeEngine {
     private val _visualOffsetMs = MutableStateFlow(DEFAULT_VISUAL_OFFSET_MS)
     val visualOffsetMs: StateFlow<Float> = _visualOffsetMs.asStateFlow()
 
+    /** See [setAudioOffsetMs] for how this is actually scheduled - a negative value needs genuine
+     * lookahead (see [startAudioLookahead]), unlike [visualOffsetMs]'s continuous phase-shift. */
+    private val _audioOffsetMs = MutableStateFlow(DEFAULT_AUDIO_OFFSET_MS)
+    val audioOffsetMs: StateFlow<Float> = _audioOffsetMs.asStateFlow()
+
     private val _compactLandscape = MutableStateFlow(false)
     val compactLandscape: StateFlow<Boolean> = _compactLandscape.asStateFlow()
 
@@ -159,6 +170,19 @@ object MetronomeEngine {
     private val _progressiveMuteEnabled = MutableStateFlow(false)
     val progressiveMuteEnabled: StateFlow<Boolean> = _progressiveMuteEnabled.asStateFlow()
 
+    /** How many bars [progressiveMuteEnabled]'s ramp takes to reach its target probability - the
+     * ramp's slope, in effect, since it's linear from 0. Tunable rather than the fixed 8-bar
+     * constant this used to be. */
+    private val _progressiveMuteRampBars = MutableStateFlow(DEFAULT_PROGRESSIVE_MUTE_RAMP_BARS)
+    val progressiveMuteRampBars: StateFlow<Int> = _progressiveMuteRampBars.asStateFlow()
+
+    /** When on, [setBpm]/[setBpmImmediate] clamp against [EXTENDED_MIN_BPM]/[EXTENDED_MAX_BPM]
+     * instead of [MIN_BPM]/[MAX_BPM] - an explicit opt-in since the vast majority of tempos anyone
+     * ever wants live inside the normal range, and a wide-open default range would make the BPM
+     * number's drag-to-scrub gesture far less precise for everyday use. */
+    private val _extendedBpmRangeEnabled = MutableStateFlow(false)
+    val extendedBpmRangeEnabled: StateFlow<Boolean> = _extendedBpmRangeEnabled.asStateFlow()
+
     @Volatile private var matrixSize = 25
     @Volatile private var lastBeatNanos = System.nanoTime()
     @Volatile private var beatIndex = 0
@@ -172,9 +196,31 @@ object MetronomeEngine {
     @Volatile private var pendingBeatsPerBarCommit: Int? = null
 
     private var renderJob: Job? = null
+    private var audioLookaheadJob: Job? = null
     private var persistBpmJob: Job? = null
     private var lastTapNanos = 0L
     private val tapIntervalsMs = mutableListOf<Long>()
+
+    /** A one-shot mute/sound decision for beat [totalBeats] (see [ResolvedBeatAudio]), resolved
+     * either early by [startAudioLookahead] or on-time by [onBeat] itself - whichever gets there
+     * first. Guarded by [audioResolutionLock] rather than relying on `@Volatile` alone: both the
+     * lookahead loop and [onBeat] run as independent coroutines that can genuinely execute on
+     * different threads (this object's [scope] has no dispatcher of its own, so `launch` falls
+     * back to `Dispatchers.Default`'s thread pool), and resolving involves a non-atomic
+     * check-then-set plus a single [random] roll that must happen exactly once per beat. */
+    @Volatile private var resolvedBeatAudio: ResolvedBeatAudio? = null
+    private val audioResolutionLock = Any()
+
+    /** For tests only - lets a test observe exactly when/what audio actually fired without
+     * depending on [ClickPlayer]'s real `AudioTrack` side effects, which Robolectric can't
+     * meaningfully assert on. Mirrors [seedRandomForTesting]'s existing testing-seam precedent. */
+    @Volatile private var clickListenerForTesting: ((ClickSound, Long) -> Unit)? = null
+
+    /** One resolved beat's audio decision - which [ClickSound] to play, or `null` if this beat is
+     * muted/click-disabled - cached by [totalBeats] (not by timestamp: a lookahead-predicted
+     * timestamp and the real one can differ by a hair, but the beat counter is an exact integer,
+     * which is what actually prevents a double-fire or a missed one). */
+    private data class ResolvedBeatAudio(val totalBeats: Long, val sound: ClickSound?)
 
     /** Loads persisted tempo/visualizer choice and wires up MIDI auto-switch/fallback. Safe to call multiple times from different entry points. */
     fun attach(context: Context) {
@@ -198,11 +244,14 @@ object MetronomeEngine {
         restoredSpecs.forEach { (sound, spec) -> clickPlayer.setSpec(sound, spec) }
         _clickSpecs.value = restoredSpecs
         _visualOffsetMs.value = store.visualOffsetMs
+        _audioOffsetMs.value = store.audioOffsetMs
         _compactLandscape.value = store.compactLandscape
         _persistentModeEnabled.value = store.persistentModeEnabled
         _hasShownBpmHint.value = store.hasShownBpmHint
         _muteProbability.value = store.muteProbability
         _progressiveMuteEnabled.value = store.progressiveMuteEnabled
+        _progressiveMuteRampBars.value = store.progressiveMuteRampBars
+        _extendedBpmRangeEnabled.value = store.extendedBpmRangeEnabled
         _queueOverlayEnabled.value = store.queueOverlayEnabled
         _visualizerEnabled.value = store.visualizerEnabled
 
@@ -255,7 +304,7 @@ object MetronomeEngine {
      * [beginHold]/[toggleLatch]/[flushStagedChanges].
      */
     fun setBpm(bpm: Float) {
-        val clamped = bpm.coerceIn(MIN_BPM, MAX_BPM)
+        val clamped = bpm.coerceIn(effectiveMinBpm(), effectiveMaxBpm())
         if (_holdMode.value != HoldMode.Off) {
             _stagedBpm.value = clamped
             return
@@ -263,11 +312,16 @@ object MetronomeEngine {
         setBpmImmediate(clamped)
     }
 
+    /** The bpm bounds currently in effect - [EXTENDED_MIN_BPM]/[EXTENDED_MAX_BPM] when
+     * [extendedBpmRangeEnabled] is on, [MIN_BPM]/[MAX_BPM] otherwise. */
+    private fun effectiveMinBpm(): Float = if (_extendedBpmRangeEnabled.value) EXTENDED_MIN_BPM else MIN_BPM
+    private fun effectiveMaxBpm(): Float = if (_extendedBpmRangeEnabled.value) EXTENDED_MAX_BPM else MAX_BPM
+
     /** Tempo is per-bar, like beats-per-bar - this always writes into whichever bar is currently
      * active in the queue (see [goToQueueBar]), so navigating back to an earlier bar recalls the
      * tempo it was set at, not whatever the most recently-edited bar's tempo happened to be. */
     private fun setBpmImmediate(bpm: Float) {
-        val clamped = bpm.coerceIn(MIN_BPM, MAX_BPM)
+        val clamped = bpm.coerceIn(effectiveMinBpm(), effectiveMaxBpm())
         clock.setBpm(clamped)
         _state.update { it.copy(bpm = clamped) }
         _timeSignature.value = _timeSignature.value.copy(bpm = clamped)
@@ -355,7 +409,7 @@ object MetronomeEngine {
      */
     fun rescaledBpmForUnitNoteValueChange(currentBpm: Float, oldValue: Int, newValue: Int): Float {
         if (oldValue == newValue || oldValue <= 0) return currentBpm
-        return (currentBpm * (newValue.toFloat() / oldValue.toFloat())).coerceIn(MIN_BPM, MAX_BPM)
+        return (currentBpm * (newValue.toFloat() / oldValue.toFloat())).coerceIn(effectiveMinBpm(), effectiveMaxBpm())
     }
 
     /** Jumps directly to a bar in the queue (clamped to a valid index), making it - beats, note
@@ -545,6 +599,16 @@ object MetronomeEngine {
         settings?.visualOffsetMs = clamped
     }
 
+    /** A negative value leads the click ahead of the true beat via genuine lookahead scheduling
+     * (see [startAudioLookahead]); zero/positive delays it, scheduled off the beat's own real
+     * timestamp (see [scheduleReactiveAudio]) rather than a naive relative `delay()` that could
+     * drift under scheduling pressure. */
+    fun setAudioOffsetMs(ms: Float) {
+        val clamped = ms.coerceIn(-500f, 500f)
+        _audioOffsetMs.value = clamped
+        settings?.audioOffsetMs = clamped
+    }
+
     fun setCompactLandscape(enabled: Boolean) {
         _compactLandscape.value = enabled
         settings?.compactLandscape = enabled
@@ -570,11 +634,28 @@ object MetronomeEngine {
         settings?.muteProbability = clamped
     }
 
-    /** When enabled, [muteProbability] ramps up linearly from 0 over [PROGRESSIVE_MUTE_RAMP_BARS]
+    /** When enabled, [muteProbability] ramps up linearly from 0 over [progressiveMuteRampBars]
      * bars after [start] instead of applying at full strength immediately. */
     fun setProgressiveMuteEnabled(enabled: Boolean) {
         _progressiveMuteEnabled.value = enabled
         settings?.progressiveMuteEnabled = enabled
+    }
+
+    /** Adjusts the ramp's slope - how many bars it takes to reach the target probability. */
+    fun setProgressiveMuteRampBars(bars: Int) {
+        val clamped = bars.coerceIn(MIN_PROGRESSIVE_MUTE_RAMP_BARS, MAX_PROGRESSIVE_MUTE_RAMP_BARS)
+        _progressiveMuteRampBars.value = clamped
+        settings?.progressiveMuteRampBars = clamped
+    }
+
+    /** Toggles [EXTENDED_MIN_BPM]/[EXTENDED_MAX_BPM] as the active clamp range. Turning it off
+     * immediately re-clamps the live bpm back inside [MIN_BPM]/[MAX_BPM] - otherwise a tempo set
+     * while extended (e.g. 900 bpm) would sit stuck above every other control's range with no way
+     * to move it back in range without a fresh extended edit. */
+    fun setExtendedBpmRangeEnabled(enabled: Boolean) {
+        _extendedBpmRangeEnabled.value = enabled
+        settings?.extendedBpmRangeEnabled = enabled
+        if (!enabled) setBpmImmediate(_state.value.bpm)
     }
 
     /** For tests only - makes mute-probability rolls deterministic. */
@@ -582,14 +663,20 @@ object MetronomeEngine {
         random = Random(seed)
     }
 
+    /** For tests only - see [clickListenerForTesting]. */
+    fun setClickListenerForTesting(listener: ((ClickSound, Long) -> Unit)?) {
+        clickListenerForTesting = listener
+    }
+
     /** The mute chance actually in effect [barsElapsed] bars into playback - the configured
-     * target immediately, or ramped up linearly from 0 over [PROGRESSIVE_MUTE_RAMP_BARS] bars
+     * target immediately, or ramped up linearly from 0 over [progressiveMuteRampBars] bars
      * when progressive start is on. Exposed (not private) so it's directly unit-testable without
      * needing to drive a real beat loop or intercept [ClickPlayer]. */
     fun effectiveMuteProbability(barsElapsed: Int): Float {
         val target = _muteProbability.value
-        return if (_progressiveMuteEnabled.value && barsElapsed < PROGRESSIVE_MUTE_RAMP_BARS) {
-            target * (barsElapsed / PROGRESSIVE_MUTE_RAMP_BARS.toFloat())
+        val rampBars = _progressiveMuteRampBars.value
+        return if (_progressiveMuteEnabled.value && barsElapsed < rampBars) {
+            target * (barsElapsed / rampBars.toFloat())
         } else {
             target
         }
@@ -643,6 +730,7 @@ object MetronomeEngine {
         beatIndex = 0
         totalBeats = 0
         barsElapsedSincePlay = 0
+        resolvedBeatAudio = null
         goToQueueBar(0)
         if (primeVisualFlash) {
             lastBeatNanos = System.nanoTime()
@@ -652,6 +740,7 @@ object MetronomeEngine {
         }
         clock.start(scope, _state.value.bpm, ::onBeat)
         startRenderLoop()
+        startAudioLookahead()
     }
 
     /**
@@ -662,9 +751,17 @@ object MetronomeEngine {
      */
     fun stop() {
         clock.stop()
+        // Flipped first, before cancelling anything - playClickSafely's own isPlaying check is
+        // what actually stops an in-flight reactive delay (scheduleReactiveAudio's one-off
+        // coroutine isn't tracked/cancelled the way renderJob/audioLookaheadJob are) or a
+        // lookahead-loop iteration that was already past its gating check from firing audio after
+        // stop was pressed - flipping this as early as possible narrows that race to a minimum.
+        _state.update { it.copy(isPlaying = false, phase = 0f) }
         renderJob?.cancel()
         renderJob = null
-        _state.update { it.copy(isPlaying = false, phase = 0f) }
+        audioLookaheadJob?.cancel()
+        audioLookaheadJob = null
+        resolvedBeatAudio = null
         pendingBeatsPerBarCommit?.let {
             applyBeatsPerBarImmediate(it)
             pendingBeatsPerBarCommit = null
@@ -682,8 +779,14 @@ object MetronomeEngine {
 
     /**
      * Registers a tap (e.g. a UI button press or a Glyph Button touch-down) and derives BPM from
-     * the rolling average of the last few tap intervals. Starts the engine once a usable tempo
-     * has been established.
+     * the rolling average of the last few tap intervals. Decoupled from playback - tapping alone
+     * is a pure tempo-dialing gesture, usable while stopped without triggering play, the same way
+     * dragging or stepping the BPM number doesn't start anything either. The one exception: while
+     * [HoldMode.Latched], a tap that produces a real interval (by construction, the *second or
+     * later* tap - the first always returns early below with no interval yet) is a deliberate
+     * "commit this staged tempo and go" gesture - flushes the tap-derived bpm (now staged, same
+     * as any other change while latched) and any staged beats-per-bar, clears the latch, and
+     * starts at the resulting tempo/time signature.
      */
     fun tapTempo(nowNanos: Long = System.nanoTime()) {
         val previous = lastTapNanos
@@ -698,7 +801,11 @@ object MetronomeEngine {
         if (tapIntervalsMs.size > MAX_TAP_SAMPLES) tapIntervalsMs.removeAt(0)
         val averageMs = tapIntervalsMs.average()
         setBpm((60_000.0 / averageMs).roundToInt().toFloat())
-        if (!_state.value.isPlaying) start()
+        if (_holdMode.value == HoldMode.Latched) {
+            flushStagedChanges()
+            _holdMode.value = HoldMode.Off
+            if (!_state.value.isPlaying) start()
+        }
     }
 
     fun release() {
@@ -745,11 +852,16 @@ object MetronomeEngine {
         ClickSound.entries.forEach { clickPlayer.setSpec(it, ClickSpec.defaultFor(it)) }
         _clickSpecs.value = ClickSound.entries.associateWith(ClickSpec::defaultFor)
         _visualOffsetMs.value = DEFAULT_VISUAL_OFFSET_MS
+        _audioOffsetMs.value = DEFAULT_AUDIO_OFFSET_MS
+        resolvedBeatAudio = null
+        clickListenerForTesting = null
         _compactLandscape.value = false
         _persistentModeEnabled.value = false
         _hasShownBpmHint.value = false
         _muteProbability.value = 0f
         _progressiveMuteEnabled.value = false
+        _progressiveMuteRampBars.value = DEFAULT_PROGRESSIVE_MUTE_RAMP_BARS
+        _extendedBpmRangeEnabled.value = false
         _timeSignature.value = TimeSignature.DEFAULT
         _timeSignatureQueue.value = listOf(TimeSignature.DEFAULT)
         _queueIndex.value = 0
@@ -784,7 +896,7 @@ object MetronomeEngine {
         val count = totalBeats
         _state.update {
             it.copy(
-                bpm = measuredBpm?.coerceIn(MIN_BPM, MAX_BPM) ?: it.bpm,
+                bpm = measuredBpm?.coerceIn(effectiveMinBpm(), effectiveMaxBpm()) ?: it.bpm,
                 beatIndex = index,
                 totalBeats = count,
                 isAccent = isAccent,
@@ -794,23 +906,79 @@ object MetronomeEngine {
         if (usingMidiClock) {
             _clockStatus.value = ClockStatus.Midi(measuredBpm, MidiClockSource.activeSource?.name)
         }
-        val probability = effectiveMuteProbability(barsElapsedSincePlay)
-        val muted = probability > 0f && random.nextFloat() < probability
-        if (_clickEnabled.value && !muted) {
-            val sound = when {
-                index == 0 -> ClickSound.BAR
-                isAccent -> ClickSound.ACCENT
-                else -> ClickSound.REGULAR
-            }
-            try {
-                clickPlayer.playClick(sound)
-            } catch (e: Exception) {
-                Log.e(TAG, "ClickPlayer failed; continuing without audio for this beat", e)
-            }
+        // Reuse the lookahead loop's resolution if it already got there first (and, in doing so,
+        // already fired the click) - otherwise resolve fresh, right now, and schedule its audio
+        // reactively. Either way this must resolve exactly once per beat - see [ResolvedBeatAudio].
+        val (resolved, alreadyFired) = synchronized(audioResolutionLock) {
+            val cached = resolvedBeatAudio?.takeIf { it.totalBeats == count }
+            resolvedBeatAudio = null
+            if (cached != null) cached to true else resolveBeatAudio(count, index) to false
+        }
+        if (!alreadyFired) {
+            resolved.sound?.let { scheduleReactiveAudio(it, timestampNanos) }
         }
         if (beatIndex == 0) barsElapsedSincePlay++
         totalBeats++
         beatIndex = (beatIndex + 1) % _state.value.beatsPerBar.coerceAtLeast(1)
+    }
+
+    /** Resolves whether beat [totalBeatsForBeat] (at bar position [beatIndexForBeat]) should play
+     * a click, and if so which [ClickSound] - the one place [effectiveMuteProbability]'s roll and
+     * the beat-vs-accent-vs-regular sound choice happen, called by whichever of [onBeat] or the
+     * audio lookahead loop ([startAudioLookahead]) gets there first for a given beat. Beat 0 is
+     * unconditionally [ClickSound.BAR] regardless of a bar-queue advance that may not have
+     * happened yet when this runs ahead of time; a non-zero beat's accent comes from the *current*
+     * time signature, which by construction can't change before the next beat-0 boundary - both
+     * are exactly why resolving ahead of the real beat is safe. */
+    private fun resolveBeatAudio(totalBeatsForBeat: Long, beatIndexForBeat: Int): ResolvedBeatAudio {
+        val probability = effectiveMuteProbability(barsElapsedSincePlay)
+        val muted = probability > 0f && random.nextFloat() < probability
+        val sound = when {
+            !_clickEnabled.value || muted -> null
+            beatIndexForBeat == 0 -> ClickSound.BAR
+            _timeSignature.value.isAccented(beatIndexForBeat) -> ClickSound.ACCENT
+            else -> ClickSound.REGULAR
+        }
+        return ResolvedBeatAudio(totalBeatsForBeat, sound)
+    }
+
+    /** Fires (or schedules) [sound] for a beat whose real timestamp ([beatTimestampNanos]) has
+     * already arrived - the reactive path used whenever the audio lookahead loop didn't already
+     * fire this beat early, which covers zero/positive [audioOffsetMs] as well as any beat the
+     * lookahead loop is disabled for (click off, non-negative offset, or following an external
+     * MIDI clock - see [startAudioLookahead]). Schedules off the beat's own absolute timestamp
+     * plus the offset - not a naive relative `delay(offsetMs)` - so whatever latency already
+     * elapsed between the true beat and this call doesn't compound into extra lag. A negative
+     * offset reaching here (MIDI-follow mode, where lookahead is intentionally skipped) simply
+     * computes a target already in the past and fires immediately - documented no-op behavior,
+     * not a silent pretense of leading a clock this engine doesn't control. */
+    private fun scheduleReactiveAudio(sound: ClickSound, beatTimestampNanos: Long) {
+        val fireAtNanos = beatTimestampNanos + (_audioOffsetMs.value * 1_000_000.0).toLong()
+        val now = System.nanoTime()
+        if (fireAtNanos <= now) {
+            playClickSafely(sound)
+        } else {
+            scope.launch {
+                delay((fireAtNanos - now) / 1_000_000)
+                playClickSafely(sound)
+            }
+        }
+    }
+
+    /** The single point every click - lookahead or reactive - actually fires through. Re-checking
+     * [_clickEnabled] and [BeatPhase.isPlaying] right here (not just at the moment the fire was
+     * scheduled or resolved) is what stops a click from sounding after the user has already
+     * pressed stop: [scheduleReactiveAudio]'s delayed coroutine isn't cancelled by [stop] the way
+     * [renderJob]/[audioLookaheadJob] are, and even the lookahead loop's own iteration can be
+     * mid-flight past its gating check at the exact moment [stop] runs. */
+    private fun playClickSafely(sound: ClickSound) {
+        if (!_clickEnabled.value || !_state.value.isPlaying) return
+        clickListenerForTesting?.invoke(sound, System.nanoTime())
+        try {
+            clickPlayer.playClick(sound)
+        } catch (e: Exception) {
+            Log.e(TAG, "ClickPlayer failed; continuing without audio for this beat", e)
+        }
     }
 
     private fun startRenderLoop() {
@@ -823,11 +991,76 @@ object MetronomeEngine {
         }
     }
 
+    /**
+     * Pre-triggers the audible click when [audioOffsetMs] is negative - the genuine lookahead a
+     * discrete one-shot trigger needs to fire *before* the true beat, since (unlike
+     * [visualOffsetMs]'s continuous phase-shift) there's no equivalent math trick for an event
+     * that either has or hasn't happened yet. Only active while playing, [clickEnabled] is on, the
+     * offset is negative, and timing isn't coming from an external MIDI clock - a followed clock
+     * is already reactive with nothing of its own to predict, so lookahead is skipped there and
+     * [scheduleReactiveAudio] fires immediately instead (documented no-op, not a silent pretense).
+     *
+     * Polls in slices bounded by [AUDIO_LOOKAHEAD_POLL_NANOS] (matching
+     * `MidiClockSender.RESYNC_POLL_NANOS`'s precedent) rather than a single `delay()` up to the
+     * target - re-checking regularly means a bpm change, an offset change, or a MIDI clock takeover
+     * mid-wait all take effect within one slice instead of only being noticed a whole beat later.
+     */
+    private fun startAudioLookahead() {
+        audioLookaheadJob?.cancel()
+        audioLookaheadJob = scope.launch {
+            while (isActive) {
+                val offsetMs = _audioOffsetMs.value
+                val gated = _state.value.isPlaying && _clickEnabled.value && offsetMs < 0f && !usingMidiClock
+                if (!gated) {
+                    delay(AUDIO_LOOKAHEAD_IDLE_POLL_MS)
+                    continue
+                }
+                val remainingNanos = nanosUntilNextBeat(System.nanoTime(), _state.value.bpm) + offsetMs * 1_000_000.0
+                if (remainingNanos <= 0.0) {
+                    fireLookaheadAudioIfNeeded()
+                } else {
+                    delay((minOf(remainingNanos, AUDIO_LOOKAHEAD_POLL_NANOS.toDouble()) / 1_000_000.0).toLong().coerceAtLeast(1))
+                }
+            }
+        }
+    }
+
+    /** The lookahead loop's own resolve-and-fire step, for the upcoming beat identified by the
+     * *current* [totalBeats]/[beatIndex] fields (not yet incremented - see [onBeat]'s own end-of-
+     * function increment). A no-op if this beat was already resolved (by an earlier poll of this
+     * same loop - there is no other caller this early), which is what stops a beat from firing
+     * more than once across repeated polls while its offset window is still open. */
+    private fun fireLookaheadAudioIfNeeded() {
+        val targetTotalBeats = totalBeats
+        val targetBeatIndex = beatIndex
+        val resolved = synchronized(audioResolutionLock) {
+            val existing = resolvedBeatAudio
+            if (existing != null && existing.totalBeats == targetTotalBeats) {
+                null
+            } else {
+                resolveBeatAudio(targetTotalBeats, targetBeatIndex).also { resolvedBeatAudio = it }
+            }
+        }
+        resolved?.sound?.let { playClickSafely(it) }
+    }
+
+    /** Nanoseconds remaining until the *next* beat is predicted to land, extrapolating from
+     * [lastBeatNanos] at [bpm] - the one formula [renderFrame]'s phase calculation and the audio
+     * lookahead loop ([startAudioLookahead]) both schedule from, instead of two independently-
+     * maintained copies of `60_000_000_000.0 / bpm`. Negative once the predicted moment has
+     * already passed. [bpm] is taken as a parameter (rather than read internally from [_state])
+     * so a caller that already captured its own snapshot of bpm can't get a second, possibly
+     * different, reading of it within the same calculation. */
+    private fun nanosUntilNextBeat(nowNanos: Long, bpm: Float): Double {
+        val intervalNanos = 60_000_000_000.0 / bpm
+        return (lastBeatNanos + intervalNanos) - nowNanos
+    }
+
     private fun renderFrame() {
         val current = _state.value
         if (!current.isPlaying) return
         val intervalNanos = 60_000_000_000.0 / current.bpm
-        val rawElapsedNanos = System.nanoTime() - lastBeatNanos
+        val rawElapsedNanos = intervalNanos - nanosUntilNextBeat(System.nanoTime(), current.bpm)
         if (usingMidiClock && rawElapsedNanos > intervalNanos * MIDI_SILENCE_BEATS) {
             useInternalClock()
         }
@@ -866,14 +1099,26 @@ object MetronomeEngine {
     private const val FRAME_INTERVAL_MS = 25L
     private const val BPM_PERSIST_DEBOUNCE_MS = 250L
 
+    /** Poll slice for [startAudioLookahead] while actively closing in on a target fire time -
+     * matches `MidiClockSender.RESYNC_POLL_NANOS`'s precedent. */
+    private const val AUDIO_LOOKAHEAD_POLL_NANOS = 3_000_000L
+
+    /** Poll interval for [startAudioLookahead] while its gating conditions aren't met (click off,
+     * non-negative offset, MIDI-follow, or not playing) - these rarely change faster than a frame,
+     * so there's no need to re-check at [AUDIO_LOOKAHEAD_POLL_NANOS]'s much tighter cadence. */
+    private const val AUDIO_LOOKAHEAD_IDLE_POLL_MS = 25L
+
     /** How many beat-intervals of silence from the MIDI clock before falling back to internal timing. */
     private const val MIDI_SILENCE_BEATS = 4
 
     /** Fraction of full brightness used for the idle glyph preview when the metronome is stopped. */
     private const val IDLE_GLYPH_SCALE = 0.06f
 
-    /** How many bars a progressive mute ramp takes to reach its configured target probability. */
-    private const val PROGRESSIVE_MUTE_RAMP_BARS = 8
+    /** Default/bounds for [progressiveMuteRampBars] - how many bars a progressive mute ramp takes
+     * to reach its configured target probability. */
+    const val DEFAULT_PROGRESSIVE_MUTE_RAMP_BARS = 8
+    const val MIN_PROGRESSIVE_MUTE_RAMP_BARS = 1
+    const val MAX_PROGRESSIVE_MUTE_RAMP_BARS = 32
 
     /** Upper bound for [setUnitNoteValue] - generous enough for any real time signature (32nd
      * notes) without pretending every integer in between is a musically meaningful denominator. */

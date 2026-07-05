@@ -107,15 +107,36 @@ class MetronomeEngineTest {
     }
 
     @Test
-    fun `tap tempo needs two taps before it produces a tempo`() {
+    fun `tap tempo needs two taps before it produces a tempo, and never auto-starts playback`() {
         // 0L is deliberately avoided as the first timestamp - it collides with tapTempo's
         // internal "never tapped" sentinel and would make this test pass for the wrong reason.
         MetronomeEngine.tapTempo(nowNanos = 1_000_000_000L)
         assertFalse(MetronomeEngine.state.value.isPlaying)
 
+        // Tap tempo is decoupled from play - a second tap (120 BPM) produces a tempo but must
+        // not start playback on its own, the same way dragging/stepping the BPM number doesn't.
         MetronomeEngine.tapTempo(nowNanos = 1_500_000_000L) // 500ms later = 120 BPM
+        assertFalse(MetronomeEngine.state.value.isPlaying)
+        assertEquals(120f, MetronomeEngine.state.value.bpm, 0.5f)
+    }
+
+    @Test
+    fun `tap tempo while latched commits the tapped bpm and starts playing`() {
+        MetronomeEngine.toggleLatch()
+        assertEquals(MetronomeEngine.HoldMode.Latched, MetronomeEngine.holdMode.value)
+
+        MetronomeEngine.tapTempo(nowNanos = 1_000_000_000L)
+        assertFalse(MetronomeEngine.state.value.isPlaying)
+        assertEquals(MetronomeEngine.HoldMode.Latched, MetronomeEngine.holdMode.value)
+
+        // The second tap produces a real interval (120 BPM) - while latched, that's the
+        // deliberate "commit and go" gesture: the latch clears and playback starts at the
+        // tapped tempo.
+        MetronomeEngine.tapTempo(nowNanos = 1_500_000_000L)
+        assertEquals(MetronomeEngine.HoldMode.Off, MetronomeEngine.holdMode.value)
         assertTrue(MetronomeEngine.state.value.isPlaying)
         assertEquals(120f, MetronomeEngine.state.value.bpm, 0.5f)
+        assertNull(MetronomeEngine.stagedBpm.value)
     }
 
     @Test
@@ -262,6 +283,115 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `a negative audio offset fires the click before the engine's own beat counter advances (genuine lookahead)`() {
+        val events = java.util.Collections.synchronizedList(mutableListOf<Pair<ClickSound, Long>>())
+        MetronomeEngine.setClickListenerForTesting { sound, _ -> events.add(sound to MetronomeEngine.state.value.totalBeats) }
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(60f) // 1000ms/beat - plenty of room for a -200ms lead
+        MetronomeEngine.setAudioOffsetMs(-200f)
+
+        MetronomeEngine.start()
+        Thread.sleep(1200) // beat 0 fires ~instantly; beat 1's click is due ~800ms in (1000ms - 200ms lead)
+
+        assertTrue("expected at least 2 clicks, got ${events.size}", events.size >= 2)
+        // The second click must fire while state still reads totalBeats == 0 - i.e. strictly
+        // *before* the real onBeat for beat 1 has run, proving genuine lookahead rather than a
+        // merely-fast reactive fire.
+        assertEquals(0L, events[1].second)
+    }
+
+    @Test
+    fun `a positive audio offset fires the click only after the engine's own beat counter has advanced (reactive delay)`() {
+        val events = java.util.Collections.synchronizedList(mutableListOf<Pair<ClickSound, Long>>())
+        MetronomeEngine.setClickListenerForTesting { sound, _ -> events.add(sound to MetronomeEngine.state.value.totalBeats) }
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(60f) // 1000ms/beat
+        MetronomeEngine.setAudioOffsetMs(100f) // lag, not lead
+
+        MetronomeEngine.start()
+        Thread.sleep(1300) // beat 1 lands ~1000ms in, its (delayed) click fires ~100ms after that
+
+        assertTrue("expected at least 2 clicks, got ${events.size}", events.size >= 2)
+        // The second click must fire only once state has already advanced to totalBeats == 1 -
+        // trailing the real beat rather than leading it.
+        assertEquals(1L, events[1].second)
+    }
+
+    @Test
+    fun `each beat's click fires exactly once even with a negative (lookahead) audio offset`() {
+        val events = java.util.Collections.synchronizedList(mutableListOf<Long>())
+        MetronomeEngine.setClickListenerForTesting { _, _ -> events.add(System.nanoTime()) }
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat - several beats in a short sleep
+        MetronomeEngine.setAudioOffsetMs(DEFAULT_AUDIO_OFFSET_MS) // the shipped default lead
+
+        MetronomeEngine.start()
+        Thread.sleep(700) // roughly 4-5 beats at 150ms/beat
+
+        val beatsSoFar = MetronomeEngine.state.value.totalBeats
+        assertTrue("expected several beats to have fired by now, totalBeats=$beatsSoFar", beatsSoFar >= 3)
+        // Never more than one click ahead of the completed-beat count (the lookahead can be
+        // resolving the *next* beat's click already) and never fewer than one per completed beat -
+        // the resolve-once-per-beat cache (see MetronomeEngine.ResolvedBeatAudio) is what a
+        // synchronization bug in the lookahead/reactive handoff would show up as a violation of.
+        assertTrue(
+            "expected roughly one click per beat, got ${events.size} clicks for $beatsSoFar+ beats",
+            events.size in beatsSoFar..(beatsSoFar + 1),
+        )
+    }
+
+    @Test
+    fun `muted beats produce no click at all, lookahead or reactive`() {
+        val events = java.util.Collections.synchronizedList(mutableListOf<Long>())
+        MetronomeEngine.setClickListenerForTesting { _, _ -> events.add(System.nanoTime()) }
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setMuteProbability(1f) // every beat muted
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat
+        MetronomeEngine.setAudioOffsetMs(-100f)
+
+        MetronomeEngine.start()
+        Thread.sleep(500)
+
+        assertTrue(MetronomeEngine.state.value.totalBeats >= 2)
+        assertEquals(0, events.size)
+    }
+
+    @Test
+    fun `following an external MIDI clock never double-fires a beat's click even with a negative audio offset`() {
+        val events = java.util.Collections.synchronizedList(mutableListOf<Long>())
+        MetronomeEngine.setClickListenerForTesting { _, _ -> events.add(System.nanoTime()) }
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setAudioOffsetMs(-200f) // a lead that would matter a lot if lookahead ran here
+
+        // Mirrors production wiring (see MetronomeEngine.attach): a MIDI Start message switches to
+        // following the external clock and starts playback without an internal-clock priming flash.
+        // Timestamps are anchored to a real System.nanoTime() (not 0, unlike MidiClockSourceTest's
+        // own isolated convention) because MetronomeEngine.start() also launches a real render
+        // loop that cross-checks these timestamps against System.nanoTime() to detect MIDI
+        // silence (see renderFrame's MIDI_SILENCE_BEATS check) - starting near 0 made that check
+        // see a many-real-seconds-old "beat," a false silence signal that fell back to the
+        // internal clock mid-test and fired a spurious extra beat.
+        var t = System.nanoTime()
+        MidiClockSource.receiverFor(MidiClockSource.Source.USB).send(byteArrayOf(0xFA.toByte()), 0, 1, t)
+        assertTrue(MetronomeEngine.state.value.isPlaying)
+
+        val receiver = MidiClockSource.receiverFor(MidiClockSource.Source.USB)
+        val tickByte = byteArrayOf(0xF8.toByte())
+        val stepNanos = 20_833_333L // 24 ppqn @ 120 bpm
+        repeat(24 * 3) { // 3 beats' worth of ticks
+            receiver.send(tickByte, 0, 1, t)
+            t += stepNanos
+        }
+        // The ticks above are sent in a tight loop (near-instant in real time) but carry
+        // simulated timestamps ~1.5 real-time-seconds apart, so each beat's -200ms-offset reactive
+        // fire (see scheduleReactiveAudio) is scheduled that far into the *real* future relative to
+        // when onBeat actually processed it - give them time to actually fire before asserting.
+        Thread.sleep(1500)
+
+        assertEquals(3, events.size)
+    }
+
+    @Test
     fun `a drastic tempo increase takes effect promptly, not after the old slow tempo's stale wait`() {
         // Regression test for a real bug: InternalClockSource used to commit to a single sleep
         // sized for whatever bpm was in effect when the wait began. Dropping to a very slow
@@ -307,6 +437,57 @@ class MetronomeEngineTest {
         assertEquals(0.8f * 4 / 8, MetronomeEngine.effectiveMuteProbability(barsElapsed = 4), 0.001f)
         assertEquals(0.8f, MetronomeEngine.effectiveMuteProbability(barsElapsed = 8), 0.001f)
         assertEquals(0.8f, MetronomeEngine.effectiveMuteProbability(barsElapsed = 20), 0.001f)
+    }
+
+    @Test
+    fun `setProgressiveMuteRampBars adjusts the ramp's slope`() {
+        MetronomeEngine.setMuteProbability(1f)
+        MetronomeEngine.setProgressiveMuteEnabled(true)
+        MetronomeEngine.setProgressiveMuteRampBars(4)
+
+        assertEquals(4, MetronomeEngine.progressiveMuteRampBars.value)
+        // A steeper (shorter) ramp reaches half strength twice as fast as the 8-bar default.
+        assertEquals(0.5f, MetronomeEngine.effectiveMuteProbability(barsElapsed = 2), 0.001f)
+        assertEquals(1f, MetronomeEngine.effectiveMuteProbability(barsElapsed = 4), 0.001f)
+    }
+
+    @Test
+    fun `setProgressiveMuteRampBars clamps to the supported range`() {
+        MetronomeEngine.setProgressiveMuteRampBars(0)
+        assertEquals(MetronomeEngine.MIN_PROGRESSIVE_MUTE_RAMP_BARS, MetronomeEngine.progressiveMuteRampBars.value)
+
+        MetronomeEngine.setProgressiveMuteRampBars(999)
+        assertEquals(MetronomeEngine.MAX_PROGRESSIVE_MUTE_RAMP_BARS, MetronomeEngine.progressiveMuteRampBars.value)
+    }
+
+    @Test
+    fun `extended bpm range is off by default and setBpm still clamps to the normal range`() {
+        assertFalse(MetronomeEngine.extendedBpmRangeEnabled.value)
+
+        MetronomeEngine.setBpm(9000f)
+        assertEquals(MetronomeEngine.MAX_BPM, MetronomeEngine.state.value.bpm)
+
+        MetronomeEngine.setBpm(0.01f)
+        assertEquals(MetronomeEngine.MIN_BPM, MetronomeEngine.state.value.bpm)
+    }
+
+    @Test
+    fun `enabling extended bpm range unlocks the wider clamp, disabling snaps back into the normal range`() {
+        MetronomeEngine.setExtendedBpmRangeEnabled(true)
+        assertTrue(MetronomeEngine.extendedBpmRangeEnabled.value)
+
+        MetronomeEngine.setBpm(900f)
+        assertEquals(900f, MetronomeEngine.state.value.bpm, 0.01f)
+
+        MetronomeEngine.setBpm(0.5f)
+        assertEquals(0.5f, MetronomeEngine.state.value.bpm, 0.01f)
+
+        MetronomeEngine.setBpm(9000f)
+        assertEquals(MetronomeEngine.EXTENDED_MAX_BPM, MetronomeEngine.state.value.bpm, 0.01f)
+
+        // Turning extended range back off re-clamps the current (out-of-normal-range) bpm.
+        MetronomeEngine.setExtendedBpmRangeEnabled(false)
+        assertEquals(MetronomeEngine.MAX_BPM, MetronomeEngine.state.value.bpm, 0.01f)
     }
 
     @Test
