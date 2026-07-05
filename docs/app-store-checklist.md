@@ -78,6 +78,11 @@ worth establishing first rather than assuming.
       requests in app code, no analytics/ads SDKs, `SharedPreferences` only
       and never transmitted (see `PRIVACY.md` for the full reasoning). Still
       has to be filled out as a form in console, not just asserted in a doc.
+      The persistent-playback feature's new permissions (`POST_NOTIFICATIONS`,
+      the battery-optimization exemption, the foreground service itself)
+      don't change this answer - none of them collect, transmit, or share
+      data; see `PRIVACY.md`'s Permissions section for what each is actually
+      for.
 - [ ] **Ads/target-audience declarations** - no ads, not designed for
       children.
 

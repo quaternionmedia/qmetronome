@@ -45,10 +45,14 @@ needs, across both repos this work touched.
       `project/qmetronome` checkout — standard git behavior (`branch =` in
       `.gitmodules` only affects `git submodule update --remote`, not a
       plain clone), not a misconfiguration.
-- **`qmetronome`: public-repo claim unverified by me.**
-  `governance/qm/adr/DRAFT-constitution-adoption-scope.md` §7 asserts the
-  repo is public on GitHub with public Actions/Releases — no `gh` auth
-  available in-session to independently confirm that's still accurate.
+- [x] **`qmetronome`: public-repo claim — verified 2026-07-06.** `gh` auth
+      resolved this round (the session's `GITHUB_TOKEN` env var was invalid,
+      but `gh`'s own keyring-stored credential works once that's unset).
+      Confirmed directly: `gh api repos/.../qmetronome` reports
+      `"private": false`; `gh run list` and `gh release list` both return
+      real history (including the `v0.0.23` alpha release build succeeding),
+      i.e. genuinely public, not just theoretically public. §7 of
+      `DRAFT-constitution-adoption-scope.md` stands as written.
 - [x] **`qm`: banned-vocabulary word lists reconciled.** `TEMPLATE.md` (root,
       `project-seed/adr/`, and `streaming-infrastructure/adr/`) and
       `records/DRAFT-decision-record-discipline.md`'s Consequences bullet
