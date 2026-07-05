@@ -605,6 +605,44 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `a drastic manual tempo increase mid-beat shortens the wait for the very next beat`() {
+        MetronomeEngine.setBpm(30f) // 2000ms/beat
+        MetronomeEngine.start()
+        Thread.sleep(20) // let the near-instant first real beat land
+        val afterFirstBeat = MetronomeEngine.state.value.totalBeats
+
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // drastic speedup mid-second-beat - 150ms/beat
+        Thread.sleep(400) // comfortably past the new ~150ms mark, nowhere near the stale 2000ms one
+
+        assertTrue(
+            "expected the second beat to fire per the new, fast interval rather than wait out " +
+                "the stale slow one - totalBeats=${MetronomeEngine.state.value.totalBeats}",
+            MetronomeEngine.state.value.totalBeats > afterFirstBeat,
+        )
+    }
+
+    @Test
+    fun `a drastic manual tempo decrease mid-beat extends the wait for the very next beat`() {
+        // Regression test: InternalClockSource used to only ever *shorten* the current wait on a
+        // tempo change (catching up once elapsed time crossed the new, smaller interval) but
+        // never *lengthen* it - a slowdown kept firing on the stale, faster schedule and only
+        // took full effect one beat later than it should have.
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat
+        MetronomeEngine.start()
+        Thread.sleep(20) // let the near-instant first real beat land
+        val afterFirstBeat = MetronomeEngine.state.value.totalBeats
+
+        MetronomeEngine.setBpm(30f) // drastic slowdown mid-second-beat - 2000ms/beat
+        Thread.sleep(400) // comfortably past the stale ~150ms mark, nowhere near the new 2000ms one
+
+        assertEquals(
+            "expected the second beat to wait out the new, slow interval rather than fire on " +
+                "the stale fast schedule",
+            afterFirstBeat, MetronomeEngine.state.value.totalBeats,
+        )
+    }
+
+    @Test
     fun `setUnitNoteValue edits only the active bar's denominator, clamped`() {
         MetronomeEngine.setUnitNoteValue(8) // bar 0 -> 4/8... well, x/8
         MetronomeEngine.addBarToQueue() // bar 1, a copy (unitNoteValue 8)

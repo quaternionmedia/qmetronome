@@ -30,7 +30,9 @@ interface ClockSource {
 /**
  * Drift-corrected internal clock: instead of repeatedly delaying by a fixed interval (which
  * accumulates rounding/scheduling error over time), it tracks the absolute time the next beat
- * is due and only delays the remaining gap each iteration.
+ * is due and only delays the remaining gap each iteration. A tempo change - however drastic -
+ * always governs the very next beat, in both directions (speeding up *and* slowing down); see the
+ * recalculation inside [start].
  */
 class InternalClockSource : ClockSource {
 
@@ -50,19 +52,30 @@ class InternalClockSource : ClockSource {
         tickJob = scope.launch {
             var lastFireNanos = System.nanoTime()
             var nextTickNanos = lastFireNanos
+            // The very first beat always fires instantly (nextTickNanos starts equal to
+            // lastFireNanos, i.e. zero wait) - MidiClockSender's priming-flash logic, the Glyph
+            // Toy's instant-feedback-on-select, and this class's own render loop all lean on that.
+            // Recalculating nextTickNanos below is only meaningful once there's a *real* previous
+            // beat to measure the next interval from.
+            var hasFiredOnce = false
             while (isActive && running) {
-                val intervalNanos = (60_000_000_000.0 / this@InternalClockSource.bpm).toLong()
                 val now = System.nanoTime()
 
-                // A tempo change made mid-wait otherwise has no effect until this wait finishes -
-                // which can be tens of seconds at a slow tempo, and looks exactly like the beat
-                // (and therefore the animation, which derives its phase from time-since-last-
-                // beat) has frozen solid until the metronome is stopped and restarted. If the
-                // *current* bpm's interval has already elapsed since the last beat, resync to
-                // now instead of waiting out a schedule computed from a stale, since-changed bpm
-                // - the same treatment a process-suspension gap already needed below.
-                if (now - lastFireNanos >= intervalNanos) {
-                    nextTickNanos = now
+                if (hasFiredOnce) {
+                    // The pending beat's timing is continuously re-derived from the *current* bpm
+                    // relative to when the last real beat fired, every iteration - not reused from
+                    // whatever bpm was in effect when that beat fired. A tempo change made mid-
+                    // wait otherwise has no effect until the beat *after* next (or, for a
+                    // slowdown specifically, never even shortens/extends the current wait at all)
+                    // - drastic manual tempo changes need to land on the very next beat in both
+                    // directions, the same way a bar-queue-driven change already correctly does
+                    // (see MetronomeEngineTest's "a queue advance's tempo change governs the very
+                    // next beat" regression test). If that recalculated target is so far in the
+                    // past it'd otherwise take a burst of catch-up ticks to reach it (e.g. the
+                    // process was suspended), resync to now instead, same as before.
+                    val intervalNanos = (60_000_000_000.0 / this@InternalClockSource.bpm).toLong()
+                    val recalculatedNextTick = lastFireNanos + intervalNanos
+                    nextTickNanos = if (now - recalculatedNextTick > intervalNanos) now else recalculatedNextTick
                 }
 
                 val delayMillis = (nextTickNanos - now) / 1_000_000
@@ -77,12 +90,7 @@ class InternalClockSource : ClockSource {
                 if (delayMillis > 0) delay(delayMillis)
                 onBeat(nextTickNanos, null)
                 lastFireNanos = nextTickNanos
-                // Re-read bpm fresh rather than reusing intervalNanos from above - onBeat() may
-                // have just changed the tempo itself (e.g. the bar queue advancing to a bar with
-                // a different bpm), and that change must govern the very next beat. Reusing the
-                // pre-beat interval here would silently apply the new tempo one beat late.
-                val postBeatIntervalNanos = (60_000_000_000.0 / this@InternalClockSource.bpm).toLong()
-                nextTickNanos += postBeatIntervalNanos
+                hasFiredOnce = true
             }
         }
     }

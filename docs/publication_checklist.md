@@ -278,3 +278,11 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       confirm the notification disappears promptly, and that Glyph Toy
       unlock/toy-switch now stops playback again (today's default behavior
       resumes).
+- [ ] **Drastic mid-beat tempo changes (both directions)**: while playing,
+      make a large, sudden manual tempo change mid-beat - both a big jump up
+      (e.g. numeric-entry from 60 to 300) and a big jump down (e.g. 300 to
+      60) - and confirm the very next click/flash lands on the new tempo's
+      schedule in both cases, not just when speeding up. Also confirm the
+      visual flash and audible click stay in sync with each other throughout
+      (no early-decay-then-frozen flash, no backward phase jump) immediately
+      after a drastic change.
