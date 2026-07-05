@@ -66,6 +66,9 @@ in this repo. The branch's ancestry is the pin; see
   section, `governance/qm/adr/DRAFT-glyph-matrix-sdk-dependency.md`, and
   `governance/qm/adr/DRAFT-android-kotlin-platform-stack.md` are the two
   specific gaps' own dedicated records.
+- **[`governance-next-steps.md`](governance-next-steps.md)** — what's left
+  after the adoption and broadening passes, grouped by whether it needs
+  review, an audit, or new work, across both this repo and `qm`.
 
 ## Release readiness
 
