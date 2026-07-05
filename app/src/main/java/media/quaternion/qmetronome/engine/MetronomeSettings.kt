@@ -6,6 +6,11 @@ import android.content.Context
  * so a fresh install and a not-yet-attached engine agree on the same starting value. */
 const val DEFAULT_VISUAL_OFFSET_MS = -50f
 
+/** Default [MetronomeSettings.audioOffsetMs] - a smaller lead than [DEFAULT_VISUAL_OFFSET_MS],
+ * since a phone's audio output pipeline typically has less latency than the Glyph Matrix's own
+ * render/transmit path. See [MetronomeEngine.audioOffsetMs] for how it's actually applied. */
+const val DEFAULT_AUDIO_OFFSET_MS = -30f
+
 /** Persists the last-used tempo, time signature and visualizer choice across process restarts. */
 class MetronomeSettings(context: Context) {
 
@@ -52,6 +57,15 @@ class MetronomeSettings(context: Context) {
         get() = prefs.getFloat(KEY_VISUAL_OFFSET_MS, DEFAULT_VISUAL_OFFSET_MS)
         set(value) = prefs.edit().putFloat(KEY_VISUAL_OFFSET_MS, value).apply()
 
+    /** Same idea as [visualOffsetMs], but for the audible click - see
+     * [MetronomeEngine.audioOffsetMs] for why a discrete one-shot trigger needs genuine lookahead
+     * scheduling to fire early, rather than just a shifted decay curve. Defaults to
+     * [DEFAULT_AUDIO_OFFSET_MS], not 0, for the same "land on time by feel" reasoning as the
+     * visual offset. */
+    var audioOffsetMs: Float
+        get() = prefs.getFloat(KEY_AUDIO_OFFSET_MS, DEFAULT_AUDIO_OFFSET_MS)
+        set(value) = prefs.edit().putFloat(KEY_AUDIO_OFFSET_MS, value).apply()
+
     /** When true and the device is in landscape, the main screen switches to a side-by-side
      * preview+controls layout that fits within the screen height instead of overflowing. */
     var compactLandscape: Boolean
@@ -83,6 +97,16 @@ class MetronomeSettings(context: Context) {
     var progressiveMuteEnabled: Boolean
         get() = prefs.getBoolean(KEY_PROGRESSIVE_MUTE_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_PROGRESSIVE_MUTE_ENABLED, value).apply()
+
+    /** How many bars the progressive mute ramp takes to reach its target - the ramp's slope. */
+    var progressiveMuteRampBars: Int
+        get() = prefs.getInt(KEY_PROGRESSIVE_MUTE_RAMP_BARS, MetronomeEngine.DEFAULT_PROGRESSIVE_MUTE_RAMP_BARS)
+        set(value) = prefs.edit().putInt(KEY_PROGRESSIVE_MUTE_RAMP_BARS, value).apply()
+
+    /** Defaults to off - see [MetronomeEngine.extendedBpmRangeEnabled] for what it unlocks. */
+    var extendedBpmRangeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_EXTENDED_BPM_RANGE_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_EXTENDED_BPM_RANGE_ENABLED, value).apply()
 
     /** The bar queue - beats/note value/tempo/visualizer per bar - as
      * "beatCount:unitNoteValue:bpm:visualizerId" rows joined by "|" (the last field empty when no
@@ -167,11 +191,14 @@ class MetronomeSettings(context: Context) {
         const val KEY_CLOCK_OUT_ENABLED = "clock_out_enabled"
         const val KEY_CLOCK_OUT_TIMING_MODE = "clock_out_timing_mode"
         const val KEY_VISUAL_OFFSET_MS = "visual_offset_ms"
+        const val KEY_AUDIO_OFFSET_MS = "audio_offset_ms"
         const val KEY_COMPACT_LANDSCAPE = "compact_landscape"
         const val KEY_PERSISTENT_MODE_ENABLED = "persistent_mode_enabled"
         const val KEY_HAS_SHOWN_BPM_HINT = "has_shown_bpm_hint"
         const val KEY_MUTE_PROBABILITY = "mute_probability"
         const val KEY_PROGRESSIVE_MUTE_ENABLED = "progressive_mute_enabled"
+        const val KEY_PROGRESSIVE_MUTE_RAMP_BARS = "progressive_mute_ramp_bars"
+        const val KEY_EXTENDED_BPM_RANGE_ENABLED = "extended_bpm_range_enabled"
         const val KEY_QUEUE = "queue"
         const val KEY_QUEUE_INDEX = "queue_index"
         const val KEY_QUEUE_MODE = "queue_mode"

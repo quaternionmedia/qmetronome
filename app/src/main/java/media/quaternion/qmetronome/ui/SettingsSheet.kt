@@ -60,6 +60,7 @@ import media.quaternion.qmetronome.engine.ClickSound
 import media.quaternion.qmetronome.engine.ClickSpec
 import media.quaternion.qmetronome.engine.ClickWaveform
 import media.quaternion.qmetronome.engine.ClockTimingMode
+import media.quaternion.qmetronome.engine.DEFAULT_AUDIO_OFFSET_MS
 import media.quaternion.qmetronome.engine.DEFAULT_VISUAL_OFFSET_MS
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.midi.MidiClockSender
@@ -96,9 +97,15 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     val clockOutEnabled by MidiClockSender.enabled.collectAsState()
     val clockOutTimingMode by MidiClockSender.timingMode.collectAsState()
     val visualOffsetMs by MetronomeEngine.visualOffsetMs.collectAsState()
+    val audioOffsetMs by MetronomeEngine.audioOffsetMs.collectAsState()
+    val stagedBpm by MetronomeEngine.stagedBpm.collectAsState()
+    val timeSignature by MetronomeEngine.timeSignature.collectAsState()
+    val extendedBpmRangeEnabled by MetronomeEngine.extendedBpmRangeEnabled.collectAsState()
+    var showBpmDialog by remember { mutableStateOf(false) }
     val compactLandscape by MetronomeEngine.compactLandscape.collectAsState()
     val muteProbability by MetronomeEngine.muteProbability.collectAsState()
     val progressiveMuteEnabled by MetronomeEngine.progressiveMuteEnabled.collectAsState()
+    val progressiveMuteRampBars by MetronomeEngine.progressiveMuteRampBars.collectAsState()
     val queueOverlayEnabled by MetronomeEngine.queueOverlayEnabled.collectAsState()
     val visualizerEnabled by MetronomeEngine.visualizerEnabled.collectAsState()
     val persistentModeEnabled by MetronomeEngine.persistentModeEnabled.collectAsState()
@@ -135,6 +142,40 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
             HorizontalDivider()
 
             CollapsibleSection(
+                title = "Tempo & Bars",
+                summary = {
+                    val summaryBpm = stagedBpm ?: beat.bpm
+                    Text(
+                        text = "${bpmDisplayValue(summaryBpm)} ${bpmDisplayUnit(summaryBpm)} · " +
+                            "${beat.beatsPerBar}/${timeSignature.unitNoteValue}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+            ) {
+                // The exact same composables driving the main screen - guaranteed to live-sync
+                // since they read the same StateFlows, not a second display that could drift.
+                BpmControls(beat = beat, onShowBpmDialog = { showBpmDialog = true })
+                Spacer(Modifier.height(4.dp))
+                BeatsPerBarControls()
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Extended range (BPH/BPS)", style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = extendedBpmRangeEnabled, onCheckedChange = MetronomeEngine::setExtendedBpmRangeEnabled)
+                }
+                Text(
+                    text = "Live mirror of the main screen's tempo, meter and bar queue - changes here " +
+                        "apply immediately and vice versa, including which bar is currently active. " +
+                        "Extended range unlocks tempos below ${MetronomeEngine.MIN_BPM.roundToInt()} BPM " +
+                        "(shown as beats-per-hour) and above ${MetronomeEngine.MAX_BPM.roundToInt()} BPM " +
+                        "(beats-per-second).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+
+            HorizontalDivider()
+
+            CollapsibleSection(
                 title = "Random mute",
                 summary = {
                     SteppedSlider(
@@ -155,10 +196,23 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                     Text("Progressive start", style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = progressiveMuteEnabled, onCheckedChange = MetronomeEngine::setProgressiveMuteEnabled)
                 }
+                if (progressiveMuteEnabled) {
+                    SteppedSlider(
+                        value = progressiveMuteRampBars.toFloat(),
+                        onValueChange = { MetronomeEngine.setProgressiveMuteRampBars(it.roundToInt()) },
+                        currentValue = { MetronomeEngine.progressiveMuteRampBars.value.toFloat() },
+                        valueRange = MetronomeEngine.MIN_PROGRESSIVE_MUTE_RAMP_BARS.toFloat()..MetronomeEngine.MAX_PROGRESSIVE_MUTE_RAMP_BARS.toFloat(),
+                        step = 1f,
+                        defaultValue = MetronomeEngine.DEFAULT_PROGRESSIVE_MUTE_RAMP_BARS.toFloat(),
+                        dialogTitle = "Set ramp length (bars)",
+                        valueLabel = { "${it.roundToInt()} bar ramp" },
+                    )
+                }
                 Text(
                     text = "Randomly skips the click on some beats - a practice tool for internalizing " +
                         "tempo rather than leaning on every click. Progressive start ramps the chance up " +
-                        "from 0% over the first few bars instead of starting at full strength.",
+                        "from 0% over the configured number of bars instead of starting at full strength - " +
+                        "a shorter ramp reaches full strength sooner, a longer one eases in more gradually.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.secondary,
                 )
@@ -227,6 +281,26 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                 },
             ) {
                 VisualOffsetDetails(bpm = beat.bpm)
+            }
+
+            HorizontalDivider()
+
+            CollapsibleSection(
+                title = "Audio timing offset",
+                summary = {
+                    SteppedSlider(
+                        value = audioOffsetMs,
+                        onValueChange = MetronomeEngine::setAudioOffsetMs,
+                        currentValue = { MetronomeEngine.audioOffsetMs.value },
+                        valueRange = -500f..500f,
+                        step = 10f,
+                        defaultValue = DEFAULT_AUDIO_OFFSET_MS,
+                        dialogTitle = "Set audio offset (ms)",
+                        valueLabel = { "${it.roundToInt()} ms" },
+                    )
+                },
+            ) {
+                AudioOffsetDetails(bpm = beat.bpm)
             }
 
             HorizontalDivider()
@@ -374,6 +448,23 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
             AppVersionFooter()
             Spacer(Modifier.height(8.dp))
         }
+    }
+
+    if (showBpmDialog) {
+        NumericEntryDialog(
+            title = "Set BPM",
+            initialValue = stagedBpm ?: beat.bpm,
+            valueRange = if (extendedBpmRangeEnabled) {
+                MetronomeEngine.EXTENDED_MIN_BPM..MetronomeEngine.EXTENDED_MAX_BPM
+            } else {
+                MetronomeEngine.MIN_BPM..MetronomeEngine.MAX_BPM
+            },
+            onConfirm = { bpm ->
+                MetronomeEngine.setBpm(bpm)
+                showBpmDialog = false
+            },
+            onDismiss = { showBpmDialog = false },
+        )
     }
 }
 
@@ -595,6 +686,53 @@ private fun VisualOffsetDetails(bpm: Float) {
                 "Defaults to ${DEFAULT_VISUAL_OFFSET_MS.roundToInt()} ms to compensate for typical human " +
                 "reaction/perception plus system display lag - if the flash still feels late, drag further " +
                 "left; double-tap the value above to reset to that default.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.secondary,
+        )
+    }
+}
+
+// ── Audio timing offset ────────────────────────────────────────────────────
+
+private enum class AudioOffsetUnit(val label: String) {
+    Ms("ms"),
+    BeatPct("beat %"),
+}
+
+/** Same idea as [VisualOffsetDetails], for the audible click. No "frames" unit here - that's tied
+ * to the Glyph Matrix's own render rate, which has no equivalent for a one-shot sound. */
+@Composable
+private fun AudioOffsetDetails(bpm: Float) {
+    var unit by remember { mutableStateOf(AudioOffsetUnit.Ms) }
+    val offsetMs by MetronomeEngine.audioOffsetMs.collectAsState()
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            AudioOffsetUnit.entries.forEach { u ->
+                FilterChip(
+                    selected = unit == u,
+                    onClick = { unit = u },
+                    label = { Text(u.label) },
+                )
+            }
+        }
+        Text(
+            text = when (unit) {
+                AudioOffsetUnit.Ms -> "${offsetMs.roundToInt()} ms"
+                AudioOffsetUnit.BeatPct -> "${"%.1f".format(offsetMs / (60_000f / bpm) * 100)} % of beat"
+            },
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            text = "Shifts the audible click earlier (negative) or later (positive) relative to the beat " +
+                "timestamp. A negative value uses genuine lookahead scheduling to actually pre-trigger the " +
+                "click - unlike the visual offset's phase-shifted decay curve, there's no equivalent trick " +
+                "for a one-shot sound. Defaults to ${DEFAULT_AUDIO_OFFSET_MS.roundToInt()} ms; double-tap " +
+                "the value above to reset to that default. Only ever delays (never leads) while following " +
+                "an external MIDI clock, since there's nothing of your own to predict there.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.secondary,
         )

@@ -146,10 +146,15 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
     }
 
     if (showBpmDialog) {
+        val extendedBpmRangeEnabled by MetronomeEngine.extendedBpmRangeEnabled.collectAsState()
         NumericEntryDialog(
             title = "Set BPM",
             initialValue = stagedBpm ?: beat.bpm,
-            valueRange = MetronomeEngine.MIN_BPM..MetronomeEngine.MAX_BPM,
+            valueRange = if (extendedBpmRangeEnabled) {
+                MetronomeEngine.EXTENDED_MIN_BPM..MetronomeEngine.EXTENDED_MAX_BPM
+            } else {
+                MetronomeEngine.MIN_BPM..MetronomeEngine.MAX_BPM
+            },
             onConfirm = { bpm ->
                 MetronomeEngine.setBpm(bpm)
                 showBpmDialog = false
@@ -157,6 +162,24 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
             onDismiss = { showBpmDialog = false },
         )
     }
+}
+
+/** Below [MetronomeEngine.MIN_BPM], a "0 BPM"-ish number reads as broken even though the actual
+ * tempo (in BPH terms) is meaningful - so under 1 bpm switches to beats-per-hour, and above
+ * [MetronomeEngine.MAX_BPM] switches to beats-per-second, both to 2 decimal places. Inside the
+ * normal range, unchanged: a rounded whole-number BPM. Shared by [BpmControls] and its Settings
+ * mirror so the two never disagree on how a given bpm reads. */
+internal fun bpmDisplayValue(bpm: Float): String = when {
+    bpm < MetronomeEngine.MIN_BPM -> String.format(java.util.Locale.ROOT, "%.2f", bpm * 60f)
+    bpm > MetronomeEngine.MAX_BPM -> String.format(java.util.Locale.ROOT, "%.2f", bpm / 60f)
+    else -> bpm.roundToInt().toString()
+}
+
+/** The unit label paired with [bpmDisplayValue] - see its kdoc. */
+internal fun bpmDisplayUnit(bpm: Float): String = when {
+    bpm < MetronomeEngine.MIN_BPM -> "BPH"
+    bpm > MetronomeEngine.MAX_BPM -> "BPS"
+    else -> "BPM"
 }
 
 // ── Shared preview + controls sub-composables ──────────────────────────────
@@ -282,14 +305,17 @@ private fun PreviewBox(
     }
 }
 
+/** Internal (not private): reused by [SettingsSheet]'s live "Tempo & Bars" mirror so that section
+ * never has a second, independently-drifting copy of this display - see [BeatsPerBarControls]'s
+ * own kdoc for the same reasoning. */
 @Composable
-private fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
+internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
     val holdMode by MetronomeEngine.holdMode.collectAsState()
     val stagedBpm by MetronomeEngine.stagedBpm.collectAsState()
     val hasShownBpmHint by MetronomeEngine.hasShownBpmHint.collectAsState()
     val bpmDragPxPerStep = with(LocalDensity.current) { 6.dp.toPx() }
 
-    val displayBpm = (stagedBpm ?: beat.bpm).roundToInt()
+    val displayBpm = stagedBpm ?: beat.bpm
 
     // Reads the authoritative bpm fresh at call time rather than closing over `displayBpm` -
     // both the hold-repeat buttons' loop and the drag gesture's detector are long-running
@@ -329,7 +355,7 @@ private fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
                 },
         ) {
             Text(
-                text = displayBpm.toString(),
+                text = bpmDisplayValue(displayBpm),
                 style = MaterialTheme.typography.displayMedium,
             )
             if (holdMode != MetronomeEngine.HoldMode.Off) {
@@ -348,7 +374,7 @@ private fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
         }
     }
     Text(
-        text = "BPM",
+        text = bpmDisplayUnit(displayBpm),
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.secondary,
     )
@@ -388,9 +414,13 @@ private fun BpmGestureHint(visible: Boolean) {
  * swipe starting that close to a button could easily be captured by the button instead. A
  * single-entry queue - the default - still shows one dot, but otherwise behaves exactly like a
  * plain, unchanging time signature.
+ *
+ * Internal (not private): [SettingsSheet]'s "Tempo & Bars" section embeds this same composable
+ * directly rather than building a second beats-per-bar/bar-queue display, which would otherwise
+ * either drift out of sync with this one or double the upkeep of every future change here.
  */
 @Composable
-private fun BeatsPerBarControls() {
+internal fun BeatsPerBarControls() {
     val beat by MetronomeEngine.state.collectAsState()
     val stagedBeatsPerBar by MetronomeEngine.stagedBeatsPerBar.collectAsState()
     val holdMode by MetronomeEngine.holdMode.collectAsState()

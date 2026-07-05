@@ -61,6 +61,33 @@ class MetronomeSettingsTest {
     }
 
     @Test
+    fun `progressive mute ramp bars defaults and round-trips once set`() {
+        assertEquals(MetronomeEngine.DEFAULT_PROGRESSIVE_MUTE_RAMP_BARS, settings.progressiveMuteRampBars)
+
+        settings.progressiveMuteRampBars = 16
+
+        assertEquals(16, settings.progressiveMuteRampBars)
+    }
+
+    @Test
+    fun `audio offset defaults to DEFAULT_AUDIO_OFFSET_MS, and round-trips once set`() {
+        assertEquals(DEFAULT_AUDIO_OFFSET_MS, settings.audioOffsetMs)
+
+        settings.audioOffsetMs = 15f
+
+        assertEquals(15f, settings.audioOffsetMs)
+    }
+
+    @Test
+    fun `extended bpm range defaults off, and round-trips once set`() {
+        assertFalse(settings.extendedBpmRangeEnabled)
+
+        settings.extendedBpmRangeEnabled = true
+
+        assertEquals(true, settings.extendedBpmRangeEnabled)
+    }
+
+    @Test
     fun `bar queue defaults to a single default bar, and round-trips once set`() {
         assertEquals(listOf(TimeSignature.DEFAULT), settings.queue)
         assertEquals(0, settings.queueIndex)

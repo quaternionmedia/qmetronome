@@ -33,8 +33,8 @@ constitution repo).
   mute (`setMuteProbability`/`setProgressiveMuteEnabled`) skips the audible click on a
   probabilistic subset of beats - a practice tool for not leaning on every click - without
   touching beat position, phase, or visuals, so the visual cue and bar length never desync from
-  a muted click; progressive start ramps the chance up linearly from 0 over the first few bars
-  instead of applying at full strength immediately. `engine/TimeSignature` is a real "1x2 matrix"
+  a muted click; progressive start ramps the chance up linearly from 0 over a tunable number of
+  bars (`setProgressiveMuteRampBars`, default 8) instead of applying at full strength immediately. `engine/TimeSignature` is a real "1x2 matrix"
   time signature - `beatCount` (numerator) and `unitNoteValue` (denominator, e.g. the "4" in 4/4)
   edited independently, plus its own `bpm` and `accentPattern` reserved for later. Changing
   `unitNoteValue` rescales `bpm` to preserve the underlying tempo (`bpm / unitNoteValue` held
@@ -88,16 +88,18 @@ constitution repo).
 - `ui/` — Compose UI. `MainScreen` keeps the Glyph Matrix preview as the dominant, focal
   element with tempo/tap/play-stop and beats-per-bar alongside it - live meter/tempo controls
   belong on the main screen, not a settings overlay you'd have to leave the beat to open.
-  Everything else (random mute, click toggle, visualizer picker, independent beat-visualizer/
-  bar-queue-background toggles, visual timing offset, MIDI clock status/USB connection/clock-out)
-  lives behind the bottom-right settings button in
+  Everything else (a live "Tempo & Bars" mirror of the main screen's own BPM/meter/bar-queue
+  controls plus an extended-BPM-range toggle, random mute, click toggle, visualizer picker,
+  independent beat-visualizer/bar-queue-background toggles, visual and audio timing offsets, MIDI
+  clock status/USB connection/clock-out) lives behind the bottom-right settings button in
   `SettingsSheet`, a full-screen translucent overlay (not a half-open bottom sheet) so the
   matrix preview's flashes still glow through dimly behind it. The preview shows a dim ghost of
   the current visualizer at rest even when the metronome is stopped (6% brightness idle frame),
   so the AMOLED screen never looks fully off. The settings button isn't the only way in:
   long-pressing the preview also opens settings; double-tapping the preview toggles play/stop;
   swiping left/right cycles visualizers; and the BPM number itself is triple-duty — tap it for
-  tap-tempo, long-press it for a direct-entry dialog (range 1–400 BPM), or drag it left/right for
+  tap-tempo, long-press it for a direct-entry dialog (range 1–400 BPM, extendable to 0.1–3000 via
+  Settings → Tempo & Bars, displayed as BPH/BPS outside the normal range), or drag it left/right for
   continuous fine adjustment (a one-time hint the first time it's shown explains all three, then
   never appears again). `BeatsPerBarControls` mirrors that same pattern (steppers, long-press to
   type an exact value) at a visually secondary scale just below it. A second row beneath it is
@@ -168,7 +170,10 @@ built-in visualizer's `accentScale` pattern). `GlyphCanvas.line()` is available 
 Several input methods on the main screen, layered for different precision needs:
 
 - **Tap tempo**: tap the **TAP** button, or tap the BPM number itself, in rhythm; BPM is derived
-  from a rolling average of the last few taps.
+  from a rolling average of the last few taps. Decoupled from playback - tapping while stopped
+  only dials in a tempo, it doesn't start the metronome. The one exception: while HOLD is
+  *latched* (see below), tapping out a tempo (more than once) commits it and starts playback at
+  that tempo and the current time signature - a deliberate "count it in and go" gesture.
 - **Step buttons** (either side of the BPM number): tap for ±1 BPM, hold for a
   geometrically-accelerating repeat - the longer you hold, the faster it moves.
 - **Drag-to-scrub**: press and drag the BPM number itself left/right for continuous fine

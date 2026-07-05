@@ -286,3 +286,55 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       visual flash and audible click stay in sync with each other throughout
       (no early-decay-then-frozen flash, no backward phase jump) immediately
       after a drastic change.
+- [ ] **v0.0.24 audio timing offset, lead**: in Settings → Audio timing
+      offset, set a negative value (e.g. -100 ms beyond the -30 ms default)
+      and confirm the click is audibly *ahead* of the visual flash by roughly
+      that amount - this is genuine lookahead scheduling, not a delay trick,
+      so confirm it holds up across a range of tempos (slow and fast) without
+      stuttering, skipping, or doubling a click.
+- [ ] **v0.0.24 audio timing offset, lag**: set a positive value and confirm
+      the click now trails the visual flash instead, and that switching
+      between a negative and a positive value while playing takes effect
+      cleanly on the next beat or two, not with a stuck/duplicated click.
+- [ ] **v0.0.24 audio offset vs. visual offset, independent**: confirm the
+      two offsets (Settings → Visual timing offset vs. Audio timing offset)
+      can be set to different values and both apply independently - e.g. a
+      more-negative audio offset than visual offset should make the click
+      lead the flash, not just both leading the true beat by the same amount.
+- [ ] **v0.0.24 audio offset while following external MIDI clock**: with
+      "Send MIDI clock" off and instead *following* an external MIDI clock
+      source, set a negative audio offset and confirm the click does **not**
+      lead the incoming clock (there's nothing of ours to predict there) -
+      it should just play reactively, same as a 0ms offset would.
+- [ ] **v0.0.24 real version string on a sideloaded/dev build**: check
+      Settings' version footer on a build installed directly from Android
+      Studio (not a tagged CI release) - confirm it shows a real
+      `git describe`-derived string (e.g. `v0.0.23-4-gabc1234-dirty`) rather
+      than the old hardcoded `1.0 (build 1)`.
+- [ ] **v0.0.24 Settings "Tempo & Bars" live mirror**: open Settings while
+      the metronome is playing, expand "Tempo & Bars", and confirm the BPM,
+      time signature and bar-queue dots shown there update live in step with
+      the main screen and the Glyph Matrix - including which bar is
+      highlighted as active - rather than only updating on open/close.
+      Confirm editing tempo/beats-per-bar from *within* Settings also updates
+      the main screen and Glyph Matrix immediately.
+- [ ] **v0.0.24 tap tempo decoupled from play**: with the metronome stopped,
+      tap the BPM number/TAP button several times - confirm the tempo number
+      updates but playback does **not** start. Separately, engage HOLD's
+      sticky latch (long-press or double-tap HOLD), tap out a tempo (more
+      than once), and confirm that tapping while latched both commits the
+      tapped tempo *and* starts playback at that tempo, using the current
+      time signature.
+- [ ] **v0.0.24 extended BPM range**: enable "Extended range (BPH/BPS)" in
+      Settings → Tempo & Bars, drag/type the tempo below 1 BPM and confirm it
+      switches to a "X.XX BPH" display, then above 400 BPM and confirm "X.XX
+      BPS" - confirm the Glyph Matrix and audible click still track
+      correctly at both extremes. Turn the toggle back off with tempo still
+      out of the normal range and confirm it snaps back within 1-400 BPM
+      rather than getting stuck.
+- [ ] **v0.0.24 progressive mute ramp length**: in Settings → Random mute,
+      enable "Progressive start", set a short ramp (e.g. 2 bars) and a long
+      one (e.g. 24 bars) on separate runs, and confirm the mute probability
+      audibly reaches full strength faster with the short ramp and more
+      gradually with the long one, rather than the ramp length having no
+      audible effect.
