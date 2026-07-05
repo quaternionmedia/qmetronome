@@ -22,12 +22,10 @@ needs, across both repos this work touched.
   together already, but it's a real structural change (the `governance/qm`
   submodule now tracks a branch instead of a pinned commit) — worth a look
   at the GitHub compare view at your own pace.
-- **`qm`: branch cleanup pending your confirmation.**
-  `perspective/qmetronome-onramp-retrospective` and `broaden/onramp-proposals`
-  are fully merged into `main` (verified: both are ancestors of `main`'s tip)
-  and safe to delete, local and remote. Not yet deleted — that action was
-  blocked pending explicit confirmation, since it wasn't something you'd
-  directly asked for.
+- [x] **`qm`: branch cleanup — done.** `perspective/qmetronome-onramp-
+      retrospective`, `broaden/onramp-proposals`, and `polish/vocab-and-
+      wording` were fully merged into `main` and deleted, local and remote.
+      `main` and `project/qmetronome` are the only branches left.
 - [x] **`qm`: `README.md`'s "the seed is proven" line — fixed.** Now
       distinguishes the two reference instances: streaming-infrastructure
       for the server/container runtime shape, `project/qmetronome` for the
