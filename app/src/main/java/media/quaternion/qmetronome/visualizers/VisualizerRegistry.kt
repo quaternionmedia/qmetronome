@@ -20,6 +20,7 @@ object VisualizerRegistry {
         ChaosVisualizer(),
         MetronomeVisualizer(),
         LinearWipeVisualizer(),
+        FireworkVisualizer(),
     )
 
     /** The traditional triangle-metronome visualizer, not [all]'s first entry - keeps the

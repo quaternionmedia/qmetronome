@@ -217,3 +217,21 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       both off, each on alone) and confirm the Glyph Matrix output matches
       each combination — in particular, confirm "both off" shows a blank/idle
       glyph rather than a stale frame from before the toggle was flipped.
+- [ ] **v0.0.23 visual offset default**: on a fresh install (or after
+      clearing app data), confirm Settings → Visual timing offset shows -50 ms
+      rather than 0, and that the flash/click feel reasonably in sync out of
+      the box - adjust from there by feel per device.
+- [ ] **v0.0.23 MIDI transport start**: connect an external MIDI clock
+      source that sends Start (`0xFA`) before its clock ticks, hit play on
+      that source, and confirm the Glyph Matrix shows exactly one "bar"
+      flash before the first regular beat - not two in a row.
+- [ ] **v0.0.23 tunable click sounds**: in Settings → Click sounds, change
+      each of Bar/Beat/Accent's waveform, frequency and duration, enable
+      "Audible click", and confirm all three sound distinct and update live
+      as the sliders move. Confirm a fast tempo (short beat interval) doesn't
+      glitch or drop clicks when a sound retriggers before its previous
+      decay finished.
+- [ ] **v0.0.23 Firework visualizer**: select "Firework" in Settings →
+      Visualizer and confirm it renders a radiating spark burst on both the
+      on-screen preview and the physical Glyph Matrix, bigger/brighter on
+      bar 1 than on other beats.

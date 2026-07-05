@@ -145,6 +145,30 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `midi transport start does not force a fresh bar flash mid-beat`() {
+        MetronomeEngine.start()
+        // Let phase progress partway through the first beat (120 BPM default = 500ms/beat) before
+        // any external clock gets involved.
+        Thread.sleep(200)
+        val phaseBeforeMidiStart = MetronomeEngine.state.value.phase
+        assertTrue(
+            "expected phase to have progressed partway through the beat, was $phaseBeforeMidiStart",
+            phaseBeforeMidiStart > 0.1f,
+        )
+
+        MidiClockSource.receiverFor(MidiClockSource.Source.USB)
+            .send(byteArrayOf(0xFA.toByte()), 0, 1, 0L)
+
+        // A MIDI transport Start must not reset the render clock and force a fresh "bar" flash
+        // before the real first tick-driven beat (24 ticks later) actually arrives - doing so
+        // plays out one full bar-flash decay animation immediately, then a second, identical-
+        // looking one when the real beat lands. Phase should simply keep progressing from where
+        // it already was, not snap back down to a freshly-reset 0.
+        assertTrue(MetronomeEngine.state.value.phase >= phaseBeforeMidiStart)
+        assertTrue(MetronomeEngine.clockStatus.value is MetronomeEngine.ClockStatus.Midi)
+    }
+
+    @Test
     fun `setBpm and setBeatsPerBar still apply immediately when hold is off`() {
         assertEquals(MetronomeEngine.HoldMode.Off, MetronomeEngine.holdMode.value)
 

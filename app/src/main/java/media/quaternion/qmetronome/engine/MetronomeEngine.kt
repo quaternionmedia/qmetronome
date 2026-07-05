@@ -97,7 +97,12 @@ object MetronomeEngine {
     private val _clickEnabled = MutableStateFlow(false)
     val clickEnabled: StateFlow<Boolean> = _clickEnabled.asStateFlow()
 
-    private val _visualOffsetMs = MutableStateFlow(0f)
+    /** Mirrors [clickPlayer]'s own specs so Settings can observe/edit them - [clickPlayer] itself
+     * isn't a `StateFlow`-based class, since it also owns real `AudioTrack` resources. */
+    private val _clickSpecs = MutableStateFlow(ClickSound.entries.associateWith(ClickSpec::defaultFor))
+    val clickSpecs: StateFlow<Map<ClickSound, ClickSpec>> = _clickSpecs.asStateFlow()
+
+    private val _visualOffsetMs = MutableStateFlow(DEFAULT_VISUAL_OFFSET_MS)
     val visualOffsetMs: StateFlow<Float> = _visualOffsetMs.asStateFlow()
 
     private val _compactLandscape = MutableStateFlow(false)
@@ -183,6 +188,9 @@ object MetronomeEngine {
         // last-used global visualizer restored above.
         restoredSpec.visualizerId?.let { _visualizer.value = VisualizerRegistry.byId(it) }
         _clickEnabled.value = store.clickEnabled
+        val restoredSpecs = ClickSound.entries.associateWith { store.clickSpec(it) }
+        restoredSpecs.forEach { (sound, spec) -> clickPlayer.setSpec(sound, spec) }
+        _clickSpecs.value = restoredSpecs
         _visualOffsetMs.value = store.visualOffsetMs
         _compactLandscape.value = store.compactLandscape
         _hasShownBpmHint.value = store.hasShownBpmHint
@@ -194,7 +202,7 @@ object MetronomeEngine {
         MidiClockSource.onExternalActivity = { if (!usingMidiClock) useMidiClock() }
         MidiClockSource.onTransportStart = {
             if (!usingMidiClock) useMidiClock()
-            start()
+            start(primeVisualFlash = false)
         }
         MidiClockSource.onTransportStop = ::stop
         emitIdleFrame()
@@ -518,6 +526,12 @@ object MetronomeEngine {
         settings?.clickEnabled = enabled
     }
 
+    fun setClickSpec(sound: ClickSound, spec: ClickSpec) {
+        clickPlayer.setSpec(sound, spec)
+        _clickSpecs.update { it + (sound to spec) }
+        settings?.setClickSpec(sound, spec)
+    }
+
     fun setVisualOffsetMs(ms: Float) {
         val clamped = ms.coerceIn(-500f, 500f)
         _visualOffsetMs.value = clamped
@@ -598,15 +612,32 @@ object MetronomeEngine {
      * (e.g. a past unhandled exception, or a stale state left over from an anomalous Glyph
      * Toy rebind), this notices the render job isn't actually alive and restarts cleanly
      * instead of trusting the flag and no-opping forever.
+     *
+     * [primeVisualFlash] fires an immediate "bar" flash (`beatIndex = 0, phase = 0f,
+     * isAccent = true`, plus resetting [lastBeatNanos] to now so the render loop's decay
+     * animation starts from this instant) so the display doesn't sit blank while waiting for the
+     * first beat. That's correct for [InternalClockSource], whose real first [onBeat] fires within
+     * microseconds of this call - the priming flash and the real one are visually the same event.
+     * It's wrong for a MIDI-driven start ([MidiClockSource.onTransportStart], wired in [attach]):
+     * the real first beat there only arrives after 24 clock ticks actually elapse, roughly a full
+     * beat later, so priming here would play out one whole "bar" decay animation and then play a
+     * second, identical-looking one when the real beat lands - two bar flashes where there should
+     * be one. Passing `false` skips the priming and leaves [lastBeatNanos] stale, so the render
+     * loop reads a saturated, fully-decayed/resting frame until the real tick-driven [onBeat] call
+     * supplies the one correct flash.
      */
-    fun start() {
+    fun start(primeVisualFlash: Boolean = true) {
         if (_state.value.isPlaying && renderJob?.isActive == true) return
         beatIndex = 0
         totalBeats = 0
         barsElapsedSincePlay = 0
         goToQueueBar(0)
-        lastBeatNanos = System.nanoTime()
-        _state.update { it.copy(isPlaying = true, beatIndex = 0, phase = 0f, isAccent = true) }
+        if (primeVisualFlash) {
+            lastBeatNanos = System.nanoTime()
+            _state.update { it.copy(isPlaying = true, beatIndex = 0, phase = 0f, isAccent = true) }
+        } else {
+            _state.update { it.copy(isPlaying = true) }
+        }
         clock.start(scope, _state.value.bpm, ::onBeat)
         startRenderLoop()
     }
@@ -699,7 +730,9 @@ object MetronomeEngine {
         _state.value = BeatPhase.IDLE
         _clockStatus.value = ClockStatus.Internal
         _clickEnabled.value = false
-        _visualOffsetMs.value = 0f
+        ClickSound.entries.forEach { clickPlayer.setSpec(it, ClickSpec.defaultFor(it)) }
+        _clickSpecs.value = ClickSound.entries.associateWith(ClickSpec::defaultFor)
+        _visualOffsetMs.value = DEFAULT_VISUAL_OFFSET_MS
         _compactLandscape.value = false
         _hasShownBpmHint.value = false
         _muteProbability.value = 0f
@@ -751,8 +784,13 @@ object MetronomeEngine {
         val probability = effectiveMuteProbability(barsElapsedSincePlay)
         val muted = probability > 0f && random.nextFloat() < probability
         if (_clickEnabled.value && !muted) {
+            val sound = when {
+                index == 0 -> ClickSound.BAR
+                isAccent -> ClickSound.ACCENT
+                else -> ClickSound.REGULAR
+            }
             try {
-                clickPlayer.playClick(if (isAccent) ClickSound.BAR else ClickSound.REGULAR)
+                clickPlayer.playClick(sound)
             } catch (e: Exception) {
                 Log.e(TAG, "ClickPlayer failed; continuing without audio for this beat", e)
             }

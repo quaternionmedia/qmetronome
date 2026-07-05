@@ -41,6 +41,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import media.quaternion.qmetronome.engine.ClickSound
+import media.quaternion.qmetronome.engine.ClickSpec
+import media.quaternion.qmetronome.engine.ClickWaveform
+import media.quaternion.qmetronome.engine.DEFAULT_VISUAL_OFFSET_MS
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.midi.MidiClockSender
 import media.quaternion.qmetronome.midi.UsbMidiConnector
@@ -68,6 +72,7 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     val visualizer by MetronomeEngine.visualizer.collectAsState()
     val clockStatus by MetronomeEngine.clockStatus.collectAsState()
     val clickEnabled by MetronomeEngine.clickEnabled.collectAsState()
+    val clickSpecs by MetronomeEngine.clickSpecs.collectAsState()
     val clockOutEnabled by MidiClockSender.enabled.collectAsState()
     val visualOffsetMs by MetronomeEngine.visualOffsetMs.collectAsState()
     val compactLandscape by MetronomeEngine.compactLandscape.collectAsState()
@@ -141,6 +146,23 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Audible click", style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = clickEnabled, onCheckedChange = MetronomeEngine::setClickEnabled)
+                }
+            }
+
+            HorizontalDivider()
+
+            SettingsSection(title = "Click sounds") {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    ClickSoundControls("Bar", ClickSound.BAR, clickSpecs.getValue(ClickSound.BAR))
+                    ClickSoundControls("Beat", ClickSound.REGULAR, clickSpecs.getValue(ClickSound.REGULAR))
+                    ClickSoundControls("Accent", ClickSound.ACCENT, clickSpecs.getValue(ClickSound.ACCENT))
+                    Text(
+                        text = "Generated tones, no samples - tune each one's waveform, pitch and length. " +
+                            "Bar plays on beat 1 of every bar, Beat on every other beat. Accent is wired in " +
+                            "but not reachable yet - nothing marks extra beats within a bar accented today.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
                 }
             }
 
@@ -317,6 +339,49 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     }
 }
 
+// ── Click sounds ────────────────────────────────────────────────────────────
+
+@Composable
+private fun ClickSoundControls(label: String, sound: ClickSound, spec: ClickSpec) {
+    val default = remember(sound) { ClickSpec.defaultFor(sound) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ClickWaveform.entries.forEach { waveform ->
+                FilterChip(
+                    selected = spec.waveform == waveform,
+                    onClick = { MetronomeEngine.setClickSpec(sound, spec.copy(waveform = waveform)) },
+                    label = { Text(waveform.name.lowercase().replaceFirstChar(Char::uppercase)) },
+                )
+            }
+        }
+        SteppedSlider(
+            value = spec.frequencyHz,
+            onValueChange = { MetronomeEngine.setClickSpec(sound, spec.copy(frequencyHz = it)) },
+            currentValue = { MetronomeEngine.clickSpecs.value.getValue(sound).frequencyHz },
+            valueRange = 80f..4000f,
+            step = 20f,
+            defaultValue = default.frequencyHz,
+            dialogTitle = "Set $label frequency (Hz)",
+            valueLabel = { "${it.roundToInt()} Hz" },
+        )
+        SteppedSlider(
+            value = spec.durationMs.toFloat(),
+            onValueChange = { MetronomeEngine.setClickSpec(sound, spec.copy(durationMs = it.roundToInt())) },
+            currentValue = { MetronomeEngine.clickSpecs.value.getValue(sound).durationMs.toFloat() },
+            valueRange = 5f..300f,
+            step = 5f,
+            defaultValue = default.durationMs.toFloat(),
+            dialogTitle = "Set $label duration (ms)",
+            valueLabel = { "${it.roundToInt()} ms" },
+        )
+    }
+}
+
 // ── Visual timing offset ───────────────────────────────────────────────────
 
 private enum class OffsetUnit(val label: String) {
@@ -349,7 +414,7 @@ private fun VisualOffsetControls(offsetMs: Float, bpm: Float, onOffsetChanged: (
             currentValue = { MetronomeEngine.visualOffsetMs.value },
             valueRange = -500f..500f,
             step = 10f,
-            defaultValue = 0f,
+            defaultValue = DEFAULT_VISUAL_OFFSET_MS,
             dialogTitle = "Set visual offset (ms)",
             valueLabel = { ms ->
                 when (unit) {
@@ -363,8 +428,9 @@ private fun VisualOffsetControls(offsetMs: Float, bpm: Float, onOffsetChanged: (
 
         Text(
             text = "Shifts visuals earlier (negative) or later (positive) relative to the beat timestamp. " +
-                "Use negative values to compensate for display latency — if the flash feels late, drag left. " +
-                "Reset to 0 ms if in doubt.",
+                "Defaults to ${DEFAULT_VISUAL_OFFSET_MS.roundToInt()} ms to compensate for typical human " +
+                "reaction/perception plus system display lag - if the flash still feels late, drag further " +
+                "left; double-tap the value to reset to that default.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.secondary,
         )

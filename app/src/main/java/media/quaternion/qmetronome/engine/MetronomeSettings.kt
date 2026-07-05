@@ -2,6 +2,10 @@ package media.quaternion.qmetronome.engine
 
 import android.content.Context
 
+/** Default [MetronomeSettings.visualOffsetMs] - shared with [MetronomeEngine]'s in-memory default
+ * so a fresh install and a not-yet-attached engine agree on the same starting value. */
+const val DEFAULT_VISUAL_OFFSET_MS = -50f
+
 /** Persists the last-used tempo, time signature and visualizer choice across process restarts. */
 class MetronomeSettings(context: Context) {
 
@@ -30,9 +34,13 @@ class MetronomeSettings(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_CLOCK_OUT_ENABLED, value).apply()
 
     /** How many milliseconds to shift the visual phase ahead of (negative) or behind (positive)
-     * the beat timestamp - lets performers compensate for display latency by feel or measurement. */
+     * the beat timestamp - lets performers compensate for display latency by feel or measurement.
+     * Defaults to [DEFAULT_VISUAL_OFFSET_MS] (ahead), not 0 - a human pressing/perceiving a beat
+     * and the system rendering/transmitting it both add a little late-arriving lag, so the visual
+     * needs to fire a bit early out of the box to land "on time" by feel. Still fully adjustable
+     * via Settings for whatever a given performer's hardware/perception actually needs. */
     var visualOffsetMs: Float
-        get() = prefs.getFloat(KEY_VISUAL_OFFSET_MS, 0f)
+        get() = prefs.getFloat(KEY_VISUAL_OFFSET_MS, DEFAULT_VISUAL_OFFSET_MS)
         set(value) = prefs.edit().putFloat(KEY_VISUAL_OFFSET_MS, value).apply()
 
     /** When true and the device is in landscape, the main screen switches to a side-by-side
@@ -108,6 +116,29 @@ class MetronomeSettings(context: Context) {
     var visualizerEnabled: Boolean
         get() = prefs.getBoolean(KEY_VISUALIZER_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_VISUALIZER_ENABLED, value).apply()
+
+    /** A [ClickSound]'s tunable definition, as "waveform:frequencyHz:durationMs:gain" - the same
+     * compact, no-JSON encoding style as [queue]. Falls back to [ClickSpec.defaultFor] when
+     * missing or corrupt, the same tolerance [queue] has for a bad/absent entry. */
+    fun clickSpec(sound: ClickSound): ClickSpec {
+        val encoded = prefs.getString(clickSpecKey(sound), null) ?: return ClickSpec.defaultFor(sound)
+        val parts = encoded.split(":")
+        val waveform = parts.getOrNull(0)?.let { name -> ClickWaveform.entries.firstOrNull { it.name == name } }
+        val frequencyHz = parts.getOrNull(1)?.toFloatOrNull()
+        val durationMs = parts.getOrNull(2)?.toIntOrNull()
+        val gain = parts.getOrNull(3)?.toFloatOrNull()
+        if (waveform == null || frequencyHz == null || durationMs == null || gain == null) {
+            return ClickSpec.defaultFor(sound)
+        }
+        return ClickSpec(waveform, frequencyHz, durationMs, gain)
+    }
+
+    fun setClickSpec(sound: ClickSound, spec: ClickSpec) {
+        val encoded = "${spec.waveform.name}:${spec.frequencyHz}:${spec.durationMs}:${spec.gain}"
+        prefs.edit().putString(clickSpecKey(sound), encoded).apply()
+    }
+
+    private fun clickSpecKey(sound: ClickSound) = "click_spec_${sound.name.lowercase()}"
 
     private companion object {
         const val PREFS_NAME = "metronome_settings"

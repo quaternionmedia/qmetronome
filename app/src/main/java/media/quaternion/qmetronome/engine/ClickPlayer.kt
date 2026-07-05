@@ -1,42 +1,80 @@
 package media.quaternion.qmetronome.engine
 
+import android.media.AudioAttributes
+import android.media.AudioFormat
 import android.media.AudioManager
-import android.media.ToneGenerator
+import android.media.AudioTrack
 
 /**
- * Plays the audible click so the engine works as a real metronome, not just a light show. Uses
- * [ToneGenerator] so no sound assets are needed. [ClickSound] -> tone/duration is a small table
- * ([soundSpecs]) rather than an inline branch, so a new sound is a new [ClickSound] entry and a
- * new row here, not a rewrite of this class.
+ * Plays the audible click so the engine works as a real metronome, not just a light show. Each
+ * [ClickSound] gets its own `AudioTrack` built once (in `MODE_STATIC`) from [ClickSynth]'s
+ * rendering of that sound's [ClickSpec] - a generated waveform, not a sample/asset - and replayed
+ * per beat via the standard static-track retrigger idiom (`stop()` + `reloadStaticData()` +
+ * `play()`), so a fast tempo retriggering a click before its previous decay finished still starts
+ * cleanly from the top rather than glitching or silently no-opping.
  */
 class ClickPlayer {
 
-    private var toneGenerator: ToneGenerator? = null
+    // Lazy rather than an eager property: this class is constructed as part of MetronomeEngine's
+    // singleton init, well before the first real click is needed, and there's no reason to touch
+    // the audio subsystem that early.
+    private val sampleRateHz by lazy {
+        AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC).takeIf { it > 0 } ?: 44_100
+    }
+
+    private val specs = mutableMapOf<ClickSound, ClickSpec>().apply {
+        ClickSound.entries.forEach { put(it, ClickSpec.defaultFor(it)) }
+    }
+    private val tracks = mutableMapOf<ClickSound, AudioTrack>()
+
+    /** Changes a sound's spec - takes effect on its next trigger; the old track (if already
+     * built) is released rather than mutated in place, since `AudioTrack`'s buffer is fixed at
+     * construction time. */
+    fun setSpec(sound: ClickSound, spec: ClickSpec) {
+        specs[sound] = spec
+        tracks.remove(sound)?.release()
+    }
+
+    fun getSpec(sound: ClickSound): ClickSpec = specs.getValue(sound)
 
     fun playClick(sound: ClickSound) {
-        val generator = toneGenerator ?: ToneGenerator(AudioManager.STREAM_MUSIC, ToneGenerator.MAX_VOLUME)
-            .also { toneGenerator = it }
-        val spec = soundSpecs.getValue(sound)
-        generator.startTone(spec.tone, spec.durationMs)
+        val track = tracks.getOrPut(sound) { buildTrack(specs.getValue(sound)) }
+        track.stop()
+        track.reloadStaticData()
+        track.play()
     }
 
     fun release() {
-        toneGenerator?.release()
-        toneGenerator = null
+        tracks.values.forEach { it.release() }
+        tracks.clear()
     }
 
-    private data class ToneSpec(val tone: Int, val durationMs: Int)
-
-    private companion object {
-        // BAR is deliberately longer *and* lower-pitched than REGULAR - a bigger, weightier
-        // downbeat versus a light tick, the way a kick reads against a hi-hat. TONE_PROP_BEEP vs
-        // TONE_PROP_BEEP2 turned out to be nearly indistinguishable on-device (same OEM tone bank
-        // on many devices); DTMF tones have well-defined, guaranteed-distinct dual frequencies -
-        // TONE_DTMF_1 is 697+1209 Hz, TONE_DTMF_9 is 852+1477 Hz - so the pitch difference is
-        // audible everywhere, not just on hardware that happens to differentiate the PROP tones.
-        val soundSpecs = mapOf(
-            ClickSound.REGULAR to ToneSpec(ToneGenerator.TONE_DTMF_9, 35),
-            ClickSound.BAR to ToneSpec(ToneGenerator.TONE_DTMF_1, 90),
-        )
+    private fun buildTrack(spec: ClickSpec): AudioTrack {
+        val samples = ClickSynth.render(spec, sampleRateHz)
+        val bytes = ByteArray(samples.size * 2)
+        for (i in samples.indices) {
+            val sample = samples[i].toInt()
+            bytes[i * 2] = (sample and 0xFF).toByte()
+            bytes[i * 2 + 1] = ((sample shr 8) and 0xFF).toByte()
+        }
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build(),
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRateHz)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build(),
+            )
+            .setBufferSizeInBytes(bytes.size)
+            .setTransferMode(AudioTrack.MODE_STATIC)
+            .build()
+        track.write(bytes, 0, bytes.size)
+        return track
     }
 }

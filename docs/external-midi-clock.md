@@ -75,7 +75,11 @@ interface ClockSource {
 `useInternalClock()`. It auto-switches to MIDI the moment `MidiClockSource.onExternalActivity`
 fires (any real-time byte, not just a full beat), and the render loop's existing per-frame check
 doubles as the silence watchdog — falls back to internal timing after ~4 beat-intervals with no
-tick. `0xFA`/`0xFB` map to `MetronomeEngine.start()`, `0xFC` to `stop()`. `0xFB` Continue and
+tick. `0xFA`/`0xFB` map to `MetronomeEngine.start(primeVisualFlash = false)`, `0xFC` to `stop()`.
+The `primeVisualFlash = false` matters: `start()`'s normal instant "bar" flash assumes the real
+first beat lands within microseconds (true for the internal clock, whose first `onBeat` fires
+immediately) - for MIDI that real first beat is ~24 ticks away, roughly a full beat later, so
+priming here would flash "bar" twice (once at Start, once for real) instead of once. `0xFB` Continue and
 `0xF2` Song Position Pointer are *not* distinguished from Start yet — Continue just restarts
 from beat 0 like Start does, which is fine for following along but wrong if you stop, rewind on
 the hardware, and expect qMetronome to resume from the same bar.
