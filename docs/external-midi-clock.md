@@ -100,6 +100,34 @@ actually came from, enabling clock-out while the engine happens to be *following
 clock turns qmetronome into a repeater automatically - no special-casing needed, same as
 predicted when `ClockSource` was originally designed as a swappable seam.
 
+**The repeater case needs its own smoothing, symmetric to `MidiClockSource`'s.** `state.bpm` while
+following an external clock is `MidiClockSource`'s *measured* tempo - already smoothed once (the
+rolling tick-interval window described above), but still a real measurement that legitimately
+shifts by a fraction of a BPM beat to beat. `MidiClockSender` re-derives a precise 24-way tick
+subdivision from whatever it reads every beat; passing the raw measurement straight through would
+re-quantize each of those small shifts into an actual timing change in *our own* outgoing stream -
+a second, avoidable source of instability stacked on top of whatever the followed clock already
+has. `engine/TempoStabilizer` (a small reusable EMA smoother) sits in front of that, engaged only
+while `MetronomeEngine.clockStatus` is `Midi` - a manually-set or internal-clock tempo is passed
+through unsmoothed, since that's a deliberate, discrete change that should reach anything
+following us immediately, not measurement noise to damp.
+
+**Phase, not just tempo, can drift.** `MidiClockSender`'s own 24-ticks-per-beat schedule is
+entirely free-running, seeded only when playback starts/stops - it and `MetronomeEngine`'s actual
+beat firing are two independent timers nominally at the same rate but with no shared phase
+reference, so even with the tempo *value* correct, the outgoing clock's own beat boundary can
+gradually drift away from qmetronome's real audible/visual beat over a long session.
+
+**`ClockTimingMode` (Mechanical/Organic) governs both of the above, as a user choice, not just an
+internal implementation detail.** `Mechanical` (the default, and the prior fixed behavior) applies
+`TempoStabilizer` and additionally resyncs the tick schedule to `MetronomeEngine.state.totalBeats`
+every real beat, so phase never drifts far either - the truest, most locked-in outgoing clock this
+app can produce. `Organic` skips both corrections, letting whatever natural variance the real
+scheduler/measurement actually produces come through unfiltered. This was a deliberate product
+decision, not just a bug being tolerated: some feel is genuinely more natural with the correction
+off, and the explicit design rule is that "Organic" must never be *simulated* with a `Random` or
+similar - it means "stop correcting," not "fake some jitter."
+
 `VirtualMidiClockService` now declares both an input port (for `MidiClockSource`) and an output
 port (for `MidiClockSender`) on one logical device, renamed from "qMetronome Clock In" to
 "qMetronome Clock" now that the old name undersold what it does. The output port's receiver is

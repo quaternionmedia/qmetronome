@@ -239,6 +239,33 @@ nothing to queue yet, and it behaves exactly like a single, unchanging time sign
 The queue, which bar is active, and the advance mode all persist across restarts, the same as
 tempo and beats-per-bar always have.
 
+## Using the Glyph Toy
+
+Activate it once from Settings → **Activate as Glyph Toy** (registers it with Nothing's Glyph
+Button toy carousel); after that it's selected/deselected like any other toy.
+
+**Selecting or deselecting this toy on the Glyph Button starts or stops the metronome -
+intentionally, not a bug.** `MetronomeGlyphService` binds when the toy is selected and unbinds
+when it isn't, and treats those as "start playing" / "stop playing" respectively (see
+`glyph/MetronomeGlyphService.kt`). One consequence worth knowing: **because the Nothing OS Glyph
+Interface itself closes whenever the phone is unlocked, unlocking the phone while this toy is
+showing unbinds it the same way deselecting it manually would - so playback stops on unlock too,**
+not just on a deliberate toy swap. There's no way to tell those two cases apart from this app's
+side; both look identical (a plain service unbind) from here.
+
+If you just want playback to survive the screen turning off, raising your phone's own
+screen-timeout (or disabling screen-off) while keeping qMetronome open works today with no extra
+setup. For the cases that doesn't cover - backgrounded, screen-locked, or switched away from the
+Glyph Toy entirely - Settings → Playback → "Persistent playback" keeps the engine running
+independent of the toy's own bind state, via a quiet foreground-service notification. It's opt-in
+(off by default) and two optional prompts may appear when you turn it on (a notification
+permission, a battery-optimization exemption) - both are nudges, not requirements; declining
+either still leaves the feature working, just slightly less aggressively.
+
+While the toy is showing: touching the Glyph Button taps tempo, long-press cycles visualizers -
+see [`glyph/MetronomeGlyphService.kt`](app/src/main/java/media/quaternion/qmetronome/glyph/MetronomeGlyphService.kt)
+for the exact gesture wiring.
+
 ## Using the widget
 
 Long-press the home screen → **Widgets** → place qMetronome. It shows the

@@ -55,7 +55,15 @@ class MetronomeGlyphService : GlyphMatrixToyService("MetronomeGlyph") {
     override fun performOnServiceDisconnected(context: Context) {
         toyScope?.cancel()
         toyScope = null
-        MetronomeEngine.stop()
+        // Nothing OS unbinds this service both when the user deliberately switches to a
+        // different Glyph Toy (should stop - that's the whole point of toy selection) and when
+        // the phone is simply unlocked, since the ambient Glyph Interface closes either way -
+        // these two cases are indistinguishable from here, both are a plain unbind with no
+        // further signal. Persistent mode (Settings -> Playback) opts out of tying playback to
+        // toy-bind-state at all, trading "toy-switch also stops it" for "unlock doesn't."
+        if (!MetronomeEngine.persistentModeEnabled.value) {
+            MetronomeEngine.stop()
+        }
     }
 
     override fun onTouchPointPressed() {

@@ -10,6 +10,17 @@
         android:name="android.software.midi"
         android:required="false" />
 
+    <!-- Persistent playback (Settings -> Playback, opt-in, off by default): a foreground service
+         that keeps the metronome running through backgrounding/screen-lock/Glyph Toy unbind
+         instead of implicitly stopping. POST_NOTIFICATIONS and the battery-optimization exemption
+         are both requested opportunistically, never required - the service still runs at
+         foreground priority without them, just without a visible notification / the strongest
+         OEM-level exemption. See docs/publication_checklist.md and PersistentPlaybackService. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <application
         android:name=".QMetronomeApp"
         android:allowBackup="true"
@@ -72,6 +83,20 @@
             <meta-data
                 android:name="android.media.midi.MidiDeviceService"
                 android:resource="@xml/midi_device_info" />
+        </service>
+
+        <!-- Persistent playback: a quiet foreground service, started/stopped only while
+             Settings -> Playback's "Persistent playback" is on and the metronome is actually
+             playing (see QMetronomeApp). "specialUse" rather than "mediaPlayback" since this can
+             be meaningful with the audible click off (Glyph-only practice) - mediaPlayback's
+             policy assumes genuinely continuous audio. -->
+        <service
+            android:name=".engine.PersistentPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FOREGROUND_SERVICE_TYPE"
+                android:value="Keeps precise metronome timing/click running while backgrounded or screen-locked, the same standing use as dedicated metronome/tuner/timer apps" />
         </service>
 
         <!-- Home screen widget: BPM + play/stop, event-driven updates only. Must be exported -

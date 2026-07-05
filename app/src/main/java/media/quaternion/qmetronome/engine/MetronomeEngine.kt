@@ -108,6 +108,12 @@ object MetronomeEngine {
     private val _compactLandscape = MutableStateFlow(false)
     val compactLandscape: StateFlow<Boolean> = _compactLandscape.asStateFlow()
 
+    /** See [MetronomeSettings.persistentModeEnabled] - watched by `QMetronomeApp` to start/stop
+     * `PersistentPlaybackService`, and by `MetronomeGlyphService` to decide whether a Glyph Toy
+     * unbind should stop playback. */
+    private val _persistentModeEnabled = MutableStateFlow(false)
+    val persistentModeEnabled: StateFlow<Boolean> = _persistentModeEnabled.asStateFlow()
+
     private val _timeSignature = MutableStateFlow(TimeSignature.DEFAULT)
     val timeSignature: StateFlow<TimeSignature> = _timeSignature.asStateFlow()
 
@@ -193,6 +199,7 @@ object MetronomeEngine {
         _clickSpecs.value = restoredSpecs
         _visualOffsetMs.value = store.visualOffsetMs
         _compactLandscape.value = store.compactLandscape
+        _persistentModeEnabled.value = store.persistentModeEnabled
         _hasShownBpmHint.value = store.hasShownBpmHint
         _muteProbability.value = store.muteProbability
         _progressiveMuteEnabled.value = store.progressiveMuteEnabled
@@ -543,6 +550,11 @@ object MetronomeEngine {
         settings?.compactLandscape = enabled
     }
 
+    fun setPersistentModeEnabled(enabled: Boolean) {
+        _persistentModeEnabled.value = enabled
+        settings?.persistentModeEnabled = enabled
+    }
+
     /** Marks the one-time BPM-number gesture hint as shown, so it never appears again. */
     fun markBpmHintShown() {
         _hasShownBpmHint.value = true
@@ -734,6 +746,7 @@ object MetronomeEngine {
         _clickSpecs.value = ClickSound.entries.associateWith(ClickSpec::defaultFor)
         _visualOffsetMs.value = DEFAULT_VISUAL_OFFSET_MS
         _compactLandscape.value = false
+        _persistentModeEnabled.value = false
         _hasShownBpmHint.value = false
         _muteProbability.value = 0f
         _progressiveMuteEnabled.value = false

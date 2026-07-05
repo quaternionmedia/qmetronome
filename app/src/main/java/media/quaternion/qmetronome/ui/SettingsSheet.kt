@@ -1,11 +1,22 @@
 package media.quaternion.qmetronome.ui
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +31,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Button
@@ -40,10 +53,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import media.quaternion.qmetronome.engine.ClickSound
 import media.quaternion.qmetronome.engine.ClickSpec
 import media.quaternion.qmetronome.engine.ClickWaveform
+import media.quaternion.qmetronome.engine.ClockTimingMode
 import media.quaternion.qmetronome.engine.DEFAULT_VISUAL_OFFSET_MS
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.midi.MidiClockSender
@@ -63,6 +79,10 @@ import kotlin.math.roundToInt
  * it, but opaque enough to read as a deliberate full "window" rather than a half-dismissed peek
  * at the main screen. Since there's no visible area behind it to tap-to-dismiss, closing is
  * explicit: the close button, or the system back gesture via [BackHandler].
+ *
+ * Every section is a [CollapsibleSection]: one line (title + the single most relevant control)
+ * by default, expanding to the rest of that section's controls - keeps the whole screen scannable
+ * on a phone without a wall of always-visible sliders/switches/explanations to scroll past.
  */
 @Composable
 fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
@@ -74,12 +94,14 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     val clickEnabled by MetronomeEngine.clickEnabled.collectAsState()
     val clickSpecs by MetronomeEngine.clickSpecs.collectAsState()
     val clockOutEnabled by MidiClockSender.enabled.collectAsState()
+    val clockOutTimingMode by MidiClockSender.timingMode.collectAsState()
     val visualOffsetMs by MetronomeEngine.visualOffsetMs.collectAsState()
     val compactLandscape by MetronomeEngine.compactLandscape.collectAsState()
     val muteProbability by MetronomeEngine.muteProbability.collectAsState()
     val progressiveMuteEnabled by MetronomeEngine.progressiveMuteEnabled.collectAsState()
     val queueOverlayEnabled by MetronomeEngine.queueOverlayEnabled.collectAsState()
     val visualizerEnabled by MetronomeEngine.visualizerEnabled.collectAsState()
+    val persistentModeEnabled by MetronomeEngine.persistentModeEnabled.collectAsState()
 
     val usbDevices by UsbMidiConnector.availableDevices.collectAsState()
     val followingUsbDeviceId by UsbMidiConnector.followingDeviceId.collectAsState()
@@ -112,8 +134,9 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
 
             HorizontalDivider()
 
-            SettingsSection(title = "Random mute") {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            CollapsibleSection(
+                title = "Random mute",
+                summary = {
                     SteppedSlider(
                         value = muteProbability,
                         onValueChange = MetronomeEngine::setMuteProbability,
@@ -126,206 +149,219 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                         dialogValueLabel = { "${(it * 100).roundToInt()}" },
                         dialogParse = { it.toFloatOrNull()?.div(100f) },
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Progressive start", style = MaterialTheme.typography.bodyMedium)
-                        Switch(checked = progressiveMuteEnabled, onCheckedChange = MetronomeEngine::setProgressiveMuteEnabled)
-                    }
-                    Text(
-                        text = "Randomly skips the click on some beats - a practice tool for internalizing " +
-                            "tempo rather than leaning on every click. Progressive start ramps the chance up " +
-                            "from 0% over the first few bars instead of starting at full strength.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
-                }
-            }
-
-            HorizontalDivider()
-
-            SettingsSection(title = "Click") {
+                },
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Audible click", style = MaterialTheme.typography.bodyMedium)
-                    Switch(checked = clickEnabled, onCheckedChange = MetronomeEngine::setClickEnabled)
+                    Text("Progressive start", style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = progressiveMuteEnabled, onCheckedChange = MetronomeEngine::setProgressiveMuteEnabled)
                 }
-            }
-
-            HorizontalDivider()
-
-            SettingsSection(title = "Click sounds") {
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    ClickSoundControls("Bar", ClickSound.BAR, clickSpecs.getValue(ClickSound.BAR))
-                    ClickSoundControls("Beat", ClickSound.REGULAR, clickSpecs.getValue(ClickSound.REGULAR))
-                    ClickSoundControls("Accent", ClickSound.ACCENT, clickSpecs.getValue(ClickSound.ACCENT))
-                    Text(
-                        text = "Generated tones, no samples - tune each one's waveform, pitch and length. " +
-                            "Bar plays on beat 1 of every bar, Beat on every other beat. Accent is wired in " +
-                            "but not reachable yet - nothing marks extra beats within a bar accented today.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
-                }
-            }
-
-            HorizontalDivider()
-
-            SettingsSection(title = "Visualizer") {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        VisualizerRegistry.all.forEach { candidate ->
-                            FilterChip(
-                                selected = candidate.id == visualizer.id,
-                                onClick = { MetronomeEngine.setVisualizer(candidate) },
-                                label = { Text(candidate.displayName) },
-                            )
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Beat visualizer", style = MaterialTheme.typography.bodyMedium)
-                        Switch(checked = visualizerEnabled, onCheckedChange = MetronomeEngine::setVisualizerEnabled)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Bar queue background", style = MaterialTheme.typography.bodyMedium)
-                        Switch(checked = queueOverlayEnabled, onCheckedChange = MetronomeEngine::setQueueOverlayEnabled)
-                    }
-                    Text(
-                        text = "Independent toggles - run either, both, or neither. The beat visualizer " +
-                            "is the animated pattern above (pendulum, sweep, etc.); the bar queue " +
-                            "background is the ambient per-bar/per-beat pattern baked into the Glyph " +
-                            "Matrix (and its on-screen preview) when more than one bar is queued.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
-                }
-            }
-
-            HorizontalDivider()
-
-            SettingsSection(title = "Visual timing offset") {
-                VisualOffsetControls(
-                    offsetMs = visualOffsetMs,
-                    bpm = beat.bpm,
-                    onOffsetChanged = MetronomeEngine::setVisualOffsetMs,
+                Text(
+                    text = "Randomly skips the click on some beats - a practice tool for internalizing " +
+                        "tempo rather than leaning on every click. Progressive start ramps the chance up " +
+                        "from 0% over the first few bars instead of starting at full strength.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
                 )
             }
 
             HorizontalDivider()
 
-            SettingsSection(title = "Layout") {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Compact landscape layout", style = MaterialTheme.typography.bodyMedium)
-                        Switch(checked = compactLandscape, onCheckedChange = MetronomeEngine::setCompactLandscape)
-                    }
-                    Text(
-                        text = "When on, landscape mode fits the preview and controls side-by-side " +
-                            "within the screen instead of overflowing. Off keeps the full-size aesthetic.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
-                }
+            CollapsibleSection(
+                title = "Click",
+                summary = {
+                    Switch(checked = clickEnabled, onCheckedChange = MetronomeEngine::setClickEnabled)
+                },
+            ) {
+                ClickSoundTabs(clickSpecs)
             }
 
             HorizontalDivider()
 
-            SettingsSection(title = "Clock") {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = when (val status = clockStatus) {
-                            is MetronomeEngine.ClockStatus.Internal -> "Internal"
-                            is MetronomeEngine.ClockStatus.Midi -> {
-                                val bpmText = status.measuredBpm?.let { "${it.roundToInt()} BPM" } ?: "waiting for clock…"
-                                val sourceText = status.source?.let { " ($it)" } ?: ""
-                                "Following MIDI clock$sourceText · $bpmText"
-                            }
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (clockStatus is MetronomeEngine.ClockStatus.Midi) RecordingRed else Color.Unspecified,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(onClick = { UsbMidiConnector.refreshDevices() }) {
-                            Text("Scan USB MIDI")
-                        }
+            CollapsibleSection(
+                title = "Visualizer",
+                summary = {
+                    Switch(checked = visualizerEnabled, onCheckedChange = MetronomeEngine::setVisualizerEnabled)
+                },
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    VisualizerRegistry.all.forEach { candidate ->
+                        FilterChip(
+                            selected = candidate.id == visualizer.id,
+                            onClick = { MetronomeEngine.setVisualizer(candidate) },
+                            label = { Text(candidate.displayName) },
+                        )
                     }
-                    usbDevices.forEach { device ->
-                        val isFollowing = device.id == followingUsbDeviceId
-                        val isSending = device.id == sendingUsbDeviceId
-                        val isStarred = UsbMidiConnector.deviceKey(device) in starredKeys
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                IconButton(onClick = { UsbMidiConnector.toggleStar(device) }) {
-                                    Icon(
-                                        imageVector = if (isStarred) Icons.Filled.Star else Icons.Filled.StarBorder,
-                                        contentDescription = if (isStarred) {
-                                            "Unstar - stop auto-reconnecting this device"
-                                        } else {
-                                            "Star for auto-reconnect"
-                                        },
-                                    )
-                                }
-                                Text(UsbMidiConnector.displayName(device), style = MaterialTheme.typography.bodyMedium)
-                            }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        if (isFollowing) UsbMidiConnector.disconnectFollowing() else UsbMidiConnector.connectForFollowing(device)
-                                    },
-                                ) {
-                                    Text(if (isFollowing) "Stop following" else "Follow")
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        if (isSending) UsbMidiConnector.disconnectSending() else UsbMidiConnector.connectForSending(device)
-                                    },
-                                ) {
-                                    Text(if (isSending) "Stop sending" else "Send to")
-                                }
-                            }
-                            if (isFollowing && isSending) {
-                                Text(
-                                    text = "Following and sending to the same device - fine on most gear, but if this " +
-                                        "device has MIDI Thru/echo enabled it could loop its own clock back to itself.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.secondary,
-                                )
-                            }
-                            if (isStarred) {
-                                Text(
-                                    text = "Starred - will auto-reconnect and restore this connection whenever it's " +
-                                        "unplugged and plugged back in.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.secondary,
-                                )
-                            }
-                        }
-                    }
-                    Text(
-                        text = "Other apps can also send clock straight to \"qMetronome Clock\" with no cable.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Bar queue background", style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = queueOverlayEnabled, onCheckedChange = MetronomeEngine::setQueueOverlayEnabled)
+                }
+                Text(
+                    text = "Independent toggles - run either, both, or neither. The beat visualizer " +
+                        "is the animated pattern above (pendulum, sweep, etc.); the bar queue " +
+                        "background is the ambient per-bar/per-beat pattern baked into the Glyph " +
+                        "Matrix (and its on-screen preview) when more than one bar is queued.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
 
-                    Spacer(Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Send MIDI clock", style = MaterialTheme.typography.bodyMedium)
+            HorizontalDivider()
+
+            CollapsibleSection(
+                title = "Visual timing offset",
+                summary = {
+                    SteppedSlider(
+                        value = visualOffsetMs,
+                        onValueChange = MetronomeEngine::setVisualOffsetMs,
+                        currentValue = { MetronomeEngine.visualOffsetMs.value },
+                        valueRange = -500f..500f,
+                        step = 10f,
+                        defaultValue = DEFAULT_VISUAL_OFFSET_MS,
+                        dialogTitle = "Set visual offset (ms)",
+                        valueLabel = { "${it.roundToInt()} ms" },
+                    )
+                },
+            ) {
+                VisualOffsetDetails(bpm = beat.bpm)
+            }
+
+            HorizontalDivider()
+
+            CollapsibleSection(
+                title = "Layout",
+                summary = {
+                    Switch(checked = compactLandscape, onCheckedChange = MetronomeEngine::setCompactLandscape)
+                },
+            ) {
+                Text(
+                    text = "When on, landscape mode fits the preview and controls side-by-side " +
+                        "within the screen instead of overflowing. Off keeps the full-size aesthetic.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+
+            HorizontalDivider()
+
+            PersistentPlaybackSection(persistentModeEnabled)
+
+            HorizontalDivider()
+
+            CollapsibleSection(
+                title = "Clock",
+                summary = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (clockOutEnabled) {
                             Box(modifier = Modifier.size(6.dp).background(RecordingRed, CircleShape))
                         }
+                        Text("Send clock", style = MaterialTheme.typography.bodyMedium)
                         Switch(checked = clockOutEnabled, onCheckedChange = MidiClockSender::setEnabled)
                     }
-                    Text(
-                        text = "Other apps can pick \"qMetronome Clock\" as a MIDI input to follow this tempo, and " +
-                            "\"Send to\" above reaches USB gear directly - both repeat whatever tempo is currently " +
-                            "playing, even if the clock above is following something external.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
+                },
+            ) {
+                Text(
+                    text = when (val status = clockStatus) {
+                        is MetronomeEngine.ClockStatus.Internal -> "Internal"
+                        is MetronomeEngine.ClockStatus.Midi -> {
+                            val bpmText = status.measuredBpm?.let { "${it.roundToInt()} BPM" } ?: "waiting for clock…"
+                            val sourceText = status.source?.let { " ($it)" } ?: ""
+                            "Following MIDI clock$sourceText · $bpmText"
+                        }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (clockStatus is MetronomeEngine.ClockStatus.Midi) RecordingRed else Color.Unspecified,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = { UsbMidiConnector.refreshDevices() }) {
+                        Text("Scan USB MIDI")
+                    }
                 }
+                usbDevices.forEach { device ->
+                    val isFollowing = device.id == followingUsbDeviceId
+                    val isSending = device.id == sendingUsbDeviceId
+                    val isStarred = UsbMidiConnector.deviceKey(device) in starredKeys
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            IconButton(onClick = { UsbMidiConnector.toggleStar(device) }) {
+                                Icon(
+                                    imageVector = if (isStarred) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                    contentDescription = if (isStarred) {
+                                        "Unstar - stop auto-reconnecting this device"
+                                    } else {
+                                        "Star for auto-reconnect"
+                                    },
+                                )
+                            }
+                            Text(UsbMidiConnector.displayName(device), style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    if (isFollowing) UsbMidiConnector.disconnectFollowing() else UsbMidiConnector.connectForFollowing(device)
+                                },
+                            ) {
+                                Text(if (isFollowing) "Stop following" else "Follow")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    if (isSending) UsbMidiConnector.disconnectSending() else UsbMidiConnector.connectForSending(device)
+                                },
+                            ) {
+                                Text(if (isSending) "Stop sending" else "Send to")
+                            }
+                        }
+                        if (isFollowing && isSending) {
+                            Text(
+                                text = "Following and sending to the same device - fine on most gear, but if this " +
+                                    "device has MIDI Thru/echo enabled it could loop its own clock back to itself.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                        }
+                        if (isStarred) {
+                            Text(
+                                text = "Starred - will auto-reconnect and restore this connection whenever it's " +
+                                    "unplugged and plugged back in.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = "Other apps can also send clock straight to \"qMetronome Clock\" with no cable, and " +
+                        "\"Send to\" above reaches USB gear directly - both repeat whatever tempo is currently " +
+                        "playing, even if the clock above is following something external.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+
+                Spacer(Modifier.height(4.dp))
+                Text("Outgoing clock feel", style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ClockTimingMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = clockOutTimingMode == mode,
+                            onClick = { MidiClockSender.setTimingMode(mode) },
+                            label = { Text(if (mode == ClockTimingMode.MECHANICAL) "Mechanical" else "Organic") },
+                        )
+                    }
+                }
+                Text(
+                    text = "Mechanical actively corrects the outgoing clock for the truest, most locked-in " +
+                        "beat. Organic skips that correction while repeating a followed clock, letting " +
+                        "whatever natural timing variance really occurs come through instead - no fake " +
+                        "randomness, just the honest imprecision of real hardware/scheduling.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
             }
 
             HorizontalDivider()
@@ -335,18 +371,78 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                 Text("Activate as Glyph Toy")
             }
             Spacer(Modifier.height(24.dp))
+            AppVersionFooter()
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
 
+/** The very last thing in Settings - just enough to tell support/bug-report context apart
+ * (which build a screenshot or log came from) without turning this into a real "About" screen. */
+@Composable
+private fun AppVersionFooter() {
+    val context = LocalContext.current
+    val versionText = remember {
+        try {
+            val info = context.packageManager.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0))
+            "qMetronome ${info.versionName} (build ${info.longVersionCode})"
+        } catch (e: PackageManager.NameNotFoundException) {
+            "qMetronome"
+        }
+    }
+    Text(
+        text = versionText,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.secondary,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
 // ── Click sounds ────────────────────────────────────────────────────────────
 
+private fun ClickSound.displayLabel(): String = when (this) {
+    ClickSound.BAR -> "Bar"
+    ClickSound.REGULAR -> "Beat"
+    ClickSound.ACCENT -> "Accent"
+}
+
+/**
+ * Bar/Beat/Accent share the exact same control schema ([ClickSpec]: waveform, frequency,
+ * duration) - tabbed rather than stacked three times over, since that's exactly the case where
+ * tabs pay for themselves instead of just adding another layer of navigation.
+ */
 @Composable
-private fun ClickSoundControls(label: String, sound: ClickSound, spec: ClickSpec) {
+private fun ClickSoundTabs(clickSpecs: Map<ClickSound, ClickSpec>) {
+    var selected by remember { mutableStateOf(ClickSound.BAR) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(ClickSound.BAR, ClickSound.REGULAR, ClickSound.ACCENT).forEach { sound ->
+                FilterChip(
+                    selected = selected == sound,
+                    onClick = { selected = sound },
+                    label = { Text(sound.displayLabel()) },
+                )
+            }
+        }
+        ClickSoundControls(sound = selected, spec = clickSpecs.getValue(selected))
+        Text(
+            text = "Generated tones, no samples - tune each one's waveform, pitch and length. " +
+                "Bar plays on beat 1 of every bar, Beat on every other beat. Accent is wired in " +
+                "but not reachable yet - nothing marks extra beats within a bar accented today.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.secondary,
+        )
+    }
+}
+
+@Composable
+private fun ClickSoundControls(sound: ClickSound, spec: ClickSpec) {
+    val label = sound.displayLabel()
     val default = remember(sound) { ClickSpec.defaultFor(sound) }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -382,6 +478,82 @@ private fun ClickSoundControls(label: String, sound: ClickSound, spec: ClickSpec
     }
 }
 
+// ── Persistent playback ─────────────────────────────────────────────────────
+
+/**
+ * Opt-in, off by default. Neither permission nudged below is required for this to do something
+ * useful: declining the notification permission just means the foreground service runs silently
+ * (Android still grants foreground scheduling priority regardless); declining the battery
+ * exemption just means standard foreground-service protection instead of the strongest OEM-level
+ * exemption. Never gate the feature on either being granted.
+ */
+@Composable
+private fun PersistentPlaybackSection(persistentModeEnabled: Boolean) {
+    val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        // Declining just means the notification won't show - the service still runs either way,
+        // nothing else to do here.
+    }
+
+    fun enablePersistentMode() {
+        MetronomeEngine.setPersistentModeEnabled(true)
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        val powerManager = context.getSystemService(PowerManager::class.java)
+        if (powerManager?.isIgnoringBatteryOptimizations(context.packageName) == false) {
+            requestBatteryExemption(context)
+        }
+    }
+
+    CollapsibleSection(
+        title = "Playback",
+        summary = {
+            Switch(
+                checked = persistentModeEnabled,
+                onCheckedChange = { enabled ->
+                    if (enabled) enablePersistentMode() else MetronomeEngine.setPersistentModeEnabled(false)
+                },
+            )
+        },
+    ) {
+        Text(
+            text = "If you just want playback to survive the screen turning off, raising your " +
+                "phone's own screen-timeout (or disabling screen-off) while keeping qMetronome " +
+                "open works today with no extra permissions. This setting is for the cases that " +
+                "doesn't cover - backgrounded, screen-locked, or switched away from the Glyph Toy.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.secondary,
+        )
+        Text(
+            text = "When on, a quiet background notification keeps the metronome running - only " +
+                "an explicit stop (here, the widget, or double-tapping the preview) stops it, not " +
+                "unlocking the phone or switching Glyph Toys. Two prompts may appear when you turn " +
+                "this on (a notification permission, a battery-optimization exemption) - both are " +
+                "optional extras, not requirements; declining either still leaves this working.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.secondary,
+        )
+        if (persistentModeEnabled) {
+            val powerManager = context.getSystemService(PowerManager::class.java)
+            val exempted = powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true
+            if (!exempted) {
+                OutlinedButton(onClick = { requestBatteryExemption(context) }) {
+                    Text("Request battery exemption")
+                }
+            }
+        }
+    }
+}
+
+private fun requestBatteryExemption(context: Context) {
+    val intent = Intent(
+        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+        Uri.parse("package:${context.packageName}"),
+    )
+    context.startActivity(intent)
+}
+
 // ── Visual timing offset ───────────────────────────────────────────────────
 
 private enum class OffsetUnit(val label: String) {
@@ -390,9 +562,12 @@ private enum class OffsetUnit(val label: String) {
     BeatPct("beat %"),
 }
 
+/** The unit-switcher and explanation - the offset slider itself is the section's collapsed
+ * [CollapsibleSection] summary, always visible, so it isn't repeated here. */
 @Composable
-private fun VisualOffsetControls(offsetMs: Float, bpm: Float, onOffsetChanged: (Float) -> Unit) {
+private fun VisualOffsetDetails(bpm: Float) {
     var unit by remember { mutableStateOf(OffsetUnit.Ms) }
+    val offsetMs by MetronomeEngine.visualOffsetMs.collectAsState()
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
@@ -407,30 +582,19 @@ private fun VisualOffsetControls(offsetMs: Float, bpm: Float, onOffsetChanged: (
                 )
             }
         }
-
-        SteppedSlider(
-            value = offsetMs,
-            onValueChange = onOffsetChanged,
-            currentValue = { MetronomeEngine.visualOffsetMs.value },
-            valueRange = -500f..500f,
-            step = 10f,
-            defaultValue = DEFAULT_VISUAL_OFFSET_MS,
-            dialogTitle = "Set visual offset (ms)",
-            valueLabel = { ms ->
-                when (unit) {
-                    OffsetUnit.Ms -> "${ms.roundToInt()} ms"
-                    OffsetUnit.Frames -> "${"%.1f".format(ms / FRAME_MS)} frames"
-                    OffsetUnit.BeatPct -> "${"%.1f".format(ms / (60_000f / bpm) * 100)} % of beat"
-                }
+        Text(
+            text = when (unit) {
+                OffsetUnit.Ms -> "${offsetMs.roundToInt()} ms"
+                OffsetUnit.Frames -> "${"%.1f".format(offsetMs / FRAME_MS)} frames"
+                OffsetUnit.BeatPct -> "${"%.1f".format(offsetMs / (60_000f / bpm) * 100)} % of beat"
             },
-            dialogValueLabel = { "${it.roundToInt()} ms" },
+            style = MaterialTheme.typography.bodyMedium,
         )
-
         Text(
             text = "Shifts visuals earlier (negative) or later (positive) relative to the beat timestamp. " +
                 "Defaults to ${DEFAULT_VISUAL_OFFSET_MS.roundToInt()} ms to compensate for typical human " +
                 "reaction/perception plus system display lag - if the flash still feels late, drag further " +
-                "left; double-tap the value to reset to that default.",
+                "left; double-tap the value above to reset to that default.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.secondary,
         )
@@ -439,12 +603,52 @@ private fun VisualOffsetControls(offsetMs: Float, bpm: Float, onOffsetChanged: (
 
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
+/**
+ * The app's standard settings section: a title on one line with a single always-visible
+ * [summary] control (a switch, a slider - whatever that section's single most relevant setting
+ * is), expanding on tap to reveal [content], the rest of that section's controls. Keeps the whole
+ * screen scannable at a glance on a phone instead of a long stack of always-expanded sliders and
+ * explanations to scroll past.
+ *
+ * [summary] sits in a `weight(1f)` slot so a wide control (e.g. a [SteppedSlider], which fills
+ * its own row) gets the actual remaining width rather than fighting the title for space - the
+ * title/chevron side of the row is fixed-width instead. Tapping [summary]'s own control (a
+ * `Switch`, a slider drag) is handled by that control itself and doesn't also toggle expansion -
+ * Compose resolves nested pointer input by letting the innermost handler consume the gesture
+ * first, the same reason a trailing switch works inside a clickable list row anywhere else.
+ */
 @Composable
-private fun SettingsSection(title: String, content: @Composable () -> Unit) {
-    Column(modifier = Modifier.padding(vertical = 16.dp)) {
-        Text(text = title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
-        Spacer(Modifier.height(8.dp))
-        content()
+private fun CollapsibleSection(
+    title: String,
+    summary: @Composable () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.padding(vertical = 12.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { summary() }
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse $title" else "Expand $title",
+                tint = MaterialTheme.colorScheme.secondary,
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(12.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+        }
     }
 }
 

@@ -3,4 +3,6 @@
     <string name="toy_name">qMetronome</string>
     <string name="toy_summary">Tempo and beat visualizer for live musicians</string>
     <string name="widget_description">Tempo and play/stop control</string>
+    <string name="persistent_playback_channel_name">Persistent playback</string>
+    <string name="persistent_playback_channel_description">Shown while Settings → Playback\'s "Persistent playback" keeps the metronome running in the background</string>
 </resources>

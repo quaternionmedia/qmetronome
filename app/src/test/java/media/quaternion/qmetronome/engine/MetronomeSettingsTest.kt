@@ -40,6 +40,15 @@ class MetronomeSettingsTest {
     }
 
     @Test
+    fun `persistent mode defaults off, and round-trips once set`() {
+        assertFalse(settings.persistentModeEnabled)
+
+        settings.persistentModeEnabled = true
+
+        assertEquals(true, settings.persistentModeEnabled)
+    }
+
+    @Test
     fun `mute probability and progressive mute default off, and round-trip once set`() {
         assertEquals(0f, settings.muteProbability)
         assertFalse(settings.progressiveMuteEnabled)
@@ -84,6 +93,15 @@ class MetronomeSettingsTest {
         )
         settings.queue = queue
         assertEquals(queue, settings.queue)
+    }
+
+    @Test
+    fun `clock-out timing mode defaults to Mechanical, and round-trips once set`() {
+        assertEquals(ClockTimingMode.MECHANICAL, settings.clockOutTimingMode)
+
+        settings.clockOutTimingMode = ClockTimingMode.ORGANIC
+
+        assertEquals(ClockTimingMode.ORGANIC, settings.clockOutTimingMode)
     }
 
     @Test

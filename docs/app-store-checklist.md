@@ -100,16 +100,21 @@ worth establishing first rather than assuming.
       `com.nothing.ketchum.permission.ENABLE`, `WAKE_LOCK`,
       `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE`
       (the last four transitive via WorkManager, a Glance dependency), plus
-      an auto-generated unexported-receiver signature permission. **None of
-      these are dangerous-protection-level permissions** - there is no
-      runtime permission dialog anywhere in this app today.
+      an auto-generated unexported-receiver signature permission - **as of
+      the persistent-playback feature, this list is stale**: the app now
+      *directly* declares `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`,
+      `POST_NOTIFICATIONS` (Play-dangerous-protection-level, opt-in via
+      Settings → Playback, never required), and
+      `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. Needs a fresh merged-manifest
+      pass before Play submission.
 - [x] **Verified `targetSdk` 35 meets Play's current requirements**.
-- [ ] **Foreground service declaration** - the app's own code never calls
-      `startForeground()`; `FOREGROUND_SERVICE` is purely a transitive,
-      unused-by-us permission from WorkManager. Play Console *may* still
-      prompt for a foreground-service-type justification depending on how it
-      inspects the merged manifest - worth checking the Play Console
-      pre-launch report rather than assuming either way.
+- [ ] **Foreground service declaration** - the app now genuinely calls
+      `startForeground()` (`engine/PersistentPlaybackService`, only while
+      Settings → Playback's "Persistent playback" is on and the metronome is
+      playing), declared `foregroundServiceType="specialUse"` with a
+      `PROPERTY_SPECIAL_USE_FOREGROUND_SERVICE_TYPE` justification string.
+      Play Console review of that justification is a real gate for this one,
+      not a maybe - check the pre-launch report rather than assuming it's fine.
 
 ### The closed Glyph Matrix SDK and redistribution
 

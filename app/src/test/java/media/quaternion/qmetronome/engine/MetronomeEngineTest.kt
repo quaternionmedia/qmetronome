@@ -70,6 +70,15 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `persistent mode defaults off and round-trips via setPersistentModeEnabled`() {
+        assertFalse(MetronomeEngine.persistentModeEnabled.value)
+
+        MetronomeEngine.setPersistentModeEnabled(true)
+
+        assertTrue(MetronomeEngine.persistentModeEnabled.value)
+    }
+
+    @Test
     fun `setBeatsPerBar clamps to 1 through 24`() {
         MetronomeEngine.setBeatsPerBar(0)
         assertEquals(1, MetronomeEngine.state.value.beatsPerBar)

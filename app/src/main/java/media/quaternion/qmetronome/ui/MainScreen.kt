@@ -2,7 +2,9 @@ package media.quaternion.qmetronome.ui
 
 import android.content.res.Configuration
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -454,7 +456,7 @@ private fun BeatsPerBarControls() {
         ) {
             QueueIconButton(
                 icon = Icons.Filled.Delete,
-                contentDescription = "Clear the queue and reset to a single default bar",
+                contentDescription = "Long-press to clear the queue and reset to a single default bar",
                 showDestructiveBadge = true,
                 onClick = MetronomeEngine::resetQueueToDefault,
             )
@@ -653,8 +655,12 @@ private fun BarQueueDots(
  * min-touch-target padding/ripple sizing that reads as heavier than this row's otherwise
  * pixel-block-minimal controls. [showDestructiveBadge] adds a small red dot flagging a
  * destructive action (e.g. the reset-queue trash icon), the same accent used for staged/latched
- * state elsewhere, repurposed here as a "this can't be undone" cue rather than "in progress."
+ * state elsewhere, repurposed here as a "this can't be undone" cue rather than "in progress" -
+ * and, since it can't be undone, also demotes [onClick] from a plain tap to a long-press (a
+ * stray tap does nothing), the same "long-press for destructive" precedent [BarQueueDots]
+ * already sets for removing a single bar.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun QueueIconButton(
     icon: ImageVector,
@@ -666,7 +672,11 @@ private fun QueueIconButton(
     Box(
         modifier = Modifier
             .size(26.dp)
-            .clickable(enabled = enabled, onClick = onClick),
+            .combinedClickable(
+                enabled = enabled,
+                onClick = { if (!showDestructiveBadge) onClick() },
+                onLongClick = if (showDestructiveBadge) onClick else null,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(

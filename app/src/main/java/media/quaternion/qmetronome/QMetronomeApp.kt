@@ -1,15 +1,19 @@
 package media.quaternion.qmetronome
 
 import android.app.Application
+import android.content.Intent
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.glance.appwidget.updateAll
 import media.quaternion.qmetronome.engine.MetronomeEngine
+import media.quaternion.qmetronome.engine.PersistentPlaybackService
 import media.quaternion.qmetronome.midi.MidiClockSender
 import media.quaternion.qmetronome.midi.UsbMidiConnector
 import media.quaternion.qmetronome.widget.MetronomeWidget
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -46,6 +50,30 @@ class QMetronomeApp : Application() {
                         MetronomeWidget().updateAll(this@QMetronomeApp)
                     } catch (e: Exception) {
                         Log.e(TAG, "updateAll failed", e)
+                    }
+                }
+        }
+
+        // Starts/stops PersistentPlaybackService - only while persistent mode is on *and* the
+        // engine is actually playing, so there's nothing to protect (and no foreground service
+        // running) the rest of the time.
+        CoroutineScope(Dispatchers.Default + exceptionHandler).launch {
+            combine(
+                MetronomeEngine.persistentModeEnabled,
+                MetronomeEngine.state.map { it.isPlaying }.distinctUntilChanged(),
+            ) { persistentModeEnabled, isPlaying -> persistentModeEnabled && isPlaying }
+                .distinctUntilChanged()
+                .collect { shouldRun ->
+                    Log.d(TAG, "persistent playback service shouldRun=$shouldRun")
+                    val intent = Intent(this@QMetronomeApp, PersistentPlaybackService::class.java)
+                    try {
+                        if (shouldRun) {
+                            ContextCompat.startForegroundService(this@QMetronomeApp, intent)
+                        } else {
+                            stopService(intent)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to start/stop PersistentPlaybackService", e)
                     }
                 }
         }

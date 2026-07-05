@@ -193,7 +193,8 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       BPM/unit-note-value combinations, confirm each recalls its own tempo
       correctly on tap-to-jump, confirm long-press removes a bar, confirm the
       trash/reset button (always showing its red destructive-action badge)
-      clears the whole queue back to a single default bar, and cycle through
+      requires a long-press (a plain tap should do nothing) before it clears
+      the whole queue back to a single default bar, and cycle through
       all three `QueueMode`s (confirm playback order/looping behavior matches
       each mode's intent).
 - [ ] **Per-bar visualizer pinning**: pin a specific visualizer to one bar in
@@ -225,13 +226,55 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       source that sends Start (`0xFA`) before its clock ticks, hit play on
       that source, and confirm the Glyph Matrix shows exactly one "bar"
       flash before the first regular beat - not two in a row.
-- [ ] **v0.0.23 tunable click sounds**: in Settings → Click sounds, change
-      each of Bar/Beat/Accent's waveform, frequency and duration, enable
-      "Audible click", and confirm all three sound distinct and update live
-      as the sliders move. Confirm a fast tempo (short beat interval) doesn't
-      glitch or drop clicks when a sound retriggers before its previous
-      decay finished.
+- [ ] **v0.0.23 tunable click sounds**: in Settings → Click, expand the
+      section and switch between the Bar/Beat/Accent tabs, changing each
+      one's waveform, frequency and duration; enable "Audible click" and
+      confirm all three sound distinct and update live as the sliders move.
+      Confirm a fast tempo (short beat interval) doesn't glitch or drop
+      clicks when a sound retriggers before its previous decay finished.
 - [ ] **v0.0.23 Firework visualizer**: select "Firework" in Settings →
       Visualizer and confirm it renders a radiating spark burst on both the
       on-screen preview and the physical Glyph Matrix, bigger/brighter on
       bar 1 than on other beats.
+- [ ] **v0.0.23 Mechanical/Organic clock-out feel**: with "Send MIDI clock"
+      on and following an external clock (repeater case), toggle Settings →
+      Clock → "Outgoing clock feel" between Mechanical and Organic and
+      confirm a listening device/DAW can perceive the difference - Mechanical
+      should feel steadier, Organic should let the followed clock's own
+      natural imperfection through rather than ironing it flat.
+- [ ] **v0.0.23 outgoing clock phase lock**: run a long session (several
+      minutes) with "Send MIDI clock" on in Mechanical mode, internal clock
+      (not following anything), and confirm a device receiving our clock
+      stays aligned to our own audible/visual beat throughout, rather than
+      gradually drifting out of phase - this was the bug Mechanical mode's
+      per-beat resync fixes; Organic mode is expected to drift more freely.
+- [ ] **v0.0.23 collapsible Settings UI**: open Settings fresh and confirm
+      every section shows collapsed by default with exactly one control
+      visible (its title's single most relevant switch/slider), expands on
+      tap without also toggling that control, and that the Click section's
+      Bar/Beat/Accent tabs switch cleanly without losing any tab's edits.
+- [ ] **v0.0.23 long-press-to-reset**: confirm a plain tap on the bar-queue
+      trash/reset icon does nothing, and only a long-press actually clears
+      the queue back to a single default bar.
+- [ ] **v0.0.23 Glyph Toy unlock behavior**: with persistent playback OFF
+      (default), start playback via the Glyph Toy, lock and unlock the
+      phone, and confirm playback stops (today's existing, intentional
+      behavior - unchanged). Separately, confirm deliberately swiping to a
+      different Glyph Toy also still stops it.
+- [ ] **v0.0.23 persistent playback, happy path**: enable Settings →
+      Playback → "Persistent playback", grant both prompts (notification,
+      battery exemption) when they appear, start playback via the Glyph Toy,
+      then lock/unlock the phone (and separately, background the app
+      entirely) - confirm playback keeps running both times, a "qMetronome"
+      notification is visible showing BPM while playing, and tapping the
+      notification's "Stop" action actually stops playback and dismisses it.
+- [ ] **v0.0.23 persistent playback, permissions declined**: repeat the
+      above but decline the notification permission and/or the battery-
+      optimization exemption prompt - confirm persistent mode still keeps
+      playback running through lock/unlock and backgrounding either way,
+      just without a visible notification if that permission was declined.
+- [ ] **v0.0.23 persistent playback, turned back off**: with persistent
+      playback on and the notification showing, turn the setting back off -
+      confirm the notification disappears promptly, and that Glyph Toy
+      unlock/toy-switch now stops playback again (today's default behavior
+      resumes).

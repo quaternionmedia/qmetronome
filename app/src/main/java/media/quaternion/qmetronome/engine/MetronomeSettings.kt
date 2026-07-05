@@ -33,6 +33,15 @@ class MetronomeSettings(context: Context) {
         get() = prefs.getBoolean(KEY_CLOCK_OUT_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_CLOCK_OUT_ENABLED, value).apply()
 
+    /** Defaults to [ClockTimingMode.MECHANICAL] - the corrected/stabilized outgoing clock, since
+     * that's the behavior this app shipped with before [ClockTimingMode.ORGANIC] existed as a
+     * choice. See [ClockTimingMode] and `MidiClockSender.effectiveBpm` for what each mode does. */
+    var clockOutTimingMode: ClockTimingMode
+        get() = ClockTimingMode.entries.getOrElse(prefs.getInt(KEY_CLOCK_OUT_TIMING_MODE, 0)) {
+            ClockTimingMode.MECHANICAL
+        }
+        set(value) = prefs.edit().putInt(KEY_CLOCK_OUT_TIMING_MODE, value.ordinal).apply()
+
     /** How many milliseconds to shift the visual phase ahead of (negative) or behind (positive)
      * the beat timestamp - lets performers compensate for display latency by feel or measurement.
      * Defaults to [DEFAULT_VISUAL_OFFSET_MS] (ahead), not 0 - a human pressing/perceiving a beat
@@ -48,6 +57,15 @@ class MetronomeSettings(context: Context) {
     var compactLandscape: Boolean
         get() = prefs.getBoolean(KEY_COMPACT_LANDSCAPE, false)
         set(value) = prefs.edit().putBoolean(KEY_COMPACT_LANDSCAPE, value).apply()
+
+    /** Defaults to off - most users get equivalent reliability for free by raising their phone's
+     * own screen-timeout and keeping the app open (see Settings -> Playback's own copy). When on,
+     * a foreground service (`PersistentPlaybackService`) keeps the engine running through
+     * backgrounding/screen-lock/Glyph Toy unbind instead of implicitly stopping - see
+     * `MetronomeGlyphService.performOnServiceDisconnected`. */
+    var persistentModeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_PERSISTENT_MODE_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_PERSISTENT_MODE_ENABLED, value).apply()
 
     /** Whether the one-time BPM-number gesture hint (tap/long-press/drag) has already been shown. */
     var hasShownBpmHint: Boolean
@@ -147,8 +165,10 @@ class MetronomeSettings(context: Context) {
         const val KEY_VISUALIZER_ID = "visualizer_id"
         const val KEY_CLICK_ENABLED = "click_enabled"
         const val KEY_CLOCK_OUT_ENABLED = "clock_out_enabled"
+        const val KEY_CLOCK_OUT_TIMING_MODE = "clock_out_timing_mode"
         const val KEY_VISUAL_OFFSET_MS = "visual_offset_ms"
         const val KEY_COMPACT_LANDSCAPE = "compact_landscape"
+        const val KEY_PERSISTENT_MODE_ENABLED = "persistent_mode_enabled"
         const val KEY_HAS_SHOWN_BPM_HINT = "has_shown_bpm_hint"
         const val KEY_MUTE_PROBABILITY = "mute_probability"
         const val KEY_PROGRESSIVE_MUTE_ENABLED = "progressive_mute_enabled"
