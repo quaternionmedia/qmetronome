@@ -214,15 +214,18 @@ qmetronome/
 │   └── widget/          # Home screen widget (Jetpack Glance)
 ├── app/libs/            # glyph-matrix-sdk-2.0.aar — committed, no separate download
 ├── docs/                # Feature investigations, test plans, release checklists
-├── adr/                 # Architecture Decision Records
+├── governance/qm/       # org constitution submodule; adr/ here holds this project's own ADRs
 ├── scripts/             # Helper scripts (e.g. generate-release-key.bat)
 └── .github/workflows/   # CI (ci.yml) and release pipeline (release.yml)
 ```
 
 The root [`README.md`](README.md) is the architecture reference — read the
 `engine/`, `midi/`, and `ui/` bullets there first. [`docs/README.md`](docs/README.md)
-indexes the feature-specific investigations and test plans. [`adr/README.md`](adr/README.md)
-explains the decision-record process.
+indexes the feature-specific investigations and test plans.
+[`governance/qm/adr/README.md`](governance/qm/adr/README.md) explains the
+decision-record process — this project's own ADRs live inside that
+submodule, on this project's dedicated `project/qmetronome` branch, not as a
+top-level directory in this repo.
 
 ---
 
@@ -266,7 +269,7 @@ shadows don't cover device I/O). Those paths have manual test plans in
 
 The import boundary check in CI enforces that `com.nothing.ketchum.*` only
 appears under `glyph/`. Keep it that way — see
-[`adr/DRAFT-glyph-matrix-sdk-dependency.md`](adr/DRAFT-glyph-matrix-sdk-dependency.md)
+[`governance/qm/adr/DRAFT-glyph-matrix-sdk-dependency.md`](governance/qm/adr/DRAFT-glyph-matrix-sdk-dependency.md)
 for why.
 
 ### Signing
@@ -281,8 +284,11 @@ CI handles it on tagged releases.
 
 ## Decision records
 
-Non-trivial architectural decisions go in `adr/` as Proposed ADRs. Read
-[`adr/README.md`](adr/README.md) for the full process; the short version:
+Non-trivial architectural decisions go in `governance/qm/adr/` as Proposed
+ADRs — this project's own dedicated branch of the org's constitution repo,
+checked out via the `governance/qm` submodule. Read
+[`governance/qm/adr/README.md`](governance/qm/adr/README.md) for the full
+process; the short version:
 
 - **Before ratification**: rewrite in place (no "previously" or "updated to"
   language in the prose — git is the history).
@@ -295,11 +301,10 @@ If your change adds a component with a non-obvious architectural justification
 draft is more useful than a long PR description that will be forgotten.
 
 This process is itself adopted from Quaternion Media's org-wide constitution,
-vendored as a submodule at [`governance/qm`](governance/qm) and pinned in
-[`adr/README.md`](adr/README.md). Which org records actually apply to a
-sideloaded mobile app (as opposed to the org's server/infra defaults) is
-decided in
-[`adr/DRAFT-constitution-adoption-scope.md`](adr/DRAFT-constitution-adoption-scope.md) —
+vendored as a submodule at [`governance/qm`](governance/qm). Which org
+records actually apply to a sideloaded mobile app (as opposed to the org's
+server/infra defaults) is decided in
+[`governance/qm/adr/DRAFT-constitution-adoption-scope.md`](governance/qm/adr/DRAFT-constitution-adoption-scope.md) —
 worth a read before assuming a constitution rule does or doesn't apply to a
 change you're making.
 

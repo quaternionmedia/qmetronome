@@ -1,7 +1,7 @@
 # Docs index
 
 What's in here, in the order you'd actually want to read it, and how it
-relates to `adr/`. The main [`README.md`](../README.md) is the entry point
+relates to `governance/qm/adr/`. The main [`README.md`](../README.md) is the entry point
 for architecture/setup/testing; [`CONTRIBUTING.md`](../CONTRIBUTING.md)
 covers getting a build running (with and without Android Studio) and the
 contribution norms; this directory is feasibility investigations, test plans,
@@ -37,14 +37,18 @@ are part of the record, not just the eventual fix.
   composition bug that took two attempts to correctly diagnose). Ends with
   its own manual test checklist.
 
-Corresponding decision records: `adr/DRAFT-midi-clock-as-open-standard-seam.md`
-and `adr/DRAFT-home-screen-widget-via-glance.md`.
+Corresponding decision records:
+`governance/qm/adr/DRAFT-midi-clock-as-open-standard-seam.md` and
+`governance/qm/adr/DRAFT-home-screen-widget-via-glance.md`.
 
 ## Project governance
 
 The org's constitution is vendored as a git submodule at
-[`../governance/qm`](../governance/qm), pinned to a specific commit in
-`adr/README.md`'s "Adopted org records" table.
+[`../governance/qm`](../governance/qm), checked out on this project's own
+dedicated branch (`project/qmetronome`) — which is also where this
+project's own `adr/` directory lives, rather than as a top-level directory
+in this repo. The branch's ancestry is the pin; see
+`governance/qm/adr/README.md`'s "Adopted org records" section.
 
 - **[`governance-perspective.md`](governance-perspective.md)** — this
   project is the org's first mobile/cross-platform-device project, and two
@@ -52,16 +56,16 @@ The org's constitution is vendored as a git submodule at
   server infrastructure) don't transfer cleanly to a sideloaded app with a
   closed hardware-vendor SDK. Named explicitly rather than papered over, fed
   back to the org as an open question.
-- **`adr/DRAFT-constitution-adoption-scope.md`** — the full, record-by-record
-  disposition (adopted in full / adopted-but-scoped / not-applicable) for
-  every record in the pinned corpus, including the baseline dependency-license
-  audit the constitution requires at adoption. `governance-perspective.md`
-  covers two headline gaps worth surfacing to the org; this ADR is the
-  complete internal decision.
-- `adr/README.md`'s "this project is a deliberate experiment" section,
-  `adr/DRAFT-glyph-matrix-sdk-dependency.md`, and
-  `adr/DRAFT-android-kotlin-platform-stack.md` are the two specific
-  gaps' own dedicated records.
+- **`governance/qm/adr/DRAFT-constitution-adoption-scope.md`** — the full,
+  record-by-record disposition (adopted in full / adopted-but-scoped /
+  not-applicable) for every record in the pinned corpus, including the
+  baseline dependency-license audit the constitution requires at adoption.
+  `governance-perspective.md` covers two headline gaps worth surfacing to
+  the org; this ADR is the complete internal decision.
+- `governance/qm/adr/README.md`'s "this project is a deliberate experiment"
+  section, `governance/qm/adr/DRAFT-glyph-matrix-sdk-dependency.md`, and
+  `governance/qm/adr/DRAFT-android-kotlin-platform-stack.md` are the two
+  specific gaps' own dedicated records.
 
 ## Release readiness
 
@@ -79,12 +83,13 @@ The org's constitution is vendored as a git submodule at
   account/app-creation steps `app-store-checklist.md`'s listing requirements
   assume are already done.
 
-## How `adr/` fits in
+## How `governance/qm/adr/` fits in
 
-`docs/` is investigation and verification; `adr/` is the decision record once
-something's actually been decided. A doc here can exist with no ADR (a test
-plan doesn't need one) or alongside one (the MIDI and widget docs both do).
-Read `adr/README.md` first if you haven't - it's the process contract, and
-explains why this project's ADRs are filed `Proposed`/numberless rather than
-`Accepted`/numbered (ratification is a human action, not something either of
-us assigns ourselves).
+`docs/` is investigation and verification; `governance/qm/adr/` is the
+decision record once something's actually been decided. A doc here can
+exist with no ADR (a test plan doesn't need one) or alongside one (the MIDI
+and widget docs both do). Read `governance/qm/adr/README.md` first if you
+haven't - it's the process contract, and explains why this project's ADRs
+are filed `Proposed`/numberless rather than `Accepted`/numbered
+(ratification is a human action, not something either of us assigns
+ourselves).

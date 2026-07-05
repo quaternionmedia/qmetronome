@@ -7,7 +7,9 @@ This file is architecture/setup/testing. New contributors should start with
 [`CONTRIBUTING.md`](CONTRIBUTING.md) — it covers building with and without
 Android Studio, the project layout, and PR norms. Feasibility investigations,
 manual test plans, and release readiness live in [`docs/`](docs/README.md);
-decision records live in [`adr/`](adr/README.md).
+decision records live in [`governance/qm/adr/`](governance/qm/adr/README.md),
+inside the `governance/qm` submodule (this project's own branch of the org's
+constitution repo).
 
 ## Requirements
 
@@ -284,21 +286,24 @@ how that side is verified on real hardware instead.
 ## Project governance
 
 This is Quaternion Media's first mobile/cross-platform-device project, and
-its decision-record discipline (`adr/`) is adopted from the org's
-[`qm`](https://github.com/quaternionmedia/qm) constitution. Two real gaps
-showed up between that constitution (built around self-hosted server
-infrastructure) and a sideloaded app built against a closed hardware-vendor
-SDK; rather than papering over them, they're named in
+its decision-record discipline (`governance/qm/adr/`) is adopted from the
+org's [`qm`](https://github.com/quaternionmedia/qm) constitution — vendored
+as a submodule at `governance/qm`, checked out on this project's own branch
+(`project/qmetronome`), which is where this project's own decision records
+live (see `governance/qm/README.md`'s "Forking a new project" section for
+why). Two real gaps showed up between that constitution (built around
+self-hosted server infrastructure) and a sideloaded app built against a
+closed hardware-vendor SDK; rather than papering over them, they're named in
 [`docs/governance-perspective.md`](docs/governance-perspective.md) and the
-corresponding `adr/` drafts, and fed back to the org as an open question
-rather than resolved unilaterally.
+corresponding `governance/qm/adr/` drafts, and fed back to the org as an open
+question rather than resolved unilaterally.
 
 ## CI
 
 `.github/workflows/ci.yml` runs the Glyph SDK import-boundary check (enforcing
-the isolation claimed in `adr/DRAFT-glyph-matrix-sdk-dependency.md`), then a
-full `assembleDebug` + `testDebugUnitTest`, on every push to `main` and every
-pull request.
+the isolation claimed in `governance/qm/adr/DRAFT-glyph-matrix-sdk-dependency.md`),
+then a full `assembleDebug` + `testDebugUnitTest`, on every push to `main` and
+every pull request.
 
 ## Inspired by
 
@@ -310,7 +315,7 @@ pull request.
 qmetronome's own source is MIT-licensed (see [`LICENSE`](LICENSE)). That
 covers everything in this repository except `app/libs/glyph-matrix-sdk-2.0.aar`,
 which is a closed-source binary distributed by Nothing Technology Limited
-under its own terms (see [`adr/DRAFT-glyph-matrix-sdk-dependency.md`](adr/DRAFT-glyph-matrix-sdk-dependency.md)
+under its own terms (see [`governance/qm/adr/DRAFT-glyph-matrix-sdk-dependency.md`](governance/qm/adr/DRAFT-glyph-matrix-sdk-dependency.md)
 for why that dependency exists and how it's isolated). Third-party
 dependencies pulled in via Gradle (AndroidX, Kotlin, Robolectric, etc.) remain
 under their own licenses, not relicensed by this project's MIT grant.

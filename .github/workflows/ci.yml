@@ -25,8 +25,8 @@ jobs:
 
       - name: Glyph SDK import boundary
         # com.nothing.ketchum (the closed, third-party Glyph Matrix SDK) must stay confined to
-        # glyph/, per adr/DRAFT-glyph-matrix-sdk-dependency.md. This is the enforcement side of
-        # that ADR's isolation claim - not just an assertion in a doc.
+        # glyph/, per governance/qm/adr/DRAFT-glyph-matrix-sdk-dependency.md. This is the
+        # enforcement side of that ADR's isolation claim - not just an assertion in a doc.
         run: |
           offending=$(grep -rl "import com\.nothing\.ketchum" app/src/main/java --include="*.kt" | grep -v "/glyph/" || true)
           if [ -n "$offending" ]; then
@@ -36,13 +36,17 @@ jobs:
           fi
 
       - name: ADR draft vocabulary lint
-        # Pre-ratification ADRs (adr/DRAFT-*.md) are squashed and rewritten in place as
-        # understanding changes - per adr/README.md and governance/qm's decision-record-discipline
-        # record, they must never carry revision-history language about themselves. This is the
-        # enforcement side of that rule (already violated once in this repo - see the squashed
-        # Amendment in adr/DRAFT-midi-clock-as-open-standard-seam.md's history).
+        # Pre-ratification ADRs (governance/qm/adr/DRAFT-*.md) are squashed and rewritten in
+        # place as understanding changes - per governance/qm/adr/README.md and qm's
+        # decision-record-discipline record, they must never carry revision-history language
+        # about themselves. This is the enforcement side of that rule (already violated once in
+        # this project's history - see the squashed Amendment in
+        # governance/qm/adr/DRAFT-midi-clock-as-open-standard-seam.md's git history). qmetronome's
+        # own adr/ directory now lives inside the governance/qm submodule (on this project's
+        # dedicated project/qmetronome branch) rather than in this repo's own working tree - see
+        # governance/qm/README.md's "Forking a new project" section.
         run: |
-          offending=$(grep -lEi "previously|originally|earlier draft|re-review|renumber|retroactive|supersedes the .* (stance|finding)|\bcorrected\b" adr/DRAFT-*.md 2>/dev/null || true)
+          offending=$(grep -lEi "previously|originally|earlier draft|re-review|renumber|retroactive|supersedes the .* (stance|finding)|\bcorrected\b" governance/qm/adr/DRAFT-*.md 2>/dev/null || true)
           if [ -n "$offending" ]; then
             echo "Pre-ratification ADRs must be squashed, not narrate their own revision history - found banned vocabulary in:"
             echo "$offending"

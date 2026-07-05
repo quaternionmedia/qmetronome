@@ -2,8 +2,8 @@
 
 Tracks what's needed before qMetronome ships. Updated in place as items
 complete — see [`docs/README.md`](README.md) for how this relates to the
-feature docs and `adr/` decision records it references. This doc is
-repo/code readiness; for the separate question of actually submitting to
+feature docs and `governance/qm/adr/` decision records it references. This
+doc is repo/code readiness; for the separate question of actually submitting to
 Google Play and Nothing's distribution channel, see
 [`app-store-checklist.md`](app-store-checklist.md).
 
@@ -22,7 +22,7 @@ There are two release tracks with different bars:
       Android Studio's `com.example.qmetronome` template default. Renamed to
       `media.quaternion.qmetronome` (package directories, all source files,
       `app/build.gradle.kts`, the one stale path in
-      `adr/DRAFT-glyph-matrix-sdk-dependency.md`) before any beta install
+      `governance/qm/adr/DRAFT-glyph-matrix-sdk-dependency.md`) before any beta install
       happens, since changing it later means every existing install has to
       be uninstalled and reinstalled from scratch.
 - [x] **Thread safety review**: `MidiClockSender`'s destination set is

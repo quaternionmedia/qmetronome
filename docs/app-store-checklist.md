@@ -16,7 +16,7 @@ worth establishing first rather than assuming.
 - [x] **Verified by reading the code, not just asserting it**: `MainActivity`,
       `engine/`, `ui/`, `midi/`, and `visualizers/` import nothing from the
       closed `com.nothing.ketchum.*` SDK - confined entirely to `glyph/` (see
-      `adr/DRAFT-glyph-matrix-sdk-dependency.md`, enforced by CI). The app's
+      `governance/qm/adr/DRAFT-glyph-matrix-sdk-dependency.md`, enforced by CI). The app's
       core (tempo engine, on-screen matrix preview, MIDI clock in/out,
       audible click, the home screen widget) works on **any Android 13+
       device**, Nothing or not.
