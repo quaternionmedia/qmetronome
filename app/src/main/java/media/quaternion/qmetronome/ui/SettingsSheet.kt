@@ -170,6 +170,30 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.secondary,
                 )
+                Spacer(Modifier.height(4.dp))
+                Text("Jump to unit", style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val currentBpmUnit = bpmUnitFor(stagedBpm ?: beat.bpm)
+                    BpmUnit.entries.forEach { unit ->
+                        FilterChip(
+                            selected = currentBpmUnit == unit,
+                            onClick = {
+                                if (unit != currentBpmUnit) {
+                                    if (unit != BpmUnit.BPM) MetronomeEngine.setExtendedBpmRangeEnabled(true)
+                                    MetronomeEngine.setBpm(bpmFromUnitValue(bpmDefaultUnitValue(unit), unit))
+                                }
+                            },
+                            label = { Text(unit.label) },
+                        )
+                    }
+                }
+                Text(
+                    text = "Jumps straight to a representative tempo in that unit's own range - the same " +
+                        "long-press-to-type dialog on the BPM number itself also lets you type an exact " +
+                        "value in whichever unit you pick, converting it for you.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
             }
 
             HorizontalDivider()
@@ -442,7 +466,10 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                     text = "Mechanical actively corrects the outgoing clock for the truest, most locked-in " +
                         "beat. Organic skips that correction while repeating a followed clock, letting " +
                         "whatever natural timing variance really occurs come through instead - no fake " +
-                        "randomness, just the honest imprecision of real hardware/scheduling.",
+                        "randomness, just the honest imprecision of real hardware/scheduling. This only " +
+                        "affects the MIDI clock bytes sent to other apps/gear - it has no effect on this " +
+                        "app's own click or flash, so a difference is only audible on a device actually " +
+                        "receiving this clock.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.secondary,
                 )

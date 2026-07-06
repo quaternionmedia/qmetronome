@@ -124,10 +124,15 @@ constitution repo).
   so the AMOLED screen never looks fully off. The settings button isn't the only way in:
   long-pressing the preview also opens settings; double-tapping the preview toggles play/stop;
   swiping left/right cycles visualizers; and the BPM number itself is triple-duty — tap it for
-  tap-tempo, long-press it for a direct-entry dialog (range 1–400 BPM, extendable to 0.1–3000 via
-  Settings → Tempo & Bars, displayed as BPH/BPS outside the normal range), or drag it left/right for
-  continuous fine adjustment (a one-time hint the first time it's shown explains all three, then
-  never appears again). `BeatsPerBarControls` mirrors that same pattern (steppers, long-press to
+  tap-tempo, long-press it for a unit-aware direct-entry dialog (`ui/BpmUnitEntryDialog`; range
+  1–400 BPM, extendable to 0.1–12000 via Settings → Tempo & Bars, displayed/entered as BPH/BPS
+  outside the normal range - switching the dialog's own BPM/BPH/BPS chips *is* the "convert
+  between units" gesture, landing on a sensible starting value in whichever unit you switch to
+  rather than a literal, often-nonsensical arithmetic conversion of what was typed in the old
+  one), or drag it left/right for continuous fine adjustment (a one-time hint the first time it's
+  shown explains all three, then never appears again). Settings' "Jump to unit" chip row is the
+  same idea one level up - jump the live tempo straight into BPM/BPH/BPS range without dragging
+  there. `BeatsPerBarControls` mirrors that same pattern (steppers, long-press to
   type an exact value) at a visually secondary scale just below it. A second row beneath it is
   the entry point to the bar queue - see "Using the bar queue" below - kept to explicit
   taps/buttons rather than gestures layered onto the tempo row, since a narrow label wedged

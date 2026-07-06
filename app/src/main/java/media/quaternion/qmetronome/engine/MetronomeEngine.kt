@@ -43,7 +43,19 @@ object MetronomeEngine {
      * multiply by 60 to sanity-check. */
     const val MIN_BPH = 0.1f
     const val EXTENDED_MIN_BPM = MIN_BPH / 60f
-    const val EXTENDED_MAX_BPM = 3000f
+
+    /** Upper bound for the extended range - 12000 BPM (200 BPS, a 5ms beat interval). This is an
+     * estimate, not a measured device limit: `StreamingClickEngine`'s own sample-frame placement
+     * has no hard ceiling (it mixes at an exact frame offset regardless of how close together
+     * beats are), so the real constraint is [InternalClockSource]'s tick loop keeping up with its
+     * own overhead (a `delay()` resume, a few state/map updates, audio resolution) rather than
+     * falling behind and repeatedly hitting its stale-wait resync path. A 5ms floor is a
+     * deliberately generous multiple of what a dedicated `THREAD_PRIORITY_URGENT_AUDIO` thread
+     * (see `TimingDispatcher.kt`) should comfortably clear on modern hardware, chosen to push
+     * meaningfully past the old 3000 BPM/50 BPS ceiling without leaning on unverified guesswork -
+     * revise from real on-device profiling (does the clock loop's resync path fire constantly at
+     * the top of the range?) if it turns out too high or too conservative for a given device. */
+    const val EXTENDED_MAX_BPM = 12000f
 
     const val MIN_BEATS_PER_BAR = 1
     const val MAX_BEATS_PER_BAR = 24

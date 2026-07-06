@@ -212,10 +212,12 @@ There are two release tracks with different bars:
 - [x] **v0.0.25 logarithmic BPH/BPS stepping**: outside the normal 1-400 BPM
       range, both the +/- hold-repeat buttons and the BPM drag gesture used to
       apply the same flat step size the normal range uses - imperceptible
-      near 3000 BPS, a giant single leap near 0.1 BPH. `MainScreen.kt`'s new
-      `steppedBpm()` switches to a ~5%-per-step multiplicative formula outside
-      the normal range (unchanged, flat stepping inside it), so traversal
-      feels equally responsive at either extreme of the 0.1-3000 BPM span.
+      near the old 3000 BPM ceiling, a giant single leap near 0.1 BPH.
+      `MainScreen.kt`'s new `steppedBpm()` switches to a multiplicative
+      formula outside the normal range instead (unchanged, flat stepping
+      inside it - later tuned from 5%- to 10%-per-step, see the "BPM drag
+      responsiveness cliff" entry below), so traversal feels far more
+      equally responsive at either extreme of the 0.1-12000 BPM span.
 - [x] **v0.0.25 drag-to-scrub on time signature numbers**: `TimeSignatureNumberRow`
       (both beats-per-bar and unit-note-value) had steppers and long-press-to-
       type but no drag gesture, unlike the BPM number. Added a second
@@ -224,6 +226,48 @@ There are two release tracks with different bars:
       are `Int`-backed engine state, unlike BPM's `Float`, so reading the value
       back between drag events would silently discard sub-step progress) at
       the same 6dp-per-step sensitivity as BPM's own drag.
+- [x] **v0.0.25 BPM/BPH/BPS unit switcher + unit-aware direct entry**: there
+      was no way to type or jump directly to a value in BPH/BPS terms - the
+      long-press dialog only ever accepted raw BPM (typing "30 BPH" meant
+      mentally converting to "0.5" first), and reaching BPH/BPS at all meant
+      dragging the whole way there through the log-scale steps. `ui/BpmUnit.kt`
+      adds an explicit `BpmUnit` (BPM/BPH/BPS) with conversion helpers
+      (`bpmToUnitValue`/`bpmFromUnitValue`/`bpmRangeFor`/`bpmDefaultUnitValue`),
+      matching `bpmDisplayValue`/`bpmDisplayUnit`'s own thresholds exactly so
+      the two can never disagree. `ui/BpmUnitEntryDialog.kt` (replacing the
+      generic `NumericEntryDialog` for BPM specifically) adds unit chips to
+      the long-press dialog - switching units is the "convert between BPH/BPM/
+      BPS" affordance itself. Settings gets a matching "Jump to unit" chip row
+      (mirroring the "Outgoing clock feel" chips) that jumps straight to a
+      representative value in whichever unit is picked, auto-enabling extended
+      range if needed - a quick escape from having to drag the whole way there.
+- [x] **v0.0.25 BPM drag responsiveness cliff at the BPM=1 boundary**: right at
+      the boundary between flat/additive stepping (inside 1-400) and
+      multiplicative/log stepping (outside it), a log step's *absolute* size
+      at bpm≈1 was `1 * (LOG_BPM_STEP_FACTOR-1)` - at the original 5% factor,
+      a 20x smaller step than the flat range's fixed `+1`, so dragging across
+      that exact boundary felt like the control suddenly barely responding.
+      Bumped the factor 5%→10%, narrowing (not eliminating - a single constant
+      factor can't be continuous at both the 1 *and* 400 boundary at once,
+      since they differ by 400x) the cliff to ~10x. The new unit
+      switcher/long-press-convert dialog above exist as the precise,
+      non-drag path into BPH/BPS specifically because of this remaining
+      tension - see `LOG_BPM_STEP_FACTOR`'s kdoc for the full reasoning.
+- [x] **v0.0.25 BPS ceiling raised 3000→12000 BPM (50→200 BPS)**: an estimate,
+      not a measured device limit - `StreamingClickEngine`'s sample-frame
+      placement has no hard ceiling of its own, so the real constraint is
+      `InternalClockSource`'s tick loop keeping up with its own overhead
+      rather than repeatedly hitting its stale-wait resync path. A 5ms floor
+      interval is deliberately generous headroom on a dedicated
+      `THREAD_PRIORITY_URGENT_AUDIO` thread - see `EXTENDED_MAX_BPM`'s kdoc,
+      and revisit from real on-device profiling if it's off in either
+      direction for a given device.
+- [x] **v0.0.25 "Outgoing clock feel" Settings copy clarified**: the
+      Mechanical/Organic explanation didn't say this setting only affects the
+      MIDI clock *sent to other apps/gear*, not this app's own click/flash -
+      easy to test by just listening to the phone and conclude "doesn't do
+      much," when the real test needs a device actually receiving the
+      outgoing clock. Added a sentence making that explicit.
 
 ## Documentation
 
@@ -394,7 +438,12 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       Clock → "Outgoing clock feel" between Mechanical and Organic and
       confirm a listening device/DAW can perceive the difference - Mechanical
       should feel steadier, Organic should let the followed clock's own
-      natural imperfection through rather than ironing it flat.
+      natural imperfection through rather than ironing it flat. **This mode
+      has no effect on this app's own click/flash** - it only changes the
+      MIDI bytes sent out, so this genuinely can't be evaluated by ear on the
+      phone alone; a real receiving device/DAW is the only way to hear a
+      difference (confirmed as working-as-designed this round when reported
+      as "not much effect" - the report was testing without a receiver).
 - [ ] **v0.0.23 outgoing clock phase lock**: run a long session (several
       minutes) with "Send MIDI clock" on in Mechanical mode, internal clock
       (not following anything), and confirm a device receiving our clock
@@ -585,12 +634,39 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       BPH or BPS territory, and confirm each step feels like a *consistent
       proportional* change (similar to how it feels near 120 BPM) rather than
       either imperceptibly small (near 0.1 BPH) or a jarring single leap (near
-      3000 BPS).
+      200 BPS).
 - [ ] **v0.0.25 time signature drag-to-scrub**: drag horizontally on the
       beats-per-bar number and, separately, the unit-note-value number, and
       confirm both scrub smoothly at the same sensitivity as the BPM number's
       own drag, without needing to release and re-drag to keep accumulating
       partial progress.
+- [ ] **v0.0.25 BPM drag direction, above and below 1 BPM**: with extended
+      range on, drag the BPM number left/right while slowly crossing the 1
+      BPM boundary in both directions, confirming the number consistently
+      moves the same direction your finger does the whole way through (no
+      reversal) - the underlying math is now covered by a direct regression
+      test, but this is the one thing only a real finger on a real screen can
+      confirm. Also confirm the responsiveness cliff right at the boundary
+      feels less jarring than before (a step change is still expected, just
+      not "stopped responding").
+- [ ] **v0.0.25 BPM long-press unit-aware entry**: long-press the BPM number,
+      confirm it opens showing the current tempo already converted into
+      whichever unit (BPM/BPH/BPS) it's currently displaying as, switch chips
+      and confirm the field resets to a sensible starting value in the new
+      unit (not a nonsense number), type a value and confirm it applies
+      correctly converted back to the actual tempo on "Set".
+- [ ] **v0.0.25 Settings "Jump to unit" switcher**: in Settings → Tempo &
+      Bars, tap each of the BPM/BPH/BPS chips and confirm the tempo jumps to
+      a representative value in that unit's range each time (auto-enabling
+      Extended range for BPH/BPS if it was off), and that tapping the
+      already-active unit's chip does nothing (doesn't reset a tempo you'd
+      already dialed in).
+- [ ] **v0.0.25 BPS ceiling at 200 BPS (12000 BPM)**: with extended range on,
+      push the tempo to the new maximum (via the Settings switcher, direct
+      entry, or drag/hold) and confirm the click still fires steadily at that
+      rate without the engine falling behind/stuttering - the ceiling is an
+      estimate, not a measured limit, so this is the test that tells us
+      whether it's too aggressive (or overly conservative) for a given device.
 - [ ] **v0.0.25 long custom click duration at a fast tempo**: in Settings →
       Click, set a sound's duration close to or beyond the beat interval at a
       fast tempo (e.g. 150ms+ duration at 300+ BPM, where the interval is

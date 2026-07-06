@@ -529,7 +529,7 @@ class MetronomeEngineTest {
         MetronomeEngine.setBpm(0.5f)
         assertEquals(0.5f, MetronomeEngine.state.value.bpm, 0.01f)
 
-        MetronomeEngine.setBpm(9000f)
+        MetronomeEngine.setBpm(90000f)
         assertEquals(MetronomeEngine.EXTENDED_MAX_BPM, MetronomeEngine.state.value.bpm, 0.01f)
 
         // Turning extended range back off re-clamps the current (out-of-normal-range) bpm.

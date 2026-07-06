@@ -89,7 +89,7 @@ MetronomeEngine.state          // BeatPhase: bpm, phase, isAccent, isPlaying, be
 MetronomeEngine.frame          // IntArray: current rendered frame (same as Glyph Matrix)
 
 // Control
-MetronomeEngine.setBpm(120f)      // clamped 1..400 by default, 0.1..3000 if extendedBpmRangeEnabled
+MetronomeEngine.setBpm(120f)      // clamped 1..400 by default, 0.1..12000 if extendedBpmRangeEnabled
 MetronomeEngine.toggle()       // start if stopped, stop if playing
 MetronomeEngine.tapTempo()     // tap-tempo input - decoupled from play (doesn't start playback)
                                 // unless holdMode is Latched, in which case it commits + starts
@@ -109,7 +109,7 @@ MetronomeEngine.setAudioOffsetMs(-30f)    // -500..+500 ms - negative leads via 
 MetronomeEngine.setMuteProbability(0.3f)          // 0..1 chance a beat's click is skipped
 MetronomeEngine.setProgressiveMuteEnabled(true)   // ramp that chance up over setProgressiveMuteRampBars
 MetronomeEngine.setProgressiveMuteRampBars(8)     // 1..32, how many bars the ramp above takes
-MetronomeEngine.setExtendedBpmRangeEnabled(true)  // unlocks 0.1..3000 bpm, shown as BPH/BPS outside 1..400
+MetronomeEngine.setExtendedBpmRangeEnabled(true)  // unlocks 0.1..12000 bpm, shown as BPH/BPS outside 1..400
 MetronomeEngine.setSymbolicControlsEnabled(true)  // main screen's tempo/transport controls go icon-only
 
 // Hold/latch staging - while holdMode != Off, setBpm()/setBeatsPerBar() (and tapTempo(),
@@ -257,7 +257,9 @@ app/src/main/java/.../
     HoldButton.kt            ← BPM/beats-per-bar staging - momentary hold or sticky latch
     HoldRepeatButton.kt      ← icon button that repeats on hold with ramping speed (queue +/- steppers)
     SteppedSlider.kt         ← standard slider: +/- steppers + long-press numeric entry
-    NumericEntryDialog.kt    ← the numeric entry dialog itself (shared by BPM + sliders)
+    NumericEntryDialog.kt    ← the generic numeric entry dialog (shared by sliders, time signature)
+    BpmUnit.kt               ← BPM/BPH/BPS as an explicit unit + conversion/range helpers
+    BpmUnitEntryDialog.kt    ← BPM's own long-press dialog, unit-aware (replaces NumericEntryDialog for BPM)
     TimeSignatureEntryDialog.kt ← beats + note value, two independent fields, one dialog
     BrandMarks.kt            ← QM + qMetronome brand marks, long-press to open GitHub
     icons/ExtraIcons.kt      ← locally-vendored icons material-icons-core doesn't include

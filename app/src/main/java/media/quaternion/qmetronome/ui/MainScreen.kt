@@ -150,16 +150,16 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
     }
 
     if (showBpmDialog) {
-        val extendedBpmRangeEnabled by MetronomeEngine.extendedBpmRangeEnabled.collectAsState()
-        NumericEntryDialog(
-            title = "Set BPM",
-            initialValue = stagedBpm ?: beat.bpm,
-            valueRange = if (extendedBpmRangeEnabled) {
-                MetronomeEngine.EXTENDED_MIN_BPM..MetronomeEngine.EXTENDED_MAX_BPM
-            } else {
-                MetronomeEngine.MIN_BPM..MetronomeEngine.MAX_BPM
-            },
+        BpmUnitEntryDialog(
+            initialBpm = stagedBpm ?: beat.bpm,
             onConfirm = { bpm ->
+                // A BPH/BPS-range value needs the extended range actually turned on, or
+                // setBpm's own clamping would immediately snap it back into 1-400 - the
+                // dialog itself doesn't gate unit selection on this toggle, so this is the
+                // one place that has to.
+                if (bpm < MetronomeEngine.MIN_BPM || bpm > MetronomeEngine.MAX_BPM) {
+                    MetronomeEngine.setExtendedBpmRangeEnabled(true)
+                }
                 MetronomeEngine.setBpm(bpm)
                 showBpmDialog = false
             },
@@ -191,7 +191,7 @@ internal fun bpmDisplayUnit(bpm: Float): String = when {
  * gesture - flat, additive stepping inside [MetronomeEngine.MIN_BPM]..[MetronomeEngine.MAX_BPM]
  * (identical to this app's original, everyday behavior - a fixed [BPM_STEP] per whole step), and
  * multiplicative/logarithmic stepping outside it. A flat step size that feels right at 120 BPM is
- * either imperceptible or a single giant leap at the extremes of the 0.1-3000 BPM extended range -
+ * either imperceptible or a single giant leap at the extremes of the 0.1-12000 BPM extended range -
  * a ~5%-per-step multiplicative formula instead covers that same huge range by *ratio*, so
  * traversal feels equally responsive near either end. [steps] is a signed, possibly-fractional
  * step count (fractional for the drag gesture's per-pixel progress, whole for the hold-repeat
@@ -857,8 +857,19 @@ private fun TransportRow(beat: BeatPhase) {
 
 private const val BPM_STEP = 1f
 
-/** [steppedBpm]'s multiplicative step size outside the normal BPM range - ~5% per step. */
-private const val LOG_BPM_STEP_FACTOR = 1.05f
+/** [steppedBpm]'s multiplicative step size outside the normal BPM range - ~10% per step.
+ * Deliberately larger than a "just barely log-scale" 5% would suggest: right at the BPM=1
+ * boundary, a log step's *absolute* size is `1 * (factor-1)`, while the linear step just inside
+ * the boundary is a full [BPM_STEP] (1) - at 5% that's a 20x responsiveness cliff crossing from
+ * "drag right below 1 BPM" into "drag right at/above 1 BPM" (or the reverse, decreasing into BPH
+ * territory), which reads as the control suddenly barely responding, not just stepping
+ * differently. 10% narrows that cliff to ~10x without fully sacrificing this factor's other job -
+ * feeling *equally* responsive by ratio out toward 12000 BPM. A single constant factor can't make
+ * both boundaries (BPM=1 *and* BPM=400) perfectly continuous with the linear region at once (the
+ * two boundary values differ by 400x) - this is a deliberate middle ground, not a full fix; the
+ * BPM number's long-press dialog and Settings' "Jump to unit" switcher exist as the precise,
+ * non-drag path into BPH/BPS territory specifically because of this tension. */
+private const val LOG_BPM_STEP_FACTOR = 1.1f
 private const val BPM_HINT_DURATION_MS = 4000L
 private const val CONTROLS_ALPHA = 0.82f
 private val PLAY_PAUSE_SIZE = 76.dp
