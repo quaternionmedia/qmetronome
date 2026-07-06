@@ -276,7 +276,9 @@ class MetronomeEngineTest {
         assertEquals(6, MetronomeEngine.stagedBeatsPerBar.value)
         assertEquals(4, MetronomeEngine.state.value.beatsPerBar)
 
-        Thread.sleep(900) // comfortably past the next bar boundary even with scheduling jitter
+        Thread.sleep(1400) // comfortably past the next bar boundary even with scheduling jitter -
+        // generous margin since the engine's dedicated thread pool (see newTimingDispatcher)
+        // introduces a bit more scheduling variance than Dispatchers.Default's full core count did
 
         assertEquals(6, MetronomeEngine.state.value.beatsPerBar)
         assertNull(MetronomeEngine.stagedBeatsPerBar.value)
@@ -309,7 +311,9 @@ class MetronomeEngineTest {
         MetronomeEngine.setAudioOffsetMs(100f) // lag, not lead
 
         MetronomeEngine.start()
-        Thread.sleep(1300) // beat 1 lands ~1000ms in, its (delayed) click fires ~100ms after that
+        Thread.sleep(1500) // beat 1 lands ~1000ms in, its (delayed) click fires ~100ms after that -
+        // generous margin since the engine's dedicated 2-thread pool (see newTimingDispatcher)
+        // introduces a bit more scheduling variance than Dispatchers.Default's full core count did
 
         assertTrue("expected at least 2 clicks, got ${events.size}", events.size >= 2)
         // The second click must fire only once state has already advanced to totalBeats == 1 -

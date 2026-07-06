@@ -53,7 +53,7 @@ to be set — see the setup paths below for where to find it.
 
 3. **Let the Gradle sync finish.** Android Studio prompts to install missing
    SDK components if needed — accept all of them. On first sync it downloads
-   Gradle 9.4.1 and resolves Maven dependencies (~300 MB total, cached after
+   Gradle 9.4.1 and resolves Maven dependencies (~200 MB total, cached after
    the first time).
 
 4. **Run on a device or emulator.**
@@ -174,7 +174,7 @@ automatically and `local.properties` isn't required.
 git clone https://github.com/quaternionmedia/qmetronome.git
 cd qmetronome
 
-# First build — downloads Gradle 9.4.1 and all Maven dependencies (~300 MB, cached after)
+# First build — downloads Gradle 9.4.1 and all Maven dependencies (~200 MB, cached after)
 ./gradlew assembleDebug          # macOS/Linux
 gradlew.bat assembleDebug        # Windows PowerShell/CMD
 

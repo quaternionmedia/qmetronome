@@ -71,6 +71,48 @@ There are two release tracks with different bars:
       adaptive vector icon (`mipmap-anydpi-v26/`), so they were dead weight
       left over from the default Android Studio template, never updated past
       the stock green-robot art.
+- [x] **v0.0.25 dependency/APK size cleanup**: `androidx.compose.material:
+      material-icons-extended` was an 87.5MB dependency (confirmed via the
+      Gradle cache) whose ~2000+ generated icon classes were all fully dexed
+      in the unshrunk debug build the alpha track ships — for a total of 14
+      icons actually used. Replaced with the much smaller `material-icons-
+      core` plus 8 locally-vendored `ImageVector`s
+      (`ui/icons/ExtraIcons.kt`) built from simple geometry rather than
+      hand-copied bezier data. Also dropped `androidx.appcompat` and
+      `com.google.android.material` (the View-based Material Components
+      library, not `material3`) — both were fully unused in code, pulled in
+      only because `themes.xml`'s style inherited
+      `Theme.MaterialComponents.NoActionBar`; switched to a plain platform
+      theme instead. Net effect: the built debug APK dropped from ~64MB to
+      ~29MB (the remainder is legitimate — Glance's widget stack transitively
+      needs WorkManager/DataStore/Room-util).
+- [x] **v0.0.25 audio output latency**: `ClickPlayer.buildTrack()`'s
+      `AudioTrack.Builder` now sets `PERFORMANCE_MODE_LOW_LATENCY` — the
+      standard platform API for a short, timing-sensitive one-shot trigger
+      like this, previously left at the platform's default output path.
+- [x] **v0.0.25 dedicated timing dispatcher**: `MetronomeEngine` and
+      `MidiClockSender` previously ran their beat-firing/render/audio-
+      lookahead/clock-tick loops on the implicit `Dispatchers.Default` shared
+      thread pool, with no isolation from whatever else happened to be
+      running on it. `engine/TimingDispatcher.kt`'s `newTimingDispatcher()`
+      gives each subsystem its own small dedicated pool instead. Tried a
+      genuine single thread first — measurably broke it (a tight lookahead
+      poll starved the actual beat-firing coroutine at fast tempos, zero
+      beats fired in 700ms at 400 BPM where several were expected); settled
+      on 3 threads (matching the number of concurrent loops a single engine
+      can run) after that regression and a follow-up, harder-to-reproduce
+      scheduling-jitter flake in an unrelated bar-boundary timing test both
+      pointed the same direction.
+- [x] **v0.0.25 render-path allocation reduction**: `GlyphCanvas` used to
+      allocate a fresh `IntArray(size*size)` on every visualizer `render()`
+      call (40×/sec while playing) — now pooled/reused (`GlyphCanvas.
+      BufferPool`), with one defensive `.copyOf()` kept in
+      `MetronomeEngine.renderFrame()` right before anything reaches the
+      published `StateFlow` (preserving the pre-existing "never republish a
+      mutated array" safety guarantee this same file already documented and
+      relied on). `MetronomeGlyphService`'s frame collector also now skips
+      pushing to the real Glyph Matrix hardware when the new frame is
+      pixel-identical to the last one actually pushed.
 
 ## Documentation
 
@@ -338,3 +380,51 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       audibly reaches full strength faster with the short ramp and more
       gradually with the long one, rather than the ramp length having no
       audible effect.
+- [ ] **v0.0.25 APK size**: sanity-check the installed app's size (Settings →
+      Apps → qMetronome on the device) against the previous alpha - expect a
+      dramatic drop (measured ~64MB → ~29MB in the build that produced this
+      round) now that `material-icons-extended`/`appcompat`/`material` are
+      gone.
+- [ ] **v0.0.25 vendored icons render correctly**: every icon that used to
+      come from `material-icons-extended` is now hand-built - confirm each
+      one still reads clearly at its actual on-screen size: the Settings
+      section expand/collapse chevrons, the bar-queue LOOP/ONCE/MANUAL mode
+      icons (repeat arrows / skip-next / tap), the play/pause icon, the +/-
+      steppers everywhere (BPM, time signature, sliders), and the USB MIDI
+      star/star-outline. None should look clipped, misaligned, or overly
+      crude compared to the old library icons.
+- [ ] **v0.0.25 theme/background unchanged**: launch the app fresh (cold
+      start, not resumed) and confirm the splash/window background is still
+      solid black with no flash of an unexpected color or system theme
+      bleeding through, now that the theme no longer inherits from
+      AppCompat/MaterialComponents.
+- [ ] **v0.0.25 low-latency audio**: with "Audible click" on, run a fast
+      tempo (e.g. 300+ BPM) for an extended stretch and confirm no clicks
+      glitch, drop, or double-trigger - `PERFORMANCE_MODE_LOW_LATENCY` changes
+      the platform's audio path and is worth specifically stress-testing.
+- [ ] **v0.0.25 unified Settings "Tempo & Bars" control surface**: open
+      Settings while playing - confirm TAP, play/stop, and HOLD now appear
+      there too (not just BPM/bars), centered, and fully functional (tapping
+      TAP in Settings actually taps tempo, HOLD stages/latches, play/stop
+      toggles playback) - not just a read-only mirror anymore.
+- [ ] **v0.0.25 no redundant recomposition while Settings is open**: with the
+      metronome playing, open Settings and confirm the main screen's own BPM/
+      transport controls are no longer visibly live-updating underneath the
+      translucent backdrop (only the Glyph Matrix preview's flash should still
+      glow through) - closing Settings should immediately show the main
+      screen's controls resume, correctly caught up to the current state.
+- [ ] **v0.0.25 symbol-only control mode**: enable "Symbol-only controls" in
+      Settings → Layout and confirm every targeted label disappears from the
+      main screen (and Settings' "Tempo & Bars" mirror): TAP becomes a tap
+      icon, HOLD becomes a lock icon, the BPM unit text (BPM/BPH/BPS)
+      disappears, and both "• staged" texts (BPM and beats-per-bar) become a
+      small red dot instead. Turn it back off and confirm every label returns
+      exactly as before. With a screen reader on, confirm the icon-only
+      elements still announce something meaningful (not silent).
+- [ ] **v0.0.25 visualizers after buffer-reuse change**: cycle through every
+      visualizer (swipe left/right on the preview) while playing, including
+      switching mid-decay and stopping/restarting repeatedly, and confirm none
+      of them show ghosting, stale pixels, or a frozen/corrupted frame - the
+      classic symptom a buffer-reuse bug would produce. Also confirm a
+      multi-bar queue's ambient background (`QueueOverlay`) still renders
+      correctly layered under the active visualizer.

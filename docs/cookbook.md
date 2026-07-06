@@ -89,9 +89,10 @@ MetronomeEngine.state          // BeatPhase: bpm, phase, isAccent, isPlaying, be
 MetronomeEngine.frame          // IntArray: current rendered frame (same as Glyph Matrix)
 
 // Control
-MetronomeEngine.setBpm(120f)
+MetronomeEngine.setBpm(120f)      // clamped 1..400 by default, 0.1..3000 if extendedBpmRangeEnabled
 MetronomeEngine.toggle()       // start if stopped, stop if playing
-MetronomeEngine.tapTempo()     // tap-tempo input
+MetronomeEngine.tapTempo()     // tap-tempo input - decoupled from play (doesn't start playback)
+                                // unless holdMode is Latched, in which case it commits + starts
 MetronomeEngine.setVisualizer(myVisualizer)      // also pins it to whichever bar is active
 MetronomeEngine.setVisualizerEnabled(false)      // hide the visualizer itself; independent of
                                                   // setQueueOverlayEnabled - run either, both, neither
@@ -100,9 +101,15 @@ MetronomeEngine.setUnitNoteValue(8)     // denominator - independent of beatCoun
                                          // rescales bpm to preserve tempo (bpm/unitNoteValue held
                                          // constant), e.g. 6/4@120 -> 3/2 becomes 3/2@60, same feel
 MetronomeEngine.rescaledBpmForUnitNoteValueChange(120f, 4, 2)  // the rescale math, exposed for testing
-MetronomeEngine.setVisualOffsetMs(50f)    // -500..+500 ms
+MetronomeEngine.setVisualOffsetMs(50f)    // -500..+500 ms - phase-shifts the visual only
+MetronomeEngine.setAudioOffsetMs(-30f)    // -500..+500 ms - negative leads via real lookahead
+                                           // scheduling (see engine/TimingDispatcher.kt), not a
+                                           // phase shift; positive/zero schedules off the real beat
 MetronomeEngine.setMuteProbability(0.3f)          // 0..1 chance a beat's click is skipped
-MetronomeEngine.setProgressiveMuteEnabled(true)   // ramp that chance up over the first few bars
+MetronomeEngine.setProgressiveMuteEnabled(true)   // ramp that chance up over setProgressiveMuteRampBars
+MetronomeEngine.setProgressiveMuteRampBars(8)     // 1..32, how many bars the ramp above takes
+MetronomeEngine.setExtendedBpmRangeEnabled(true)  // unlocks 0.1..3000 bpm, shown as BPH/BPS outside 1..400
+MetronomeEngine.setSymbolicControlsEnabled(true)  // main screen's tempo/transport controls go icon-only
 
 // Hold/latch staging - while holdMode != Off, setBpm()/setBeatsPerBar() (and tapTempo(),
 // which calls setBpm() internally) stage instead of applying immediately.
@@ -132,8 +139,9 @@ MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.ONCE)
 // below) - setBpm()/setBeatsPerBar()/setUnitNoteValue()/goToQueueBar()/addBarToQueue()/
 // removeBarFromQueue()/setQueueMode() each write through automatically.
 
-// Click sounds - ClickPlayer.playClick(ClickSound.REGULAR / .BAR), a small tone table
-// (ClickPlayer's soundSpecs) rather than an inline branch, so a new sound is a new table row.
+// Click sounds - ClickPlayer.playClick(ClickSound.BAR / .ACCENT / .REGULAR); each sound's own
+// ClickSpec (waveform/frequency/duration/gain, tunable in Settings -> Click) is rendered to
+// samples by ClickSynth and played back via a per-sound MODE_STATIC AudioTrack.
 
 // Glyph queue background - QueueOverlay.apply() blends a per-bar-row (sheet-music-like, one
 // horizontal row per bar, beats ticking left to right), per-beat-tick ambient background into the
@@ -216,8 +224,10 @@ app/src/main/java/.../
     BeatPhase.kt             ← data class: bpm, phase, isAccent, isPlaying
     ClockSource.kt           ← internal drift-corrected clock
     TimeSignature.kt         ← beatCount/unitNoteValue/bpm/accent pattern; engine holds a queue of these
-    ClickPlayer.kt           ← ToneGenerator wrapper; ClickSound -> tone/duration table
-    ClickSound.kt            ← which click to play (REGULAR/BAR today) - add sounds here
+    ClickPlayer.kt           ← plays each ClickSound's generated waveform via a MODE_STATIC AudioTrack
+    ClickSynth.kt            ← renders a ClickSpec (waveform/frequency/duration/gain) to samples
+    ClickSound.kt            ← which click to play (BAR/ACCENT/REGULAR) - add sounds here
+    TimingDispatcher.kt      ← dedicated thread pool for timing-critical coroutines (not Dispatchers.Default)
   visualizers/
     GlyphVisualizer.kt       ← interface + GlyphCanvas
     VisualizerRegistry.kt    ← the list; add new ones here
@@ -242,6 +252,7 @@ app/src/main/java/.../
     NumericEntryDialog.kt    ← the numeric entry dialog itself (shared by BPM + sliders)
     TimeSignatureEntryDialog.kt ← beats + note value, two independent fields, one dialog
     BrandMarks.kt            ← QM + qMetronome brand marks, long-press to open GitHub
+    icons/ExtraIcons.kt      ← locally-vendored icons material-icons-core doesn't include
   widget/
     MetronomeWidget.kt       ← Jetpack Glance home screen widget
     MetronomeWidgetReceiver.kt ← GlanceAppWidgetReceiver - the manifest-registered entry point

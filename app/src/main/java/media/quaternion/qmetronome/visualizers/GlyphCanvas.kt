@@ -13,10 +13,18 @@ import kotlin.math.sqrt
  * the caller's array in place. That matters because the caller's array may already be published
  * on a `StateFlow`; mutating a previously-emitted array instead of producing a new one would
  * silently break collector notification.
+ *
+ * With no [initial] (the common case - every visualizer's own `render()` call starts from a blank
+ * canvas), [pixels] comes from [BufferPool] instead of a fresh `IntArray(size * size)` - this is
+ * called 40×/sec while playing, and that allocation was the dominant source of per-frame garbage
+ * in the render path. Safe to reuse *this* array (unlike the StateFlow-published one [initial]
+ * copies away from) precisely because it's never handed further than the caller of this
+ * constructor - `MetronomeEngine.renderFrame()`/`emitIdleFrame()` still make their own one
+ * defensive copy before anything reaches `_frame`'s `StateFlow` or the Glyph Matrix hardware SDK.
  */
 class GlyphCanvas(val size: Int, initial: IntArray? = null) {
 
-    val pixels = initial?.copyOf() ?: IntArray(size * size)
+    val pixels = initial?.copyOf() ?: BufferPool.acquire(size)
 
     val center: Float = (size - 1) / 2f
 
@@ -92,6 +100,28 @@ class GlyphCanvas(val size: Int, initial: IntArray? = null) {
     }
 
     fun toIntArray(): IntArray = pixels
+
+    /**
+     * Round-robins between 2 pre-allocated buffers per matrix size, instead of a fresh
+     * `IntArray(size * size)` on every blank-canvas [GlyphCanvas]. Two (not one) so a genuinely
+     * concurrent caller - `emitIdleFrame()` can run on whatever thread a Settings toggle callback
+     * fires on, while the render loop runs on the engine's own dedicated dispatcher - never gets
+     * handed the exact same in-flight buffer another caller is mid-draw on; `acquire` itself is
+     * synchronized so handing out a buffer is atomic even if two callers race to acquire at once.
+     * Each acquired buffer is zeroed before handoff so it still reads as a blank canvas.
+     */
+    private object BufferPool {
+        private val buffersBySize = mutableMapOf<Int, Array<IntArray>>()
+        private val nextIndexBySize = mutableMapOf<Int, Int>()
+
+        @Synchronized
+        fun acquire(size: Int): IntArray {
+            val buffers = buffersBySize.getOrPut(size) { arrayOf(IntArray(size * size), IntArray(size * size)) }
+            val index = nextIndexBySize.getOrDefault(size, 0)
+            nextIndexBySize[size] = (index + 1) % buffers.size
+            return buffers[index].also { it.fill(0) }
+        }
+    }
 }
 
 /** Eases [phase] (0..1) so beat pulses decay quickly instead of fading linearly. */

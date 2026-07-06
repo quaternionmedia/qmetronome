@@ -82,7 +82,7 @@ object MetronomeEngine {
         Log.e(TAG, "Unhandled engine coroutine failure", throwable)
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + exceptionHandler)
+    private val scope = CoroutineScope(SupervisorJob() + exceptionHandler + newTimingDispatcher("metronome-timing"))
     @Volatile private var clock: ClockSource = InternalClockSource()
     private val clickPlayer = ClickPlayer()
 
@@ -118,6 +118,13 @@ object MetronomeEngine {
 
     private val _compactLandscape = MutableStateFlow(false)
     val compactLandscape: StateFlow<Boolean> = _compactLandscape.asStateFlow()
+
+    /** When on, the main screen's live tempo/transport cluster (`TempoTransportCluster` in
+     * `MainScreen.kt`, also embedded in Settings' "Tempo & Bars" mirror) drops every text label
+     * (unit text, "staged" text) in favor of icons/dots only - see the composables themselves for
+     * what each one swaps to. Off by default, matching every other display toggle in this app. */
+    private val _symbolicControlsEnabled = MutableStateFlow(false)
+    val symbolicControlsEnabled: StateFlow<Boolean> = _symbolicControlsEnabled.asStateFlow()
 
     /** See [MetronomeSettings.persistentModeEnabled] - watched by `QMetronomeApp` to start/stop
      * `PersistentPlaybackService`, and by `MetronomeGlyphService` to decide whether a Glyph Toy
@@ -246,6 +253,7 @@ object MetronomeEngine {
         _visualOffsetMs.value = store.visualOffsetMs
         _audioOffsetMs.value = store.audioOffsetMs
         _compactLandscape.value = store.compactLandscape
+        _symbolicControlsEnabled.value = store.symbolicControlsEnabled
         _persistentModeEnabled.value = store.persistentModeEnabled
         _hasShownBpmHint.value = store.hasShownBpmHint
         _muteProbability.value = store.muteProbability
@@ -614,6 +622,11 @@ object MetronomeEngine {
         settings?.compactLandscape = enabled
     }
 
+    fun setSymbolicControlsEnabled(enabled: Boolean) {
+        _symbolicControlsEnabled.value = enabled
+        settings?.symbolicControlsEnabled = enabled
+    }
+
     fun setPersistentModeEnabled(enabled: Boolean) {
         _persistentModeEnabled.value = enabled
         settings?.persistentModeEnabled = enabled
@@ -831,6 +844,9 @@ object MetronomeEngine {
                 IntArray(matrixSize * matrixSize) { 255 }
             }
         }
+        // No separate defensive copy needed before publishing here (unlike renderFrame()) - this
+        // transform itself always allocates a brand new array, never publishing a GlyphCanvas-
+        // pooled buffer (see GlyphCanvas.BufferPool) directly.
         val dimmed = IntArray(rendered.size) { i ->
             (rendered[i] * IDLE_GLYPH_SCALE).toInt().coerceIn(0, 255)
         }
@@ -856,6 +872,7 @@ object MetronomeEngine {
         resolvedBeatAudio = null
         clickListenerForTesting = null
         _compactLandscape.value = false
+        _symbolicControlsEnabled.value = false
         _persistentModeEnabled.value = false
         _hasShownBpmHint.value = false
         _muteProbability.value = 0f
@@ -1078,7 +1095,13 @@ object MetronomeEngine {
             } else {
                 IntArray(matrixSize * matrixSize)
             }
-            _frame.value = withQueueOverlay(base, phaseState.beatIndex, phaseState.phase)
+            // The defensive copy here (not in GlyphCanvas itself) is what keeps buffer reuse safe:
+            // `base` may be a GlyphCanvas-pooled buffer that gets handed out again in a couple of
+            // frames (see GlyphCanvas.BufferPool) - copying once, right before anything reaches
+            // `_frame`'s StateFlow (and from there, the widget, MatrixPreview, and the closed-source
+            // Glyph Matrix hardware SDK), guarantees every published frame is still a distinct,
+            // never-reused-again array, exactly as before pooling existed.
+            _frame.value = withQueueOverlay(base, phaseState.beatIndex, phaseState.phase).copyOf()
         } catch (e: Exception) {
             Log.e(TAG, "Visualizer '${_visualizer.value.id}' threw during render(); skipping frame", e)
         }

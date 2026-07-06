@@ -62,7 +62,13 @@ constitution repo).
   tempo's long interval had no effect (and the beat/animation looked frozen) until that stale
   wait finished. `midi/MidiClockSource` is the
   external-clock implementation: the engine auto-switches to it the moment MIDI Clock activity
-  arrives, and falls back to internal timing if that feed goes quiet for a few beats.
+  arrives, and falls back to internal timing if that feed goes quiet for a few beats. Both this
+  and `midi/MidiClockSender`'s own coroutines run on `engine/TimingDispatcher.kt`'s
+  `newTimingDispatcher()` - a small dedicated thread pool per subsystem, isolated from
+  `Dispatchers.Default`'s shared, general-purpose pool, so unrelated background work elsewhere in
+  the app can never delay a beat firing. (A genuine single thread was tried first and measurably
+  broke it - a fast tempo's audio-lookahead poll could starve the actual beat-firing coroutine
+  entirely - so each subsystem gets a small pool, not one thread.)
 - `midi/` — MIDI Clock (24 ppqn) support, in both directions, over both virtual (inter-app) and
   USB transports. `MidiClockSource` parses real-time bytes and measures tempo from a smoothed
   rolling average of tick intervals, regardless of transport; `VirtualMidiClockService` exposes
@@ -78,8 +84,14 @@ constitution repo).
   [`docs/external-midi-clock.md`](docs/external-midi-clock.md) for the design rationale and
   [`docs/usb-midi-test-plan.md`](docs/usb-midi-test-plan.md) for how to verify either USB
   direction (including starring/auto-reconnect) against real hardware.
-- `engine/ClickPlayer` — the audible click (`ToneGenerator`), so this also works as a real
-  metronome for practicing/performing musicians, with or without the Glyph Matrix.
+- `engine/ClickPlayer` — the audible click, so this also works as a real metronome for
+  practicing/performing musicians, with or without the Glyph Matrix. Each `ClickSound` is a
+  generated waveform (`engine/ClickSynth`, tunable waveform/frequency/duration/gain - see Settings
+  → Click), played back via a `MODE_STATIC` `AudioTrack` per sound (retriggered with
+  `stop()`/`reloadStaticData()`/`play()` rather than rebuilt, so a fast tempo retriggering a click
+  before its previous decay finished still starts cleanly). Built with
+  `PERFORMANCE_MODE_LOW_LATENCY`, since a metronome's click is exactly the kind of short,
+  timing-sensitive one-shot trigger that mode exists for.
 - `visualizers/` — the animation algorithms. See below.
 - `glyph/GlyphMatrixToyService` — reusable Glyph Toy boilerplate (bind lifecycle, device
   registration, Glyph Button message handling). `glyph/MetronomeGlyphService` is the concrete
@@ -88,12 +100,16 @@ constitution repo).
 - `ui/` — Compose UI. `MainScreen` keeps the Glyph Matrix preview as the dominant, focal
   element with tempo/tap/play-stop and beats-per-bar alongside it - live meter/tempo controls
   belong on the main screen, not a settings overlay you'd have to leave the beat to open.
-  Everything else (a live "Tempo & Bars" mirror of the main screen's own BPM/meter/bar-queue
-  controls plus an extended-BPM-range toggle, random mute, click toggle, visualizer picker,
-  independent beat-visualizer/bar-queue-background toggles, visual and audio timing offsets, MIDI
-  clock status/USB connection/clock-out) lives behind the bottom-right settings button in
-  `SettingsSheet`, a full-screen translucent overlay (not a half-open bottom sheet) so the
-  matrix preview's flashes still glow through dimly behind it. The preview shows a dim ghost of
+  Everything else (a "Tempo & Bars" section embedding the *exact same* `TempoTransportCluster`
+  shown on the main screen - BPM/meter/bar-queue plus TAP/play-stop/HOLD, not a second copy that
+  could drift - plus an extended-BPM-range toggle, random mute, click toggle, visualizer picker,
+  independent beat-visualizer/bar-queue-background toggles, visual and audio timing offsets, a
+  symbol-only-controls toggle, MIDI clock status/USB connection/clock-out) lives behind the
+  bottom-right settings button in `SettingsSheet`, a full-screen translucent overlay (not a
+  half-open bottom sheet) so the matrix preview's flashes still glow through dimly behind it -
+  the main screen itself stops composing its own tempo/transport cluster while Settings is open,
+  so there's only ever one live instance of it rather than an invisible duplicate still
+  recomposing underneath. The preview shows a dim ghost of
   the current visualizer at rest even when the metronome is stopped (6% brightness idle frame),
   so the AMOLED screen never looks fully off. The settings button isn't the only way in:
   long-pressing the preview also opens settings; double-tapping the preview toggles play/stop;

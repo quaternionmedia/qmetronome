@@ -49,7 +49,7 @@ that contains `settings.gradle.kts`). Don't open the `app/` subfolder.
 
 Android Studio will start a **Gradle sync** automatically. You'll see a
 progress bar at the bottom. This downloads Gradle 9.4.1 and all library
-dependencies — about 300 MB on the first run, all cached locally afterwards.
+dependencies — about 200 MB on the first run, all cached locally afterwards.
 If it prompts to install missing SDK components, accept them.
 
 **Expected output when sync finishes:** "Gradle sync finished" in the status

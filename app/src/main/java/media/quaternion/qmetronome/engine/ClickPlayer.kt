@@ -73,6 +73,11 @@ class ClickPlayer {
             )
             .setBufferSizeInBytes(bytes.size)
             .setTransferMode(AudioTrack.MODE_STATIC)
+            // The standard platform API for exactly this use case (a short, latency-sensitive
+            // one-shot trigger) - without it, the click rides whatever output latency the
+            // platform's default audio path happens to have, undermining how precisely timed
+            // everything upstream (ClockSource, the audio offset lookahead) already is.
+            .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
             .build()
         track.write(bytes, 0, bytes.size)
         return track

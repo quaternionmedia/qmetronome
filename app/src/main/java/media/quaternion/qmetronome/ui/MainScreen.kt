@@ -29,13 +29,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,11 +51,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import media.quaternion.qmetronome.engine.BeatPhase
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.engine.TimeSignature
+import media.quaternion.qmetronome.ui.icons.ExtraIcons
 import media.quaternion.qmetronome.ui.theme.PureWhite
 import media.quaternion.qmetronome.ui.theme.RecordingRed
 import media.quaternion.qmetronome.visualizers.decayEase
@@ -70,9 +69,11 @@ import kotlin.math.sqrt
 /**
  * The Glyph Matrix preview is the focal point by design - it's a 1:1 stand-in for what's
  * actually showing on the hardware, and the rest of the screen exists to support it, not
- * compete with it. Everything that isn't "look at the beat" or "start/stop/tap" lives behind
- * the settings button in a full-screen overlay (see [SettingsSheet]), so the main screen stays
- * down to one functional grouping at a time.
+ * compete with it. Settings (see [SettingsSheet]) now embeds the same live [TempoTransportCluster]
+ * shown here too - not because tempo/transport belongs there conceptually, but so there is only
+ * ever one live, composed instance of it: while Settings is open, this screen stops composing its
+ * own copy entirely (its layouts' `showControls` parameter) rather than leaving an invisible,
+ * still-recomposing duplicate running underneath the overlay.
  *
  * A few affordances don't rely on that small button: long-pressing the preview opens settings
  * (the bottom-right button sits close to the brand footer and can be a small target on some
@@ -103,6 +104,7 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
                 previewSize = previewSize,
                 frame = frame,
                 beat = beat,
+                showControls = !showSettings,
                 onShowSettings = { showSettings = true },
                 onShowBpmDialog = { showBpmDialog = true },
             )
@@ -111,6 +113,7 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
                 previewSize = previewSize,
                 frame = frame,
                 beat = beat,
+                showControls = !showSettings,
                 onShowSettings = { showSettings = true },
                 onShowBpmDialog = { showBpmDialog = true },
             )
@@ -189,6 +192,7 @@ private fun PortraitLayout(
     previewSize: Int,
     frame: IntArray,
     beat: BeatPhase,
+    showControls: Boolean,
     onShowSettings: () -> Unit,
     onShowBpmDialog: () -> Unit,
 ) {
@@ -206,16 +210,13 @@ private fun PortraitLayout(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        Spacer(Modifier.height(28.dp))
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.alpha(CONTROLS_ALPHA),
-        ) {
-            BpmControls(beat = beat, onShowBpmDialog = onShowBpmDialog)
-            Spacer(Modifier.height(12.dp))
-            BeatsPerBarControls()
-            Spacer(Modifier.height(24.dp))
-            TransportRow(beat = beat)
+        if (showControls) {
+            Spacer(Modifier.height(28.dp))
+            TempoTransportCluster(
+                beat = beat,
+                onShowBpmDialog = onShowBpmDialog,
+                modifier = Modifier.alpha(CONTROLS_ALPHA),
+            )
         }
     }
 }
@@ -225,6 +226,7 @@ private fun CompactLandscapeLayout(
     previewSize: Int,
     frame: IntArray,
     beat: BeatPhase,
+    showControls: Boolean,
     onShowSettings: () -> Unit,
     onShowBpmDialog: () -> Unit,
 ) {
@@ -241,21 +243,50 @@ private fun CompactLandscapeLayout(
             onShowSettings = onShowSettings,
             modifier = Modifier.fillMaxHeight().aspectRatio(1f),
         )
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .padding(bottom = 32.dp)
-                .alpha(CONTROLS_ALPHA),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            BpmControls(beat = beat, onShowBpmDialog = onShowBpmDialog)
-            Spacer(Modifier.height(8.dp))
-            BeatsPerBarControls()
-            Spacer(Modifier.height(16.dp))
-            TransportRow(beat = beat)
+        if (showControls) {
+            TempoTransportCluster(
+                beat = beat,
+                onShowBpmDialog = onShowBpmDialog,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(bottom = 32.dp)
+                    .alpha(CONTROLS_ALPHA),
+                verticalArrangement = Arrangement.Center,
+                bpmToBeatsSpacing = 8.dp,
+                beatsToTransportSpacing = 16.dp,
+            )
         }
+    }
+}
+
+/**
+ * The BPM/time-signature/bar-queue controls plus TAP/play-stop/HOLD transport, bundled into one
+ * composable and reused by both the main screen's own layouts and [SettingsSheet]'s "Tempo &
+ * Bars" mirror - a single live instance of this cluster rather than two independently-recomposing
+ * copies of the same `StateFlow`-driven UI (see [MainScreen]'s `showControls` handling, which stops
+ * composing the main screen's own copy entirely while Settings is open, rather than leaving it
+ * running invisibly underneath). Centered horizontally wherever it's used.
+ */
+@Composable
+internal fun TempoTransportCluster(
+    beat: BeatPhase,
+    onShowBpmDialog: () -> Unit,
+    modifier: Modifier = Modifier,
+    verticalArrangement: Arrangement.Vertical = Arrangement.Top,
+    bpmToBeatsSpacing: Dp = 12.dp,
+    beatsToTransportSpacing: Dp = 24.dp,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = verticalArrangement,
+    ) {
+        BpmControls(beat = beat, onShowBpmDialog = onShowBpmDialog)
+        Spacer(Modifier.height(bpmToBeatsSpacing))
+        BeatsPerBarControls()
+        Spacer(Modifier.height(beatsToTransportSpacing))
+        TransportRow(beat = beat)
     }
 }
 
@@ -313,6 +344,7 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
     val holdMode by MetronomeEngine.holdMode.collectAsState()
     val stagedBpm by MetronomeEngine.stagedBpm.collectAsState()
     val hasShownBpmHint by MetronomeEngine.hasShownBpmHint.collectAsState()
+    val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
     val bpmDragPxPerStep = with(LocalDensity.current) { 6.dp.toPx() }
 
     val displayBpm = stagedBpm ?: beat.bpm
@@ -333,7 +365,7 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
             onStep = { MetronomeEngine.setBpm(currentBpm() - BPM_STEP) },
             modifier = Modifier.size(48.dp),
         ) {
-            Icon(Icons.Filled.Remove, contentDescription = "Decrease BPM")
+            Icon(ExtraIcons.Remove, contentDescription = "Decrease BPM")
         }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -357,13 +389,14 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
             Text(
                 text = bpmDisplayValue(displayBpm),
                 style = MaterialTheme.typography.displayMedium,
+                modifier = if (symbolicControlsEnabled) {
+                    Modifier.semantics { contentDescription = "${bpmDisplayValue(displayBpm)} ${bpmDisplayUnit(displayBpm)}" }
+                } else {
+                    Modifier
+                },
             )
             if (holdMode != MetronomeEngine.HoldMode.Off) {
-                Text(
-                    text = "• staged",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = RecordingRed,
-                )
+                StagedIndicator(symbolMode = symbolicControlsEnabled)
             }
         }
         HoldRepeatButton(
@@ -373,12 +406,37 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
             Icon(Icons.Filled.Add, contentDescription = "Increase BPM")
         }
     }
-    Text(
-        text = bpmDisplayUnit(displayBpm),
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.secondary,
-    )
+    if (!symbolicControlsEnabled) {
+        Text(
+            text = bpmDisplayUnit(displayBpm),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.secondary,
+        )
+    }
     BpmGestureHint(visible = !hasShownBpmHint)
+}
+
+/** The "this value is staged, not yet applied" indicator - a small [RecordingRed] dot in symbol
+ * mode (the same 6dp `CircleShape` badge already used elsewhere for staged/active-state cues, e.g.
+ * [QueueIconButton]'s destructive badge), or the literal text otherwise. Shared by [BpmControls]
+ * and [TimeSignatureNumberRow] so the two can never disagree on which form is showing. */
+@Composable
+private fun StagedIndicator(symbolMode: Boolean) {
+    if (symbolMode) {
+        Box(
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .size(6.dp)
+                .background(RecordingRed, CircleShape)
+                .semantics { contentDescription = "Staged, not yet applied" },
+        )
+    } else {
+        Text(
+            text = "• staged",
+            style = MaterialTheme.typography.labelSmall,
+            color = RecordingRed,
+        )
+    }
 }
 
 /** Shown once, ever, so the BPM number's tap/long-press/drag trio isn't a hidden secret -
@@ -492,7 +550,7 @@ internal fun BeatsPerBarControls() {
             )
 
             QueueIconButton(
-                icon = Icons.Filled.Remove,
+                icon = ExtraIcons.Remove,
                 contentDescription = "Remove the active bar from the queue",
                 enabled = hasQueue,
                 onClick = MetronomeEngine::removeCurrentBarFromQueue,
@@ -519,9 +577,9 @@ internal fun BeatsPerBarControls() {
             }
             QueueIconButton(
                 icon = when (queueMode) {
-                    MetronomeEngine.QueueMode.LOOP -> Icons.Filled.Repeat
-                    MetronomeEngine.QueueMode.ONCE -> Icons.Filled.SkipNext
-                    MetronomeEngine.QueueMode.MANUAL -> Icons.Filled.TouchApp
+                    MetronomeEngine.QueueMode.LOOP -> ExtraIcons.Repeat
+                    MetronomeEngine.QueueMode.ONCE -> ExtraIcons.SkipNext
+                    MetronomeEngine.QueueMode.MANUAL -> ExtraIcons.TouchApp
                 },
                 contentDescription = "Bar queue mode: ${queueMode.name.lowercase()} - tap to change",
                 onClick = { MetronomeEngine.setQueueMode(nextMode) },
@@ -567,7 +625,7 @@ private fun TimeSignatureNumberRow(
             onStep = onDecrement,
             modifier = Modifier.size(TIME_SIG_STEPPER_SIZE),
         ) {
-            Icon(Icons.Filled.Remove, contentDescription = "Fewer $contentDescriptionNoun", modifier = Modifier.size(TIME_SIG_ICON_SIZE))
+            Icon(ExtraIcons.Remove, contentDescription = "Fewer $contentDescriptionNoun", modifier = Modifier.size(TIME_SIG_ICON_SIZE))
         }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -589,11 +647,8 @@ private fun TimeSignatureNumberRow(
                 color = MaterialTheme.colorScheme.secondary,
             )
             if (stagedLabel) {
-                Text(
-                    text = "• staged",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = RecordingRed,
-                )
+                val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
+                StagedIndicator(symbolMode = symbolicControlsEnabled)
             }
         }
         HoldRepeatButton(
@@ -727,6 +782,7 @@ private fun QueueIconButton(
 
 @Composable
 private fun TransportRow(beat: BeatPhase) {
+    val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -735,14 +791,18 @@ private fun TransportRow(beat: BeatPhase) {
             onClick = { MetronomeEngine.tapTempo() },
             modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
         ) {
-            Text("TAP")
+            if (symbolicControlsEnabled) {
+                Icon(ExtraIcons.TouchApp, contentDescription = "Tap tempo")
+            } else {
+                Text("TAP")
+            }
         }
         FilledIconButton(
             onClick = MetronomeEngine::toggle,
             modifier = Modifier.size(PLAY_PAUSE_SIZE),
         ) {
             Icon(
-                imageVector = if (beat.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                imageVector = if (beat.isPlaying) ExtraIcons.Pause else Icons.Filled.PlayArrow,
                 contentDescription = if (beat.isPlaying) "Stop" else "Start",
                 modifier = Modifier.size(PLAY_PAUSE_ICON_SIZE),
             )

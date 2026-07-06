@@ -2,7 +2,10 @@ package media.quaternion.qmetronome.ui
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -36,6 +39,7 @@ import media.quaternion.qmetronome.ui.theme.RecordingRed
 @Composable
 fun HoldButton(modifier: Modifier = Modifier) {
     val holdMode by MetronomeEngine.holdMode.collectAsState()
+    val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
@@ -84,7 +88,11 @@ fun HoldButton(modifier: Modifier = Modifier) {
             MetronomeEngine.HoldMode.Off -> ButtonDefaults.outlinedButtonColors()
         },
     ) {
-        Text("HOLD")
+        if (symbolicControlsEnabled) {
+            Icon(Icons.Filled.Lock, contentDescription = "Hold")
+        } else {
+            Text("HOLD")
+        }
     }
 }
 
