@@ -8,6 +8,7 @@ import media.quaternion.qmetronome.visualizers.QueueOverlay
 import media.quaternion.qmetronome.visualizers.VisualizerRegistry
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -35,10 +36,13 @@ object MetronomeEngine {
     const val MIN_BPM = 1f
     const val MAX_BPM = 400f
 
-    /** Bounds in effect when [extendedBpmRangeEnabled] is on - generous, round numbers covering
-     * anything from a near-static drone pulse to a tremolo-fast click, displayed as BPH/BPS (see
-     * `bpmDisplayValue`/`bpmDisplayUnit` in `MainScreen.kt`) rather than a literal "0.1 BPM". */
-    const val EXTENDED_MIN_BPM = 0.1f
+    /** The actual floor for the extended range, expressed in the unit its own display (BPH - see
+     * `bpmDisplayValue`/`bpmDisplayUnit` in `MainScreen.kt`) uses - one beat per ten hours.
+     * [EXTENDED_MIN_BPM] is derived from this, not the other way around, so the number that
+     * matters ("how low can BPH go") is the explicit one, not an opaque BPM value someone has to
+     * multiply by 60 to sanity-check. */
+    const val MIN_BPH = 0.1f
+    const val EXTENDED_MIN_BPM = MIN_BPH / 60f
     const val EXTENDED_MAX_BPM = 3000f
 
     const val MIN_BEATS_PER_BAR = 1
@@ -82,9 +86,30 @@ object MetronomeEngine {
         Log.e(TAG, "Unhandled engine coroutine failure", throwable)
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + exceptionHandler + newTimingDispatcher("metronome-timing"))
+    // One dedicated, elevated-priority scope per timing-critical role - see newTimingDispatcher's
+    // kdoc for why a shared pool isn't good enough. The streaming writer specifically (audioWriterScope)
+    // must never share a thread with anything else: its AudioTrack.write() calls block for real, and a
+    // coroutine blocked on a Java call can't yield its thread back to a co-scheduled role.
+    private val clockScope = CoroutineScope(SupervisorJob() + exceptionHandler + newTimingDispatcher("metronome-clock"))
+    private val renderScope = CoroutineScope(SupervisorJob() + exceptionHandler + newTimingDispatcher("metronome-render"))
+    private val audioScope = CoroutineScope(SupervisorJob() + exceptionHandler + newTimingDispatcher("metronome-audio-schedule"))
+    private val audioWriterScope = CoroutineScope(SupervisorJob() + exceptionHandler + newTimingDispatcher("metronome-audio-writer"))
+
+    // Not timing-critical - a debounced SharedPreferences write. Deliberately NOT one of the
+    // elevated-priority scopes above: blocking disk I/O has no business running on a thread
+    // reserved for real-time audio/visual work.
+    private val persistScope = CoroutineScope(SupervisorJob() + exceptionHandler + Dispatchers.IO)
+
     @Volatile private var clock: ClockSource = InternalClockSource()
     private val clickPlayer = ClickPlayer()
+    private val streamingClickEngine = StreamingClickEngine()
+
+    /** Whether [streamingClickEngine] is the active audio-trigger path for the current session -
+     * decided once per [start] call by whether it initialized successfully, and flipped back to
+     * false mid-session if [StreamingClickEngine.hasFailedWarmup] ever reports true (see
+     * [startAudioScheduling]). False means every click for this session falls back to
+     * [clickPlayer]'s discrete-retrigger path - see [onBeat] and [fireLookaheadAudioIfNeeded]. */
+    @Volatile private var usingStreamingClickEngine = false
 
     private var settings: MetronomeSettings? = null
 
@@ -112,7 +137,7 @@ object MetronomeEngine {
     val visualOffsetMs: StateFlow<Float> = _visualOffsetMs.asStateFlow()
 
     /** See [setAudioOffsetMs] for how this is actually scheduled - a negative value needs genuine
-     * lookahead (see [startAudioLookahead]), unlike [visualOffsetMs]'s continuous phase-shift. */
+     * lookahead (see [startAudioScheduling]), unlike [visualOffsetMs]'s continuous phase-shift. */
     private val _audioOffsetMs = MutableStateFlow(DEFAULT_AUDIO_OFFSET_MS)
     val audioOffsetMs: StateFlow<Float> = _audioOffsetMs.asStateFlow()
 
@@ -203,19 +228,24 @@ object MetronomeEngine {
     @Volatile private var pendingBeatsPerBarCommit: Int? = null
 
     private var renderJob: Job? = null
-    private var audioLookaheadJob: Job? = null
+    private var audioSchedulingJob: Job? = null
     private var persistBpmJob: Job? = null
     private var lastTapNanos = 0L
     private val tapIntervalsMs = mutableListOf<Long>()
 
-    /** A one-shot mute/sound decision for beat [totalBeats] (see [ResolvedBeatAudio]), resolved
-     * either early by [startAudioLookahead] or on-time by [onBeat] itself - whichever gets there
-     * first. Guarded by [audioResolutionLock] rather than relying on `@Volatile` alone: both the
-     * lookahead loop and [onBeat] run as independent coroutines that can genuinely execute on
-     * different threads (this object's [scope] has no dispatcher of its own, so `launch` falls
-     * back to `Dispatchers.Default`'s thread pool), and resolving involves a non-atomic
-     * check-then-set plus a single [random] roll that must happen exactly once per beat. */
-    @Volatile private var resolvedBeatAudio: ResolvedBeatAudio? = null
+    /** One-shot mute/sound decisions, keyed by [ResolvedBeatAudio.totalBeats], resolved either
+     * early by [startAudioScheduling] or on-time by [onBeat] itself - whichever gets there first.
+     * A *map*, not a single nullable slot, deliberately: [onBeat] runs on [clockScope]'s dedicated
+     * thread while the scheduling loop runs on [audioScope]'s - genuinely different threads, not
+     * just different coroutines - so the scheduling loop can legitimately resolve-and-cache beat
+     * N+1 microseconds before [onBeat] gets around to consuming beat N's own entry; a single
+     * overwritable slot can't hold both at once, and whichever call loses that race would silently
+     * clobber the other's entry, forcing a second, duplicate resolution (and duplicate
+     * mute-probability roll) later. Guarded by [audioResolutionLock] rather than relying on
+     * `@Volatile` alone, since resolving involves a non-atomic check-then-set. In practice this
+     * never holds more than 1-2 entries - [onBeat] removes its own beat's entry the instant it
+     * consumes it. */
+    private val resolvedBeatAudioCache = mutableMapOf<Long, ResolvedBeatAudio>()
     private val audioResolutionLock = Any()
 
     /** For tests only - lets a test observe exactly when/what audio actually fired without
@@ -248,7 +278,10 @@ object MetronomeEngine {
         restoredSpec.visualizerId?.let { _visualizer.value = VisualizerRegistry.byId(it) }
         _clickEnabled.value = store.clickEnabled
         val restoredSpecs = ClickSound.entries.associateWith { store.clickSpec(it) }
-        restoredSpecs.forEach { (sound, spec) -> clickPlayer.setSpec(sound, spec) }
+        restoredSpecs.forEach { (sound, spec) ->
+            clickPlayer.setSpec(sound, spec)
+            streamingClickEngine.setSpec(sound, spec)
+        }
         _clickSpecs.value = restoredSpecs
         _visualOffsetMs.value = store.visualOffsetMs
         _audioOffsetMs.value = store.audioOffsetMs
@@ -292,7 +325,7 @@ object MetronomeEngine {
         val wasPlaying = _state.value.isPlaying
         clock.stop()
         clock = source
-        if (wasPlaying) clock.start(scope, _state.value.bpm, ::onBeat)
+        if (wasPlaying) clock.start(clockScope, _state.value.bpm, ::onBeat)
     }
 
     fun setMatrixSize(size: Int) {
@@ -339,7 +372,7 @@ object MetronomeEngine {
             queue.toMutableList().apply { this[index] = this[index].copy(bpm = clamped) }
         }
         persistBpmJob?.cancel()
-        persistBpmJob = scope.launch {
+        persistBpmJob = persistScope.launch {
             delay(BPM_PERSIST_DEBOUNCE_MS)
             settings?.bpm = clamped
             settings?.queue = _timeSignatureQueue.value
@@ -597,6 +630,7 @@ object MetronomeEngine {
 
     fun setClickSpec(sound: ClickSound, spec: ClickSpec) {
         clickPlayer.setSpec(sound, spec)
+        streamingClickEngine.setSpec(sound, spec)
         _clickSpecs.update { it + (sound to spec) }
         settings?.setClickSpec(sound, spec)
     }
@@ -608,7 +642,7 @@ object MetronomeEngine {
     }
 
     /** A negative value leads the click ahead of the true beat via genuine lookahead scheduling
-     * (see [startAudioLookahead]); zero/positive delays it, scheduled off the beat's own real
+     * (see [startAudioScheduling]); zero/positive delays it, scheduled off the beat's own real
      * timestamp (see [scheduleReactiveAudio]) rather than a naive relative `delay()` that could
      * drift under scheduling pressure. */
     fun setAudioOffsetMs(ms: Float) {
@@ -743,7 +777,7 @@ object MetronomeEngine {
         beatIndex = 0
         totalBeats = 0
         barsElapsedSincePlay = 0
-        resolvedBeatAudio = null
+        synchronized(audioResolutionLock) { resolvedBeatAudioCache.clear() }
         goToQueueBar(0)
         if (primeVisualFlash) {
             lastBeatNanos = System.nanoTime()
@@ -751,9 +785,10 @@ object MetronomeEngine {
         } else {
             _state.update { it.copy(isPlaying = true) }
         }
-        clock.start(scope, _state.value.bpm, ::onBeat)
+        usingStreamingClickEngine = streamingClickEngine.start(audioWriterScope)
+        clock.start(clockScope, _state.value.bpm, ::onBeat)
         startRenderLoop()
-        startAudioLookahead()
+        startAudioScheduling()
     }
 
     /**
@@ -766,15 +801,16 @@ object MetronomeEngine {
         clock.stop()
         // Flipped first, before cancelling anything - playClickSafely's own isPlaying check is
         // what actually stops an in-flight reactive delay (scheduleReactiveAudio's one-off
-        // coroutine isn't tracked/cancelled the way renderJob/audioLookaheadJob are) or a
-        // lookahead-loop iteration that was already past its gating check from firing audio after
+        // coroutine isn't tracked/cancelled the way renderJob/audioSchedulingJob are) or a
+        // scheduling-loop iteration that was already past its gating check from firing audio after
         // stop was pressed - flipping this as early as possible narrows that race to a minimum.
         _state.update { it.copy(isPlaying = false, phase = 0f) }
         renderJob?.cancel()
         renderJob = null
-        audioLookaheadJob?.cancel()
-        audioLookaheadJob = null
-        resolvedBeatAudio = null
+        audioSchedulingJob?.cancel()
+        audioSchedulingJob = null
+        streamingClickEngine.stop()
+        synchronized(audioResolutionLock) { resolvedBeatAudioCache.clear() }
         pendingBeatsPerBarCommit?.let {
             applyBeatsPerBarImmediate(it)
             pendingBeatsPerBarCommit = null
@@ -860,16 +896,21 @@ object MetronomeEngine {
         persistBpmJob = null
         clock = InternalClockSource()
         usingMidiClock = false
+        streamingClickEngine.stop()
+        usingStreamingClickEngine = false
         settings = null
         _visualizer.value = VisualizerRegistry.default
         _state.value = BeatPhase.IDLE
         _clockStatus.value = ClockStatus.Internal
         _clickEnabled.value = false
-        ClickSound.entries.forEach { clickPlayer.setSpec(it, ClickSpec.defaultFor(it)) }
+        ClickSound.entries.forEach {
+            clickPlayer.setSpec(it, ClickSpec.defaultFor(it))
+            streamingClickEngine.setSpec(it, ClickSpec.defaultFor(it))
+        }
         _clickSpecs.value = ClickSound.entries.associateWith(ClickSpec::defaultFor)
         _visualOffsetMs.value = DEFAULT_VISUAL_OFFSET_MS
         _audioOffsetMs.value = DEFAULT_AUDIO_OFFSET_MS
-        resolvedBeatAudio = null
+        synchronized(audioResolutionLock) { resolvedBeatAudioCache.clear() }
         clickListenerForTesting = null
         _compactLandscape.value = false
         _symbolicControlsEnabled.value = false
@@ -923,26 +964,51 @@ object MetronomeEngine {
         if (usingMidiClock) {
             _clockStatus.value = ClockStatus.Midi(measuredBpm, MidiClockSource.activeSource?.name)
         }
-        // Reuse the lookahead loop's resolution if it already got there first (and, in doing so,
-        // already fired the click) - otherwise resolve fresh, right now, and schedule its audio
-        // reactively. Either way this must resolve exactly once per beat - see [ResolvedBeatAudio].
-        val (resolved, alreadyFired) = synchronized(audioResolutionLock) {
-            val cached = resolvedBeatAudio?.takeIf { it.totalBeats == count }
-            resolvedBeatAudio = null
+        // Advance the beat counters *before* resolving/dispatching this beat's audio, not after -
+        // so a concurrent reader (the audio scheduling loop, running on its own dedicated thread -
+        // see [startAudioScheduling]) never observes [totalBeats] still reading `count` while this
+        // beat's audio is already mid-resolution below, which would make it redundantly resolve
+        // (and, worse, re-cache) the very beat this call is already handling instead of the real
+        // next one. [index]/[count] were already captured above for advanceQueueAtBarBoundary's/
+        // this beat's own use, so the fields are free to move on.
+        if (index == 0) barsElapsedSincePlay++
+        totalBeats = count + 1
+        beatIndex = (index + 1) % _state.value.beatsPerBar.coerceAtLeast(1)
+        // Reuse the scheduling loop's resolution if it already got there first - otherwise resolve
+        // fresh, right now. Either way this must resolve exactly once per beat - see
+        // [ResolvedBeatAudio]. Only clear the cache slot when it actually matches `count`
+        // (never unconditionally) - the scheduling loop may already have resolved *and cached* the
+        // next beat by the time this runs (its target just advanced above), and blindly nulling the
+        // slot would throw that valid resolution away, forcing a second, duplicate resolution (and
+        // duplicate mute-probability roll) later. What happens next depends on which audio path is
+        // active this session (see [usingStreamingClickEngine]):
+        //  - streaming: always (re-)register this beat with the exact, authoritative timestamp -
+        //    idempotent, and strictly more accurate than whatever a predictive poll may have
+        //    already registered (see [refreshPredictedSchedule]), since this is the real beat, not
+        //    a prediction of it.
+        //  - fallback (ClickPlayer): unchanged from before this round - only fire reactively if the
+        //    lookahead loop didn't already fire this beat early.
+        val (resolved, alreadyResolved) = synchronized(audioResolutionLock) {
+            val cached = resolvedBeatAudioCache.remove(count)
             if (cached != null) cached to true else resolveBeatAudio(count, index) to false
         }
-        if (!alreadyFired) {
+        if (usingStreamingClickEngine) {
+            if (!alreadyResolved) {
+                resolved.sound?.let { clickListenerForTesting?.invoke(it, System.nanoTime()) }
+            }
+            if (_state.value.isPlaying) {
+                val fireAtNanos = timestampNanos + (_audioOffsetMs.value * 1_000_000.0).toLong()
+                streamingClickEngine.scheduleBeat(count, resolved.sound, fireAtNanos)
+            }
+        } else if (!alreadyResolved) {
             resolved.sound?.let { scheduleReactiveAudio(it, timestampNanos) }
         }
-        if (beatIndex == 0) barsElapsedSincePlay++
-        totalBeats++
-        beatIndex = (beatIndex + 1) % _state.value.beatsPerBar.coerceAtLeast(1)
     }
 
     /** Resolves whether beat [totalBeatsForBeat] (at bar position [beatIndexForBeat]) should play
      * a click, and if so which [ClickSound] - the one place [effectiveMuteProbability]'s roll and
      * the beat-vs-accent-vs-regular sound choice happen, called by whichever of [onBeat] or the
-     * audio lookahead loop ([startAudioLookahead]) gets there first for a given beat. Beat 0 is
+     * audio scheduling loop ([startAudioScheduling]) gets there first for a given beat. Beat 0 is
      * unconditionally [ClickSound.BAR] regardless of a bar-queue advance that may not have
      * happened yet when this runs ahead of time; a non-zero beat's accent comes from the *current*
      * time signature, which by construction can't change before the next beat-0 boundary - both
@@ -959,35 +1025,37 @@ object MetronomeEngine {
         return ResolvedBeatAudio(totalBeatsForBeat, sound)
     }
 
-    /** Fires (or schedules) [sound] for a beat whose real timestamp ([beatTimestampNanos]) has
-     * already arrived - the reactive path used whenever the audio lookahead loop didn't already
-     * fire this beat early, which covers zero/positive [audioOffsetMs] as well as any beat the
-     * lookahead loop is disabled for (click off, non-negative offset, or following an external
-     * MIDI clock - see [startAudioLookahead]). Schedules off the beat's own absolute timestamp
-     * plus the offset - not a naive relative `delay(offsetMs)` - so whatever latency already
-     * elapsed between the true beat and this call doesn't compound into extra lag. A negative
-     * offset reaching here (MIDI-follow mode, where lookahead is intentionally skipped) simply
-     * computes a target already in the past and fires immediately - documented no-op behavior,
-     * not a silent pretense of leading a clock this engine doesn't control. */
+    /** [ClickPlayer]-fallback-only: fires (or schedules) [sound] for a beat whose real timestamp
+     * ([beatTimestampNanos]) has already arrived - the reactive path used whenever the audio
+     * scheduling loop didn't already fire this beat early, which covers zero/positive
+     * [audioOffsetMs] as well as any beat the lookahead behavior is disabled for (click off,
+     * non-negative offset, or following an external MIDI clock - see [startAudioScheduling]). Not
+     * called at all when [usingStreamingClickEngine] is true - [onBeat] pushes straight to
+     * [StreamingClickEngine.scheduleBeat] instead, since sample-accurate placement no longer needs
+     * this function's careful "schedule off the absolute timestamp, not a naive relative delay"
+     * trick to avoid compounding latency. A negative offset reaching here (MIDI-follow mode, where
+     * lookahead is intentionally skipped) simply computes a target already in the past and fires
+     * immediately - documented no-op behavior, not a silent pretense of leading a clock this engine
+     * doesn't control. */
     private fun scheduleReactiveAudio(sound: ClickSound, beatTimestampNanos: Long) {
         val fireAtNanos = beatTimestampNanos + (_audioOffsetMs.value * 1_000_000.0).toLong()
         val now = System.nanoTime()
         if (fireAtNanos <= now) {
             playClickSafely(sound)
         } else {
-            scope.launch {
+            audioScope.launch {
                 delay((fireAtNanos - now) / 1_000_000)
                 playClickSafely(sound)
             }
         }
     }
 
-    /** The single point every click - lookahead or reactive - actually fires through. Re-checking
-     * [_clickEnabled] and [BeatPhase.isPlaying] right here (not just at the moment the fire was
-     * scheduled or resolved) is what stops a click from sounding after the user has already
-     * pressed stop: [scheduleReactiveAudio]'s delayed coroutine isn't cancelled by [stop] the way
-     * [renderJob]/[audioLookaheadJob] are, and even the lookahead loop's own iteration can be
-     * mid-flight past its gating check at the exact moment [stop] runs. */
+    /** [ClickPlayer]-fallback-only: the single point every click - lookahead or reactive - actually
+     * fires through. Re-checking [_clickEnabled] and [BeatPhase.isPlaying] right here (not just at
+     * the moment the fire was scheduled or resolved) is what stops a click from sounding after the
+     * user has already pressed stop: [scheduleReactiveAudio]'s delayed coroutine isn't cancelled by
+     * [stop] the way [renderJob]/[audioSchedulingJob] are, and even the scheduling loop's own
+     * iteration can be mid-flight past its gating check at the exact moment [stop] runs. */
     private fun playClickSafely(sound: ClickSound) {
         if (!_clickEnabled.value || !_state.value.isPlaying) return
         clickListenerForTesting?.invoke(sound, System.nanoTime())
@@ -1000,7 +1068,7 @@ object MetronomeEngine {
 
     private fun startRenderLoop() {
         renderJob?.cancel()
-        renderJob = scope.launch {
+        renderJob = renderScope.launch {
             while (isActive) {
                 renderFrame()
                 delay(FRAME_INTERVAL_MS)
@@ -1009,53 +1077,121 @@ object MetronomeEngine {
     }
 
     /**
-     * Pre-triggers the audible click when [audioOffsetMs] is negative - the genuine lookahead a
-     * discrete one-shot trigger needs to fire *before* the true beat, since (unlike
-     * [visualOffsetMs]'s continuous phase-shift) there's no equivalent math trick for an event
-     * that either has or hasn't happened yet. Only active while playing, [clickEnabled] is on, the
-     * offset is negative, and timing isn't coming from an external MIDI clock - a followed clock
-     * is already reactive with nothing of its own to predict, so lookahead is skipped there and
-     * [scheduleReactiveAudio] fires immediately instead (documented no-op, not a silent pretense).
+     * Keeps the audio-trigger path fed for beats not yet reached by [onBeat] - gated exactly as
+     * before this round: only while playing, [clickEnabled] is on, [audioOffsetMs] is negative,
+     * and timing isn't coming from an external MIDI clock (a followed clock is already reactive
+     * with nothing of its own to predict - [scheduleReactiveAudio] fires immediately there instead,
+     * a documented no-op rather than a silent pretense of leading a clock this engine doesn't
+     * control). What "feeding" means depends on [usingStreamingClickEngine]:
+     *  - **streaming**: refines the streaming engine's pending schedule for the *upcoming* beat
+     *    ([refreshPredictedSchedule]), gated the same "only once we're within the offset's own lead
+     *    window" way as the fallback path below - plus [StreamingClickEngine.leadMarginNanos]'s
+     *    extra lead (capped at [MAX_STREAMING_LEAD_MARGIN_NANOS]), since a push that only beats the
+     *    *offset* deadline can still arrive after the writer's own buffer-ahead has already
+     *    committed that frame - see that function's kdoc. Deliberately *not* resolving the instant
+     *    a beat becomes current (a full beat ahead) despite the writer's sample-frame placement not
+     *    strictly needing tight timing from this loop otherwise - resolving (and rolling
+     *    [effectiveMuteProbability]'s mute chance) only stays predictable at a bounded, consistent
+     *    distance from the real beat, not "as early as possible."
+     *  - **fallback ([ClickPlayer])**: unchanged from before this round - a real one-shot trigger
+     *    call still needs the old genuine wait-then-fire behavior, since there's no sample-accurate
+     *    placement underneath it to correct for imprecise firing, and no writer buffer to race
+     *    against either.
+     *
+     * Also polls [StreamingClickEngine.hasFailedWarmup] once per iteration regardless of gating -
+     * the one place a mid-session fallback to [ClickPlayer] gets noticed and applied, since this
+     * loop already runs for as long as the engine is playing.
      *
      * Polls in slices bounded by [AUDIO_LOOKAHEAD_POLL_NANOS] (matching
-     * `MidiClockSender.RESYNC_POLL_NANOS`'s precedent) rather than a single `delay()` up to the
-     * target - re-checking regularly means a bpm change, an offset change, or a MIDI clock takeover
-     * mid-wait all take effect within one slice instead of only being noticed a whole beat later.
+     * `MidiClockSender.RESYNC_POLL_NANOS`'s precedent) while gated, and every iteration delays a
+     * bounded slice unconditionally - without that, a fixed beat's resolved/scheduled state would
+     * busy-spin one of the engine's dedicated timing threads at 100% CPU until [onBeat] eventually
+     * clears it, up to a full `|audioOffsetMs|` window later. Measured as the actual cause of
+     * audible timing trouble at high BPM before this loop's first fix; still the reason every
+     * branch here ends in a `delay()`.
      */
-    private fun startAudioLookahead() {
-        audioLookaheadJob?.cancel()
-        audioLookaheadJob = scope.launch {
+    private fun startAudioScheduling() {
+        audioSchedulingJob?.cancel()
+        audioSchedulingJob = audioScope.launch {
             while (isActive) {
+                if (usingStreamingClickEngine && streamingClickEngine.hasFailedWarmup()) {
+                    Log.w(TAG, "Streaming click engine failed to warm up in time; falling back to discrete retrigger playback")
+                    streamingClickEngine.stop()
+                    usingStreamingClickEngine = false
+                }
                 val offsetMs = _audioOffsetMs.value
                 val gated = _state.value.isPlaying && _clickEnabled.value && offsetMs < 0f && !usingMidiClock
                 if (!gated) {
                     delay(AUDIO_LOOKAHEAD_IDLE_POLL_MS)
                     continue
                 }
-                val remainingNanos = nanosUntilNextBeat(System.nanoTime(), _state.value.bpm) + offsetMs * 1_000_000.0
-                if (remainingNanos <= 0.0) {
-                    fireLookaheadAudioIfNeeded()
+                // The streaming path needs to push a schedule earlier than the offset alone would
+                // dictate - see leadMarginNanos()'s kdoc for why - the fallback path doesn't (a
+                // discrete AudioTrack.play() call has no equivalent "already committed" state to
+                // race against, so 0 margin reproduces this loop's exact pre-existing behavior for
+                // it). Capped by *both* an absolute ceiling and a fraction of the current beat
+                // interval - the absolute cap is what actually binds at slow tempos (where a
+                // fraction of the interval would be huge), the fractional cap is what binds at fast
+                // ones (where the absolute cap alone could still encroach into "resolving more than
+                // one beat ahead", the exact class of bug this loop's own gating exists to avoid -
+                // see refreshPredictedSchedule's kdoc). If a device's real buffer-ahead exceeds both
+                // caps at the current tempo, genuinely-precise lead placement isn't achievable
+                // there anyway - degrading gracefully (fire at the earliest frame the writer can
+                // still place it - see StreamingClickEngine.mixPendingBeatIfDue) beats resolving
+                // unpredictably far ahead to chase it.
+                val intervalNanos = 60_000_000_000.0 / _state.value.bpm
+                val leadMarginNanos = if (usingStreamingClickEngine) {
+                    minOf(
+                        streamingClickEngine.leadMarginNanos().toDouble(),
+                        MAX_STREAMING_LEAD_MARGIN_NANOS.toDouble(),
+                        intervalNanos * MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION,
+                    )
                 } else {
-                    delay((minOf(remainingNanos, AUDIO_LOOKAHEAD_POLL_NANOS.toDouble()) / 1_000_000.0).toLong().coerceAtLeast(1))
+                    0.0
                 }
+                val remainingNanos = nanosUntilNextBeat(System.nanoTime(), _state.value.bpm) + offsetMs * 1_000_000.0 - leadMarginNanos
+                if (remainingNanos <= 0.0) {
+                    if (usingStreamingClickEngine) refreshPredictedSchedule(offsetMs) else fireLookaheadAudioIfNeeded()
+                }
+                val sleepNanos = if (remainingNanos > 0.0) minOf(remainingNanos, AUDIO_LOOKAHEAD_POLL_NANOS.toDouble()) else AUDIO_LOOKAHEAD_POLL_NANOS.toDouble()
+                delay((sleepNanos / 1_000_000.0).toLong().coerceAtLeast(1))
             }
         }
     }
 
-    /** The lookahead loop's own resolve-and-fire step, for the upcoming beat identified by the
-     * *current* [totalBeats]/[beatIndex] fields (not yet incremented - see [onBeat]'s own end-of-
-     * function increment). A no-op if this beat was already resolved (by an earlier poll of this
-     * same loop - there is no other caller this early), which is what stops a beat from firing
-     * more than once across repeated polls while its offset window is still open. */
+    /** The streaming path's predictive step, for the upcoming beat identified by the *current*
+     * [totalBeats]/[beatIndex] fields (not yet incremented - see [onBeat]'s own end-of-function
+     * increment). Registers the resolved decision with [streamingClickEngine] every call - safe to
+     * call repeatedly for the same beat (see [StreamingClickEngine.scheduleBeat]) - but only fires
+     * the test-listener hook once, at first resolution, mirroring [fireLookaheadAudioIfNeeded]'s
+     * exact "resolved once, observed once" semantics so existing timestamp-based tests observe the
+     * same lead-vs-lag shape regardless of which audio path is active. */
+    private fun refreshPredictedSchedule(offsetMs: Float) {
+        val targetTotalBeats = totalBeats
+        val targetBeatIndex = beatIndex
+        val resolved = synchronized(audioResolutionLock) {
+            resolvedBeatAudioCache[targetTotalBeats] ?: resolveBeatAudio(targetTotalBeats, targetBeatIndex).also {
+                resolvedBeatAudioCache[targetTotalBeats] = it
+                it.sound?.let { sound -> clickListenerForTesting?.invoke(sound, System.nanoTime()) }
+            }
+        }
+        val predictedNanos = lastBeatNanos + (60_000_000_000.0 / _state.value.bpm).toLong()
+        val fireAtNanos = predictedNanos + (offsetMs * 1_000_000.0).toLong()
+        streamingClickEngine.scheduleBeat(targetTotalBeats, resolved.sound, fireAtNanos)
+    }
+
+    /** The fallback path's resolve-and-fire step - see [startAudioScheduling]. A no-op if this beat
+     * was already resolved (by an earlier poll of this same loop - there is no other caller this
+     * early), which is what stops a beat from firing more than once across repeated polls while its
+     * offset window is still open. */
     private fun fireLookaheadAudioIfNeeded() {
         val targetTotalBeats = totalBeats
         val targetBeatIndex = beatIndex
         val resolved = synchronized(audioResolutionLock) {
-            val existing = resolvedBeatAudio
-            if (existing != null && existing.totalBeats == targetTotalBeats) {
+            if (resolvedBeatAudioCache.containsKey(targetTotalBeats)) {
                 null
             } else {
-                resolveBeatAudio(targetTotalBeats, targetBeatIndex).also { resolvedBeatAudio = it }
+                resolveBeatAudio(targetTotalBeats, targetBeatIndex).also { resolvedBeatAudioCache[targetTotalBeats] = it }
             }
         }
         resolved?.sound?.let { playClickSafely(it) }
@@ -1063,7 +1199,7 @@ object MetronomeEngine {
 
     /** Nanoseconds remaining until the *next* beat is predicted to land, extrapolating from
      * [lastBeatNanos] at [bpm] - the one formula [renderFrame]'s phase calculation and the audio
-     * lookahead loop ([startAudioLookahead]) both schedule from, instead of two independently-
+     * scheduling loop ([startAudioScheduling]) both schedule from, instead of two independently-
      * maintained copies of `60_000_000_000.0 / bpm`. Negative once the predicted moment has
      * already passed. [bpm] is taken as a parameter (rather than read internally from [_state])
      * so a caller that already captured its own snapshot of bpm can't get a second, possibly
@@ -1119,17 +1255,46 @@ object MetronomeEngine {
     private const val TAG = "MetronomeEngine"
     private const val MAX_TAP_GAP_MS = 2000L
     private const val MAX_TAP_SAMPLES = 5
-    private const val FRAME_INTERVAL_MS = 25L
+
+    /** Render loop tick interval (100fps) - tightened from 25ms/40fps this round: bounds the
+     * worst-case gap between a beat firing and the render loop next sampling it for the visual
+     * flash, independently of the audio path rewrite above (visuals were never routed through
+     * [StreamingClickEngine] - they stay on [renderScope]'s own wall-clock polling). Runs on its
+     * own dedicated, elevated-priority thread (see [renderScope]), so this doesn't cost anything
+     * shared with the audio/clock roles - verify on-device this doesn't visibly cost battery or
+     * frame drops before tightening further. */
+    private const val FRAME_INTERVAL_MS = 10L
     private const val BPM_PERSIST_DEBOUNCE_MS = 250L
 
-    /** Poll slice for [startAudioLookahead] while actively closing in on a target fire time -
-     * matches `MidiClockSender.RESYNC_POLL_NANOS`'s precedent. */
+    /** Poll slice for [startAudioScheduling] while gated on (fallback: closing in on a target fire
+     * time; streaming: refreshing the predicted schedule) - matches
+     * `MidiClockSender.RESYNC_POLL_NANOS`'s precedent. */
     private const val AUDIO_LOOKAHEAD_POLL_NANOS = 3_000_000L
 
-    /** Poll interval for [startAudioLookahead] while its gating conditions aren't met (click off,
+    /** Poll interval for [startAudioScheduling] while its gating conditions aren't met (click off,
      * non-negative offset, MIDI-follow, or not playing) - these rarely change faster than a frame,
      * so there's no need to re-check at [AUDIO_LOOKAHEAD_POLL_NANOS]'s much tighter cadence. */
     private const val AUDIO_LOOKAHEAD_IDLE_POLL_MS = 25L
+
+    /** Absolute ceiling on [StreamingClickEngine.leadMarginNanos]'s contribution to
+     * [startAudioScheduling]'s gating - real low-latency `AudioTrack` buffers are typically single-
+     * digit-to-tens of milliseconds, so 100ms is generous headroom for an unusually large buffer on
+     * some device/OEM audio stack. This is what actually binds at slow tempos, where
+     * [MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION]'s share of the interval would otherwise be huge -
+     * see that constant for the fast-tempo case this one doesn't cover by itself. If a device's
+     * actual buffer exceeds both caps, sample-accurate leading placement degrades gracefully to
+     * "fires at the earliest frame the writer can still place it" (see
+     * `StreamingClickEngine.mixPendingBeatIfDue`) rather than being silently wrong. */
+    private const val MAX_STREAMING_LEAD_MARGIN_NANOS = 100_000_000L
+
+    /** Fractional ceiling on [StreamingClickEngine.leadMarginNanos]'s contribution to
+     * [startAudioScheduling]'s gating, as a share of the *current* beat interval - what actually
+     * binds at fast tempos, where [MAX_STREAMING_LEAD_MARGIN_NANOS]'s fixed 100ms alone could still
+     * push resolution a confusingly long way ahead of the real beat (at 400 BPM's 150ms interval,
+     * 100ms would be two-thirds of it - dangerously close to encroaching on the *previous* beat's
+     * own resolution window, exactly the "resolving more than one beat ahead" failure mode
+     * [refreshPredictedSchedule]'s own kdoc explains and this loop's gating exists to avoid). */
+    private const val MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION = 0.25
 
     /** How many beat-intervals of silence from the MIDI clock before falling back to internal timing. */
     private const val MIDI_SILENCE_BEATS = 4

@@ -102,7 +102,13 @@ There are two release tracks with different bars:
       on 3 threads (matching the number of concurrent loops a single engine
       can run) after that regression and a follow-up, harder-to-reproduce
       scheduling-jitter flake in an unrelated bar-boundary timing test both
-      pointed the same direction.
+      pointed the same direction. **Superseded later in this same round** by
+      the sample-clocked streaming audio engine entry below: `newTimingDispatcher()`
+      now hands out exactly one dedicated thread per role rather than a
+      shared pool, and `MetronomeEngine` grew a 4th role (the streaming
+      writer) - this entry is kept as the historical record of why per-role
+      isolation mattered in the first place, not a description of the
+      dispatcher's current shape.
 - [x] **v0.0.25 render-path allocation reduction**: `GlyphCanvas` used to
       allocate a fresh `IntArray(size*size)` on every visualizer `render()`
       call (40×/sec while playing) — now pooled/reused (`GlyphCanvas.
@@ -113,6 +119,111 @@ There are two release tracks with different bars:
       relied on). `MetronomeGlyphService`'s frame collector also now skips
       pushing to the real Glyph Matrix hardware when the new frame is
       pixel-identical to the last one actually pushed.
+- [x] **Audio-lookahead busy-spin at high tempo (real bug, reported on-device
+      at 300 BPM)**: `MetronomeEngine.startAudioLookahead()` (renamed
+      `startAudioScheduling()` in the streaming-engine rewrite below)'s loop,
+      after a beat's audio was resolved/fired, looped straight back to the
+      top with **no delay at all** for the rest of the offset window (up to
+      the full `|audioOffsetMs|`, default 30ms) — one of the engine's 3
+      dedicated timing threads (a shared pool at the time; see the dedicated-
+      timing-dispatcher entry above) pegged at 100% CPU every single beat. At
+      60 BPM that's
+      3% of the beat interval, easy to miss; at 300 BPM it's 15%, real
+      scheduling contention with the tick/render loops sharing that same
+      small pool — the actual cause of the reported timing breakdown, not a
+      flaw in the drift-corrected clock math itself. Fixed: every loop
+      iteration now delays a bounded slice regardless of whether it just
+      fired, mirroring the pattern already correct in the "still waiting"
+      branch and in `MidiClockSender`'s own resync loop. New regression test
+      asserts click-to-click spacing stays even at 400 BPM.
+- [x] **Per-sound `AudioTrack` pool**: `ClickPlayer` used to retrigger the
+      same single `AudioTrack` instance per `ClickSound` every beat — now 2
+      alternating instances per sound (`GlyphCanvas.BufferPool`'s round-robin
+      precedent), so a retrigger never has to interrupt its own
+      still-decaying predecessor. Bounded, precedented hardening alongside
+      the busy-spin fix above, not a response to a separately-confirmed bug
+      of its own.
+- [x] **`docs/realtime-audio-roadmap.md`**: scoped (not implemented) the
+      longer-term direction named alongside the bug report above -
+      independent audio-channel routing per beat type, multiple simultaneous
+      beat "threads" (true polyrhythm), per-beat-type MIDI actions - and what
+      in today's design already accommodates vs. would need to change.
+- [x] **v0.0.25 sample-clocked streaming audio engine (real rewrite, not a
+      further mitigation)**: on-device testing after the busy-spin fix above
+      still showed real placement error at 300+ BPM - the discrete
+      `MODE_STATIC` retrigger model rides the OS scheduler's own granularity
+      for *when the trigger call happens*, which isn't the same thing as
+      *when the audio is produced*, no matter how well-isolated the thread
+      is. `engine/StreamingClickEngine.kt` replaces it with one continuously-
+      running `MODE_STREAM` `AudioTrack`; a dedicated writer thread mixes each
+      click's waveform into the stream at an exact sample-frame offset,
+      computed by self-calibrating `AudioTrack.getTimestamp()`'s
+      frame<->nanoTime mapping against `System.nanoTime()` (the two-arg
+      overload that names a specific timebase turned out to be `@SystemApi`,
+      not in the public SDK - confirmed against the actual android-35/36 stub
+      jars). `ClickPlayer`'s old discrete-retrigger path is kept as an
+      automatic fallback (`StreamingClickEngine.hasFailedWarmup`,
+      `MetronomeEngine.usingStreamingClickEngine`) if `MODE_STREAM`
+      construction or timestamp warm-up doesn't cooperate on a given device.
+      `MetronomeEngine` also moved from one shared timing dispatcher to four
+      dedicated ones (clock/render/audio-schedule/audio-writer - the writer
+      specifically can never share a thread with anything else, since its
+      `AudioTrack.write()` calls block for real), and the render loop
+      tightened from 25ms to 10ms ticks. Found and fixed two genuine
+      concurrency bugs uncovered by this rewrite along the way: a beat-
+      resolution cache that could clobber a validly-resolved future beat when
+      accessed from truly parallel threads for the first time (fixed by
+      switching from a single nullable slot to a small map keyed by beat
+      number), and a resolve-ahead window that was firing a full beat early
+      instead of just the configured offset's lead time (both caught by the
+      existing Robolectric regression tests, not by inspection).
+- [x] **v0.0.25 tempo-stability tightening pass, round 2**: a follow-up review
+      of the streaming rewrite above found the predictive scheduling loop
+      pushed a beat's schedule to `StreamingClickEngine` only once within the
+      configured `audioOffsetMs`'s own lead window - correct for the old
+      discrete-trigger model, but not enough for the new one: the writer
+      thread's own `AudioTrack` buffer keeps its `framesWritten` cursor
+      running some amount *ahead* of real time (steady-state, from its
+      blocking `write()` calls), so a push arriving only `|offsetMs|` early
+      could still land *after* the writer had already committed that frame -
+      silently losing precise placement for exactly the leading case this
+      rewrite was for, falling back to "fires at the earliest frame the
+      writer can still place it" instead. Fixed: `StreamingClickEngine.
+      leadMarginNanos()` exposes the buffer's own duration; the scheduling
+      loop now pushes that much earlier still, capped by *both* an absolute
+      ceiling (100ms - generous for a real low-latency buffer) and a fraction
+      of the current beat interval (25% - what actually binds at fast tempos,
+      where the absolute cap alone could still encroach into resolving more
+      than one beat ahead, re-triggering the exact class of bug the rewrite's
+      own resolve-ahead fix above was for; caught by the same regression
+      tests going flaky again at 400 BPM before the fractional cap was
+      added). Also tightened `InternalClockSource`'s own live-bpm poll
+      granularity (`POLL_SLICE_MS`) from 30ms to 3ms, matching the audio-
+      scheduling loop's own cadence - safe now that the clock loop has a
+      genuinely dedicated, uncontended thread, and negligible overhead even
+      at the very slow end of the new BPH range (a cheap nanoTime() poll,
+      not a delay affecting the eventual beat's own firing precision).
+- [x] **v0.0.25 BPH floor bug**: `EXTENDED_MIN_BPM` was a bare `0.1f` constant
+      - exactly 6 BPH (0.1 × 60) - so the extended range could never go below
+      6 beats/hour no matter how far a press-and-hold or drag went, regardless
+      of the generous-sounding "0.1 BPM" label. Now derived from a new
+      `MIN_BPH = 0.1f` (one beat per *ten hours*) instead of the other way
+      around, so the number that actually matters is the explicit one.
+- [x] **v0.0.25 logarithmic BPH/BPS stepping**: outside the normal 1-400 BPM
+      range, both the +/- hold-repeat buttons and the BPM drag gesture used to
+      apply the same flat step size the normal range uses - imperceptible
+      near 3000 BPS, a giant single leap near 0.1 BPH. `MainScreen.kt`'s new
+      `steppedBpm()` switches to a ~5%-per-step multiplicative formula outside
+      the normal range (unchanged, flat stepping inside it), so traversal
+      feels equally responsive at either extreme of the 0.1-3000 BPM span.
+- [x] **v0.0.25 drag-to-scrub on time signature numbers**: `TimeSignatureNumberRow`
+      (both beats-per-bar and unit-note-value) had steppers and long-press-to-
+      type but no drag gesture, unlike the BPM number. Added a second
+      `pointerInput` block with a locally-remembered pixel accumulator (same
+      shape as `PreviewBox`'s existing swipe accumulator - needed since these
+      are `Int`-backed engine state, unlike BPM's `Float`, so reading the value
+      back between drag events would silently discard sub-step progress) at
+      the same 6dp-per-step sensitivity as BPM's own drag.
 
 ## Documentation
 
@@ -428,3 +539,73 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       classic symptom a buffer-reuse bug would produce. Also confirm a
       multi-bar queue's ambient background (`QueueOverlay`) still renders
       correctly layered under the active visualizer.
+- [ ] **v0.0.25 audio timing at 300+ BPM (the actual reported bug, now against
+      the rewritten sample-clocked path)**: run at 300 BPM and faster (up to
+      `MAX_BPM`) with the audible click on and the default audio offset, and
+      confirm click placement feels steady and even, with error well under
+      the originally-requested 1/300 tolerance - not the audible breakdown
+      originally reported, and tighter than the earlier busy-spin fix alone
+      achieved. This is the deciding proof for the whole rewrite: a JVM/
+      Robolectric test can verify the *decision* logic (which beat, which
+      sound, resolved once) but its `AudioTrack` shadow doesn't model real
+      HAL/buffer timing, so it cannot itself confirm sample-accurate
+      placement - only a real device can.
+- [ ] **v0.0.25 streaming engine reliability over a long session**: run the
+      audible click continuously for several minutes, changing tempo and
+      switching click sounds/waveforms mid-playback several times, and
+      confirm no glitches, dropouts, or a click that goes silent/stuck - the
+      continuously-running `MODE_STREAM` `AudioTrack` (unlike the old
+      per-beat retrigger) never stops between beats, so this is the scenario
+      most likely to expose a writer-thread stall or an unbounded
+      buffer/latency drift the shorter existing tests wouldn't catch.
+- [ ] **v0.0.25 graceful fallback to discrete retrigger playback**: this can't
+      be forced from the UI, but watch logcat for `StreamingClickEngine`
+      warnings (`MODE_STREAM AudioTrack construction failed`, `AudioTrack.play()
+      failed`, or `failed to warm up in time`) on whatever device is used for
+      the rest of this checklist - confirm that if any of these fire, the
+      click still plays audibly (via the `ClickPlayer` fallback) rather than
+      going silent. Absence of these warnings is itself useful signal that
+      the primary path is the one actually being exercised throughout every
+      other audio item on this list.
+- [ ] **v0.0.25 negative audio offset genuinely leads, not just "close"**: set a
+      clearly audible negative offset (e.g. -100ms) at a fast tempo (300+
+      BPM) and confirm the click leads the visual flash by the *full*
+      configured amount consistently, not by a visibly smaller amount that
+      would suggest the writer's own buffer-ahead time is eating into the
+      requested lead (see `StreamingClickEngine.leadMarginNanos` - the
+      follow-up fix that specifically targets this). If the lead feels
+      shy of what's configured, that's the signal this margin needs
+      revisiting for whatever device this is tested on.
+- [ ] **v0.0.25 extended range reaches well below 6 BPH**: with "Extended
+      range (BPH/BPS)" on, drag or press-and-hold the tempo all the way down
+      and confirm it keeps going well past the old 6 BPH floor (down toward
+      0.1 BPH) rather than stopping there.
+- [ ] **v0.0.25 BPH/BPS hold and drag feel logarithmic**: with extended range
+      on, press-and-hold the +/- steppers (and separately, drag) while deep in
+      BPH or BPS territory, and confirm each step feels like a *consistent
+      proportional* change (similar to how it feels near 120 BPM) rather than
+      either imperceptibly small (near 0.1 BPH) or a jarring single leap (near
+      3000 BPS).
+- [ ] **v0.0.25 time signature drag-to-scrub**: drag horizontally on the
+      beats-per-bar number and, separately, the unit-note-value number, and
+      confirm both scrub smoothly at the same sensitivity as the BPM number's
+      own drag, without needing to release and re-drag to keep accumulating
+      partial progress.
+- [ ] **v0.0.25 long custom click duration at a fast tempo**: in Settings →
+      Click, set a sound's duration close to or beyond the beat interval at a
+      fast tempo (e.g. 150ms+ duration at 300+ BPM, where the interval is
+      200ms or less), and confirm no audible glitch/stutter/clipping. The
+      primary path (`StreamingClickEngine`) *mixes additively* into the
+      continuous stream rather than retriggering, so an overlapping decay
+      tail should sound like genuine layering (two hits overlapping), not a
+      hard cut or silence - listen specifically for audible clipping/
+      distortion where two waveforms sum past 16-bit range. If the
+      `ClickPlayer` fallback is active instead (see the graceful-fallback
+      item above), its per-sound `AudioTrack` pool exists so a retrigger
+      never has to interrupt its own still-playing predecessor - same
+      scenario, different mechanism, same "no audible glitch" bar.
+- [ ] **v0.0.25 no CPU spike from the audio lookahead loop**: with the click
+      on and a fast tempo, watch device temperature/battery drain (or a
+      profiler if available) over a few minutes of continuous playback and
+      confirm nothing suggests a thread pegged at 100% CPU - the busy-spin
+      bug's other symptom besides audible jitter.

@@ -52,9 +52,9 @@ constitution repo).
   "Using the bar queue" below) is the only way to move. Queue *position* isn't staged the way
   editing a bar's own values is (staging-aware exactly as before) - navigating which bar you're
   looking at is closer to "which page am I on" than a pending settings change. `engine/ClickSound`
-  + `engine/ClickPlayer` separate *which* click to play from the playback plumbing - a small tone
-  table keyed by sound (today: a bigger, longer tone for a bar's first beat vs. every other beat)
-  so a new sound is a new table row, not a rewrite.
+  separates *which* click to play from the playback plumbing (`engine/StreamingClickEngine`,
+  `engine/ClickPlayer`) - a small tone table keyed by sound (today: a bigger, longer tone for a
+  bar's first beat vs. every other beat) so a new sound is a new table row, not a rewrite.
 - `engine/ClockSource` — produces beat ticks. `InternalClockSource` drift-corrects against
   `System.nanoTime()` so tempo doesn't slip over a long session, and re-checks the live bpm every
   30ms while waiting rather than committing to one long sleep sized for whatever tempo was in
@@ -64,11 +64,15 @@ constitution repo).
   external-clock implementation: the engine auto-switches to it the moment MIDI Clock activity
   arrives, and falls back to internal timing if that feed goes quiet for a few beats. Both this
   and `midi/MidiClockSender`'s own coroutines run on `engine/TimingDispatcher.kt`'s
-  `newTimingDispatcher()` - a small dedicated thread pool per subsystem, isolated from
-  `Dispatchers.Default`'s shared, general-purpose pool, so unrelated background work elsewhere in
-  the app can never delay a beat firing. (A genuine single thread was tried first and measurably
-  broke it - a fast tempo's audio-lookahead poll could starve the actual beat-firing coroutine
-  entirely - so each subsystem gets a small pool, not one thread.)
+  `newTimingDispatcher()` - one dedicated, elevated-priority (`THREAD_PRIORITY_URGENT_AUDIO`)
+  thread per timing-critical role, isolated from `Dispatchers.Default`'s shared, general-purpose
+  pool *and* from every other role, so unrelated background work elsewhere in the app - or another
+  timing-critical role's own work - can never delay a beat firing. `MetronomeEngine` alone uses
+  four of these (clock loop, render loop, audio-scheduling loop, and `StreamingClickEngine`'s
+  sample-clocked writer - see below); a shared pool was tried first (a genuine single thread
+  measurably broke it, a fast tempo's audio-scheduling poll starved the actual beat-firing
+  coroutine entirely) before settling on one dedicated thread per role rather than a pool sized to
+  however many roles happen to exist today.
 - `midi/` — MIDI Clock (24 ppqn) support, in both directions, over both virtual (inter-app) and
   USB transports. `MidiClockSource` parses real-time bytes and measures tempo from a smoothed
   rolling average of tick intervals, regardless of transport; `VirtualMidiClockService` exposes
@@ -84,14 +88,20 @@ constitution repo).
   [`docs/external-midi-clock.md`](docs/external-midi-clock.md) for the design rationale and
   [`docs/usb-midi-test-plan.md`](docs/usb-midi-test-plan.md) for how to verify either USB
   direction (including starring/auto-reconnect) against real hardware.
-- `engine/ClickPlayer` — the audible click, so this also works as a real metronome for
+- `engine/StreamingClickEngine` — the audible click, so this also works as a real metronome for
   practicing/performing musicians, with or without the Glyph Matrix. Each `ClickSound` is a
   generated waveform (`engine/ClickSynth`, tunable waveform/frequency/duration/gain - see Settings
-  → Click), played back via a `MODE_STATIC` `AudioTrack` per sound (retriggered with
-  `stop()`/`reloadStaticData()`/`play()` rather than rebuilt, so a fast tempo retriggering a click
-  before its previous decay finished still starts cleanly). Built with
-  `PERFORMANCE_MODE_LOW_LATENCY`, since a metronome's click is exactly the kind of short,
-  timing-sensitive one-shot trigger that mode exists for.
+  → Click). Rather than discretely retriggering audio per beat (which can only ever be timed by a
+  coroutine waking up at approximately the right wall-clock moment), one continuously-running
+  `MODE_STREAM` `AudioTrack` plays for the whole session; a dedicated writer thread mixes each
+  click's waveform into the stream at an exact sample-frame offset, computed by self-calibrating
+  `AudioTrack`'s frame-position/timestamp reporting against `System.nanoTime()` - timed by the
+  audio hardware's own sample clock, not a wakeup. `engine/ClickPlayer` (the older discrete
+  `MODE_STATIC`-retrigger implementation, `PERFORMANCE_MODE_LOW_LATENCY`) is kept as an automatic
+  fallback for whatever device/OEM audio stack doesn't cooperate with `MODE_STREAM` construction or
+  timestamp warm-up. See [`docs/realtime-audio-roadmap.md`](docs/realtime-audio-roadmap.md) for the
+  longer-term direction (multi-channel routing, polyrhythm, per-beat-type MIDI actions) this was
+  a prerequisite for.
 - `visualizers/` — the animation algorithms. See below.
 - `glyph/GlyphMatrixToyService` — reusable Glyph Toy boilerplate (bind lifecycle, device
   registration, Glyph Button message handling). `glyph/MetronomeGlyphService` is the concrete

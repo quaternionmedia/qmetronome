@@ -6,12 +6,26 @@ import android.media.AudioManager
 import android.media.AudioTrack
 
 /**
- * Plays the audible click so the engine works as a real metronome, not just a light show. Each
- * [ClickSound] gets its own `AudioTrack` built once (in `MODE_STATIC`) from [ClickSynth]'s
- * rendering of that sound's [ClickSpec] - a generated waveform, not a sample/asset - and replayed
- * per beat via the standard static-track retrigger idiom (`stop()` + `reloadStaticData()` +
- * `play()`), so a fast tempo retriggering a click before its previous decay finished still starts
- * cleanly from the top rather than glitching or silently no-opping.
+ * Discrete-retrigger click playback - each [ClickSound] gets [TRACKS_PER_SOUND] `AudioTrack`s
+ * built once (in `MODE_STATIC`) from [ClickSynth]'s rendering of that sound's [ClickSpec] - a
+ * generated waveform, not a sample/asset - and replayed per beat via the standard static-track
+ * retrigger idiom (`stop()` + `reloadStaticData()` + `play()`), round-robining between the pooled
+ * instances rather than always retriggering the same one. That's the difference between "a fast
+ * tempo retriggering a click before its previous decay finished starts cleanly from the top" (true
+ * either way) and "starts cleanly from the top *without first having to interrupt audio that's
+ * still actively playing*" - retriggering an already-idle track is a strictly simpler, more
+ * consistent operation than stopping one mid-decay, so round-robining is cheap insurance against
+ * that difference ever becoming audible as inconsistent click timing (mirrors
+ * `GlyphCanvas.BufferPool`'s round-robin precedent for the same "never make a caller interrupt its
+ * own predecessor" reasoning).
+ *
+ * **No longer the primary playback path** - `StreamingClickEngine`'s continuously-running,
+ * sample-clocked `MODE_STREAM` stream is, since a discrete per-beat retrigger can only ever be
+ * timed by a coroutine waking up at approximately the right wall-clock moment, not by the audio
+ * hardware's own sample clock. This class is kept as [MetronomeEngine]'s automatic fallback
+ * (`MetronomeEngine.usingStreamingClickEngine`) for whatever device/OEM audio stack doesn't
+ * cooperate with `MODE_STREAM` construction or `AudioTrack.getTimestamp()` warm-up - see
+ * `StreamingClickEngine.hasFailedWarmup`.
  */
 class ClickPlayer {
 
@@ -25,27 +39,31 @@ class ClickPlayer {
     private val specs = mutableMapOf<ClickSound, ClickSpec>().apply {
         ClickSound.entries.forEach { put(it, ClickSpec.defaultFor(it)) }
     }
-    private val tracks = mutableMapOf<ClickSound, AudioTrack>()
+    private val tracks = mutableMapOf<ClickSound, Array<AudioTrack>>()
+    private val nextTrackIndex = mutableMapOf<ClickSound, Int>()
 
-    /** Changes a sound's spec - takes effect on its next trigger; the old track (if already
-     * built) is released rather than mutated in place, since `AudioTrack`'s buffer is fixed at
+    /** Changes a sound's spec - takes effect on its next trigger; the old tracks (if already
+     * built) are released rather than mutated in place, since `AudioTrack`'s buffer is fixed at
      * construction time. */
     fun setSpec(sound: ClickSound, spec: ClickSpec) {
         specs[sound] = spec
-        tracks.remove(sound)?.release()
+        tracks.remove(sound)?.forEach { it.release() }
     }
 
     fun getSpec(sound: ClickSound): ClickSpec = specs.getValue(sound)
 
     fun playClick(sound: ClickSound) {
-        val track = tracks.getOrPut(sound) { buildTrack(specs.getValue(sound)) }
+        val pool = tracks.getOrPut(sound) { Array(TRACKS_PER_SOUND) { buildTrack(specs.getValue(sound)) } }
+        val index = nextTrackIndex.getOrDefault(sound, 0)
+        nextTrackIndex[sound] = (index + 1) % pool.size
+        val track = pool[index]
         track.stop()
         track.reloadStaticData()
         track.play()
     }
 
     fun release() {
-        tracks.values.forEach { it.release() }
+        tracks.values.forEach { pool -> pool.forEach { it.release() } }
         tracks.clear()
     }
 
@@ -81,5 +99,10 @@ class ClickPlayer {
             .build()
         track.write(bytes, 0, bytes.size)
         return track
+    }
+
+    private companion object {
+        /** How many alternating `AudioTrack` instances each [ClickSound] gets - see the class kdoc. */
+        const val TRACKS_PER_SOUND = 2
     }
 }

@@ -63,6 +63,7 @@ import media.quaternion.qmetronome.ui.icons.ExtraIcons
 import media.quaternion.qmetronome.ui.theme.PureWhite
 import media.quaternion.qmetronome.ui.theme.RecordingRed
 import media.quaternion.qmetronome.visualizers.decayEase
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -183,6 +184,26 @@ internal fun bpmDisplayUnit(bpm: Float): String = when {
     bpm < MetronomeEngine.MIN_BPM -> "BPH"
     bpm > MetronomeEngine.MAX_BPM -> "BPS"
     else -> "BPM"
+}
+
+/**
+ * BPM/BPH/BPS stepping shared by [BpmControls]' +/- hold-repeat buttons and its drag-to-scrub
+ * gesture - flat, additive stepping inside [MetronomeEngine.MIN_BPM]..[MetronomeEngine.MAX_BPM]
+ * (identical to this app's original, everyday behavior - a fixed [BPM_STEP] per whole step), and
+ * multiplicative/logarithmic stepping outside it. A flat step size that feels right at 120 BPM is
+ * either imperceptible or a single giant leap at the extremes of the 0.1-3000 BPM extended range -
+ * a ~5%-per-step multiplicative formula instead covers that same huge range by *ratio*, so
+ * traversal feels equally responsive near either end. [steps] is a signed, possibly-fractional
+ * step count (fractional for the drag gesture's per-pixel progress, whole for the hold-repeat
+ * buttons); this only computes the candidate value - [MetronomeEngine.setBpm]'s own clamping is
+ * what actually enforces whichever bound (normal or extended) is currently in effect.
+ */
+internal fun steppedBpm(currentBpm: Float, steps: Float): Float {
+    return if (currentBpm in MetronomeEngine.MIN_BPM..MetronomeEngine.MAX_BPM) {
+        currentBpm + steps * BPM_STEP
+    } else {
+        currentBpm * LOG_BPM_STEP_FACTOR.pow(steps)
+    }
 }
 
 // ── Shared preview + controls sub-composables ──────────────────────────────
@@ -362,7 +383,7 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         HoldRepeatButton(
-            onStep = { MetronomeEngine.setBpm(currentBpm() - BPM_STEP) },
+            onStep = { MetronomeEngine.setBpm(steppedBpm(currentBpm(), -1f)) },
             modifier = Modifier.size(48.dp),
         ) {
             Icon(ExtraIcons.Remove, contentDescription = "Decrease BPM")
@@ -382,7 +403,7 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures { change, dragAmount ->
                         change.consume()
-                        MetronomeEngine.setBpm(currentBpm() + dragAmount / bpmDragPxPerStep)
+                        MetronomeEngine.setBpm(steppedBpm(currentBpm(), dragAmount / bpmDragPxPerStep))
                     }
                 },
         ) {
@@ -400,7 +421,7 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
             }
         }
         HoldRepeatButton(
-            onStep = { MetronomeEngine.setBpm(currentBpm() + BPM_STEP) },
+            onStep = { MetronomeEngine.setBpm(steppedBpm(currentBpm(), 1f)) },
             modifier = Modifier.size(48.dp),
         ) {
             Icon(Icons.Filled.Add, contentDescription = "Increase BPM")
@@ -607,7 +628,9 @@ internal fun BeatsPerBarControls() {
  * deliberately a notch smaller than BPM's own steppers to keep the visual hierarchy (tempo
  * first, meter second), and a fixed minimum width so the numerator and denominator rows stay
  * aligned with each other regardless of digit count (e.g. "4" vs "24"). Long-press opens the
- * combined [TimeSignatureEntryDialog] from either number. */
+ * combined [TimeSignatureEntryDialog] from either number; a horizontal drag scrubs it, same
+ * pixel-per-step sensitivity as [BpmControls]' own drag, for the same gesture on every number in
+ * this app rather than just the BPM one. */
 @Composable
 private fun TimeSignatureNumberRow(
     value: Int,
@@ -617,6 +640,8 @@ private fun TimeSignatureNumberRow(
     contentDescriptionNoun: String,
     stagedLabel: Boolean,
 ) {
+    val dragPxPerStep = with(LocalDensity.current) { 6.dp.toPx() }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -633,6 +658,25 @@ private fun TimeSignatureNumberRow(
                 .widthIn(min = TIME_SIG_NUMBER_MIN_WIDTH)
                 .pointerInput(Unit) {
                     detectTapGestures(onLongPress = { onLongPress() })
+                }
+                .pointerInput(Unit) {
+                    // A local accumulator, not a step-per-event call: value is Int-backed (unlike
+                    // BPM's Float engine state), so reading it back between events would silently
+                    // discard sub-step drag progress without something to carry the remainder -
+                    // same shape as PreviewBox's own swipe accumulator.
+                    var dragAccumulatedPx = 0f
+                    detectHorizontalDragGestures { change, dragAmount ->
+                        change.consume()
+                        dragAccumulatedPx += dragAmount
+                        while (dragAccumulatedPx >= dragPxPerStep) {
+                            onIncrement()
+                            dragAccumulatedPx -= dragPxPerStep
+                        }
+                        while (dragAccumulatedPx <= -dragPxPerStep) {
+                            onDecrement()
+                            dragAccumulatedPx += dragPxPerStep
+                        }
+                    }
                 },
         ) {
             // No fillMaxWidth() here - this Column only has a *minimum* width (widthIn(min=...)),
@@ -812,6 +856,9 @@ private fun TransportRow(beat: BeatPhase) {
 }
 
 private const val BPM_STEP = 1f
+
+/** [steppedBpm]'s multiplicative step size outside the normal BPM range - ~5% per step. */
+private const val LOG_BPM_STEP_FACTOR = 1.05f
 private const val BPM_HINT_DURATION_MS = 4000L
 private const val CONTROLS_ALPHA = 0.82f
 private val PLAY_PAUSE_SIZE = 76.dp

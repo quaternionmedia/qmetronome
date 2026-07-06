@@ -103,8 +103,9 @@ MetronomeEngine.setUnitNoteValue(8)     // denominator - independent of beatCoun
 MetronomeEngine.rescaledBpmForUnitNoteValueChange(120f, 4, 2)  // the rescale math, exposed for testing
 MetronomeEngine.setVisualOffsetMs(50f)    // -500..+500 ms - phase-shifts the visual only
 MetronomeEngine.setAudioOffsetMs(-30f)    // -500..+500 ms - negative leads via real lookahead
-                                           // scheduling (see engine/TimingDispatcher.kt), not a
-                                           // phase shift; positive/zero schedules off the real beat
+                                           // scheduling (MetronomeEngine.startAudioScheduling(),
+                                           // StreamingClickEngine.scheduleBeat()), not a phase
+                                           // shift; positive/zero schedules off the real beat
 MetronomeEngine.setMuteProbability(0.3f)          // 0..1 chance a beat's click is skipped
 MetronomeEngine.setProgressiveMuteEnabled(true)   // ramp that chance up over setProgressiveMuteRampBars
 MetronomeEngine.setProgressiveMuteRampBars(8)     // 1..32, how many bars the ramp above takes
@@ -139,9 +140,12 @@ MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.ONCE)
 // below) - setBpm()/setBeatsPerBar()/setUnitNoteValue()/goToQueueBar()/addBarToQueue()/
 // removeBarFromQueue()/setQueueMode() each write through automatically.
 
-// Click sounds - ClickPlayer.playClick(ClickSound.BAR / .ACCENT / .REGULAR); each sound's own
+// Click sounds - resolved per beat to a ClickSound.BAR / .ACCENT / .REGULAR (or null if muted/
+// disabled) and handed to StreamingClickEngine.scheduleBeat(totalBeats, sound, targetNanos) - the
+// primary playback path, one continuously-running sample-clocked AudioTrack. Each sound's own
 // ClickSpec (waveform/frequency/duration/gain, tunable in Settings -> Click) is rendered to
-// samples by ClickSynth and played back via a per-sound MODE_STATIC AudioTrack.
+// samples by ClickSynth. ClickPlayer.playClick() (a per-sound MODE_STATIC AudioTrack, discretely
+// retriggered) is the automatic fallback if StreamingClickEngine fails to initialize.
 
 // Glyph queue background - QueueOverlay.apply() blends a per-bar-row (sheet-music-like, one
 // horizontal row per bar, beats ticking left to right), per-beat-tick ambient background into the
@@ -224,10 +228,14 @@ app/src/main/java/.../
     BeatPhase.kt             ← data class: bpm, phase, isAccent, isPlaying
     ClockSource.kt           ← internal drift-corrected clock
     TimeSignature.kt         ← beatCount/unitNoteValue/bpm/accent pattern; engine holds a queue of these
-    ClickPlayer.kt           ← plays each ClickSound's generated waveform via a MODE_STATIC AudioTrack
+    StreamingClickEngine.kt  ← primary click playback: one continuously-running, sample-clocked
+                               MODE_STREAM AudioTrack; mixes each click at an exact sample-frame offset
+    ClickPlayer.kt           ← fallback click playback: each ClickSound's waveform via a discretely
+                               retriggered MODE_STATIC AudioTrack, used if StreamingClickEngine fails
     ClickSynth.kt            ← renders a ClickSpec (waveform/frequency/duration/gain) to samples
     ClickSound.kt            ← which click to play (BAR/ACCENT/REGULAR) - add sounds here
-    TimingDispatcher.kt      ← dedicated thread pool for timing-critical coroutines (not Dispatchers.Default)
+    TimingDispatcher.kt      ← one dedicated, elevated-priority thread per timing-critical role
+                               (not a shared pool, not Dispatchers.Default)
   visualizers/
     GlyphVisualizer.kt       ← interface + GlyphCanvas
     VisualizerRegistry.kt    ← the list; add new ones here
