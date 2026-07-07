@@ -18,6 +18,21 @@ the *why* and *how to verify*, not the *what*.
   contributors: build/device/release commands, visualizer recipe,
   engine API, MIDI shortcuts, and common errors.
 
+## For end users, not contributors
+
+- **[`user-guide.md`](user-guide.md)** — every major gesture (tempo scrub,
+  HOLD staging, the bar queue, Settings' chip rows, the Glyph Matrix preview,
+  layout toggles), one topic each with a screenshot. Generated, not
+  hand-written - see `TutorialTopics.all` (`app/src/main/java/.../tutorial/`)
+  and CONTRIBUTING.md's "Test coverage" section for how a new topic gets
+  added and why the screenshot can never silently go stale. The same content
+  also drives the in-app Help screen (`ui/HelpScreen.kt`), reached via the
+  help icon next to Settings' gear - that version embeds the real, live
+  controls instead of a static image.
+- **[`../CHANGELOG.md`](../CHANGELOG.md)** — generated from this repo's own
+  annotated tag history (`scripts/generate-changelog.sh`); see
+  CONTRIBUTING.md's "Cutting a release" section.
+
 ## Feature docs (feasibility → implementation → test plan, per feature)
 
 Each of these follows the same shape: an investigation written before the

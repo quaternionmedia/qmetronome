@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import kotlinx.coroutines.delay
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.ui.theme.RecordingRed
@@ -76,7 +77,7 @@ fun HoldButton(modifier: Modifier = Modifier) {
     OutlinedButton(
         onClick = {},
         interactionSource = interactionSource,
-        modifier = modifier,
+        modifier = modifier.testTag("hold_button"),
         colors = when (holdMode) {
             MetronomeEngine.HoldMode.Latched -> ButtonDefaults.outlinedButtonColors(
                 containerColor = RecordingRed,

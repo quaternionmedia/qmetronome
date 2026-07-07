@@ -102,7 +102,17 @@ fun BpmUnitEntryDialog(
         },
     )
 
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    // Auto-focus is a convenience (skip a manual tap before typing), not a requirement - the
+    // field is still fully usable either way, so a request made before the text field's own
+    // focus target has actually attached (observed in Robolectric-hosted Compose UI tests, where
+    // a dialog's content can be a composition frame behind the effect that requests focus for it)
+    // fails silently rather than crashing the whole dialog.
+    LaunchedEffect(Unit) {
+        try {
+            focusRequester.requestFocus()
+        } catch (_: IllegalStateException) {
+        }
+    }
 }
 
 /** Whole numbers display without a decimal tail (e.g. "1" not "1.00"); anything else keeps 2

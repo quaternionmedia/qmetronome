@@ -3,6 +3,17 @@
 A tempo/beat visualizer and functional metronome for Nothing phones with a Glyph Matrix
 (Phone (3), Phone (4a) Pro), built on the [Glyph Matrix Developer Kit](https://github.com/Nothing-Developer-Programme/GlyphMatrix-Developer-Kit).
 
+<p align="center">
+  <img src="docs/images/generated/screenshots/bpm-drag-scrub.png" width="220" alt="Main screen: Glyph Matrix preview, BPM, transport">
+  <img src="docs/images/generated/videos/bpm-drag-scrub.gif" width="220" alt="Dragging the BPM number to scrub tempo, in motion">
+  <img src="docs/images/generated/screenshots/settings-jump-to-unit.png" width="220" alt="Settings, Tempo & Bars expanded">
+</p>
+
+**New here?** [`docs/user-guide.md`](docs/user-guide.md) is the visual, gesture-by-gesture guide -
+every drag, tap, and toggle this app has, each with a screenshot and a short video showing it in
+motion. The exact same content is also built into the app itself - tap the **?** icon next to
+Settings for a live, interactive version of the same walkthrough.
+
 This file is architecture/setup/testing. New contributors should start with
 [`CONTRIBUTING.md`](CONTRIBUTING.md) — it covers building with and without
 Android Studio, the project layout, and PR norms. Feasibility investigations,

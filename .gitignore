@@ -25,3 +25,45 @@ keystore.properties
 .externalNativeBuild
 .cxx
 local.properties
+
+# Roborazzi screenshots/videos (docs/user-guide.md's illustrations, `app/src/test/.../ui/
+# *ScreenshotTest.kt`) regenerate on every `./gradlew testDebugUnitTest` - ignored by default so
+# routine UI changes don't churn binary diffs into every commit. Un-ignore a specific file with an
+# explicit `!` line below once it's actually embedded in docs/user-guide.md (i.e. once its
+# TutorialTopic exists in `tutorial/TutorialTopic.kt`) - see CONTRIBUTING.md's "Test coverage"
+# section for the full "wire in a screenshot" steps. New topics are gitignored (generated locally,
+# not shipped) until deliberately wired in this way.
+docs/images/generated/screenshots/*
+docs/images/generated/videos/*
+!docs/images/generated/screenshots/bpm-drag-scrub.png
+!docs/images/generated/screenshots/bpm-drag-scrub-boundary.png
+!docs/images/generated/screenshots/bpm-unit-entry-dialog.png
+!docs/images/generated/screenshots/tap-tempo.png
+!docs/images/generated/screenshots/hold-momentary-staging.png
+!docs/images/generated/screenshots/hold-sticky-latch.png
+!docs/images/generated/screenshots/time-signature-drag-scrub.png
+!docs/images/generated/screenshots/bar-queue-management.png
+!docs/images/generated/screenshots/bar-queue-mode-cycling.png
+!docs/images/generated/screenshots/settings-jump-to-unit.png
+!docs/images/generated/screenshots/settings-clock-feel.png
+!docs/images/generated/screenshots/preview-swipe-visualizer.png
+!docs/images/generated/screenshots/preview-double-tap-play.png
+!docs/images/generated/screenshots/preview-long-press-settings.png
+!docs/images/generated/screenshots/compact-landscape-layout.png
+!docs/images/generated/screenshots/symbol-only-controls.png
+!docs/images/generated/videos/bpm-drag-scrub.gif
+!docs/images/generated/videos/bpm-drag-scrub-boundary.gif
+!docs/images/generated/videos/bpm-unit-entry-dialog.gif
+!docs/images/generated/videos/tap-tempo.gif
+!docs/images/generated/videos/hold-momentary-staging.gif
+!docs/images/generated/videos/hold-sticky-latch.gif
+!docs/images/generated/videos/time-signature-drag-scrub.gif
+!docs/images/generated/videos/bar-queue-management.gif
+!docs/images/generated/videos/bar-queue-mode-cycling.gif
+!docs/images/generated/videos/settings-jump-to-unit.gif
+!docs/images/generated/videos/settings-clock-feel.gif
+!docs/images/generated/videos/preview-swipe-visualizer.gif
+!docs/images/generated/videos/preview-double-tap-play.gif
+!docs/images/generated/videos/preview-long-press-settings.gif
+!docs/images/generated/videos/compact-landscape-layout.gif
+!docs/images/generated/videos/symbol-only-controls.gif

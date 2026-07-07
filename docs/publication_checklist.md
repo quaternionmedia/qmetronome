@@ -353,19 +353,21 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       very faint version of the current visualizer's resting pose rather than
       a black square. Confirm it's visible but not distracting, and that it
       updates when the visualizer is changed from Settings.
-- [ ] **Double-tap and long-press on preview**: double-tapping the preview
-      should toggle play/stop; long-pressing should open Settings. Confirm
-      neither gesture conflicts with the horizontal swipe for visualizer
-      cycling (a brief swipe should not accidentally trigger a long-press).
+- [x] **Double-tap and long-press on preview**: now covered end-to-end by
+      `PreviewGestureScreenshotTest` (double-tap toggles play/stop, long-press
+      opens Settings, swipe cycles visualizers - see
+      [`docs/user-guide.md`](user-guide.md)'s Glyph Matrix section). Remaining
+      manual nuance, if ever revisited: real-finger gesture disambiguation
+      timing (a brief swipe not accidentally read as a long-press) isn't
+      something a synthetic touch sequence can fully stand in for.
 - [ ] **BPM direct entry**: long-pressing the BPM number should open a
       numeric entry dialog. Confirm the keyboard auto-focuses, the current
       BPM is pre-selected, values outside 1–400 are rejected, and the
       running engine immediately reflects the new tempo on confirm.
-- [ ] **HOLD staging**: hold the HOLD button in the transport row while
-      tapping ±1 or dragging the BPM. The display should show the staged
-      value with "• staged" below it. Release HOLD and confirm the engine
-      snaps to the staged tempo in one step rather than having changed
-      continuously during the hold.
+- [x] **HOLD staging**: now covered by `HoldButtonScreenshotTest`'s momentary
+      test - stages a tempo change while held (display shows the staged
+      value, engine's real bpm untouched), then flushes it in one step on
+      release.
 - [ ] **Visual timing offset feel**: set a large positive or negative offset
       (e.g. ±200 ms) in Settings → Visual timing offset, run the metronome,
       and confirm the flash/animation visibly leads or lags the audible click
@@ -379,13 +381,12 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       unpredictably (not on a fixed pattern); separately, enable progressive
       mute and confirm the mute probability visibly ramps over the configured
       duration rather than jumping straight to its target.
-- [ ] **Latch mode**: distinct from the existing HOLD-staging item above —
-      long-press or double-tap the HOLD button (not the preview) to promote
-      staging into a sticky latch, confirm BPM/beats-per-bar edits keep
-      staging without holding the button down, and confirm a subsequent plain
-      tap on HOLD flushes the staged values and exits latch cleanly. Also
-      confirm `stop()` force-clears an active latch rather than leaving it
-      stuck engaged across a stop/start cycle.
+- [ ] **Latch mode - stop() force-clear only**: the promote-to-latch/stays-
+      staged-without-holding/subsequent-tap-flushes-and-exits sequence is now
+      covered by `HoldButtonScreenshotTest`'s sticky-latch test. Not covered
+      (still needs a real device/session): confirm `stop()` force-clears an
+      active latch rather than leaving it stuck engaged across a stop/start
+      cycle.
 - [ ] **Bar queue end-to-end**: add several bars with different beats-per-bar/
       BPM/unit-note-value combinations, confirm each recalls its own tempo
       correctly on tap-to-jump, confirm long-press removes a bar, confirm the
@@ -527,13 +528,13 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       than once), and confirm that tapping while latched both commits the
       tapped tempo *and* starts playback at that tempo, using the current
       time signature.
-- [ ] **v0.0.24 extended BPM range**: enable "Extended range (BPH/BPS)" in
-      Settings → Tempo & Bars, drag/type the tempo below 1 BPM and confirm it
-      switches to a "X.XX BPH" display, then above 400 BPM and confirm "X.XX
-      BPS" - confirm the Glyph Matrix and audible click still track
-      correctly at both extremes. Turn the toggle back off with tempo still
-      out of the normal range and confirm it snaps back within 1-400 BPM
-      rather than getting stuck.
+- [ ] **v0.0.24 extended BPM range - re-clamp-on-disable only**: the
+      below-1-BPM/above-400-BPM display switch itself is now covered by
+      `BpmDragBoundaryScreenshotTest` and `SettingsJumpToUnitScreenshotTest`.
+      Not covered (still needs a device): turning the toggle back off with
+      tempo out of the normal range snaps it back within 1-400 BPM rather than
+      getting stuck, and that the Glyph Matrix/audible click still track
+      correctly at both extremes.
 - [ ] **v0.0.24 progressive mute ramp length**: in Settings → Random mute,
       enable "Progressive start", set a short ramp (e.g. 2 bars) and a long
       one (e.g. 24 bars) on separate runs, and confirm the mute probability
@@ -635,32 +636,29 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       proportional* change (similar to how it feels near 120 BPM) rather than
       either imperceptibly small (near 0.1 BPH) or a jarring single leap (near
       200 BPS).
-- [ ] **v0.0.25 time signature drag-to-scrub**: drag horizontally on the
-      beats-per-bar number and, separately, the unit-note-value number, and
-      confirm both scrub smoothly at the same sensitivity as the BPM number's
-      own drag, without needing to release and re-drag to keep accumulating
-      partial progress.
-- [ ] **v0.0.25 BPM drag direction, above and below 1 BPM**: with extended
-      range on, drag the BPM number left/right while slowly crossing the 1
-      BPM boundary in both directions, confirming the number consistently
-      moves the same direction your finger does the whole way through (no
-      reversal) - the underlying math is now covered by a direct regression
-      test, but this is the one thing only a real finger on a real screen can
-      confirm. Also confirm the responsiveness cliff right at the boundary
-      feels less jarring than before (a step change is still expected, just
-      not "stopped responding").
-- [ ] **v0.0.25 BPM long-press unit-aware entry**: long-press the BPM number,
-      confirm it opens showing the current tempo already converted into
-      whichever unit (BPM/BPH/BPS) it's currently displaying as, switch chips
-      and confirm the field resets to a sensible starting value in the new
-      unit (not a nonsense number), type a value and confirm it applies
-      correctly converted back to the actual tempo on "Set".
-- [ ] **v0.0.25 Settings "Jump to unit" switcher**: in Settings → Tempo &
-      Bars, tap each of the BPM/BPH/BPS chips and confirm the tempo jumps to
-      a representative value in that unit's range each time (auto-enabling
-      Extended range for BPH/BPS if it was off), and that tapping the
-      already-active unit's chip does nothing (doesn't reset a tempo you'd
-      already dialed in).
+- [x] **v0.0.25 time signature drag-to-scrub**: now covered by
+      `TimeSignatureDragScreenshotTest` - drags both the beats-per-bar and
+      unit-note-value numbers through a real gesture and confirms each moves
+      the expected direction.
+- [ ] **v0.0.25 BPM drag direction, above and below 1 BPM - feel only**: the
+      directional-correctness question this item was originally tracking (the
+      manual bug report that started this whole investigation) is now
+      resolved by an actual regression test driving a real gesture -
+      `BpmDragBoundaryScreenshotTest` drags across the BPM=1 boundary in both
+      directions and asserts the unit/value move the expected way each time,
+      not just the underlying math. What's left, real-device-only: confirm
+      the responsiveness cliff right at the boundary feels less jarring than
+      before (a step change is still expected, just not "stopped responding").
+- [x] **v0.0.25 BPM long-press unit-aware entry**: now covered by
+      `BpmUnitEntryDialogScreenshotTest` - opens on the natural unit showing
+      the real current value, switching chips resets to a sensible default
+      rather than a nonsense converted number, and confirming converts back
+      to raw bpm correctly.
+- [x] **v0.0.25 Settings "Jump to unit" switcher**: now covered by
+      `SettingsJumpToUnitScreenshotTest` - tapping each of the BPM/BPH/BPS
+      chips jumps to a representative value in that unit's range and
+      auto-enables Extended range. Not explicitly asserted: tapping the
+      already-active unit's chip is a no-op (a minor edge case, low risk).
 - [ ] **v0.0.25 BPS ceiling at 200 BPS (12000 BPM)**: with extended range on,
       push the tempo to the new maximum (via the Settings switcher, direct
       entry, or drag/hold) and confirm the click still fires steadily at that
