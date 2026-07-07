@@ -72,6 +72,11 @@ class MetronomeSettings(context: Context) {
         get() = prefs.getBoolean(KEY_COMPACT_LANDSCAPE, false)
         set(value) = prefs.edit().putBoolean(KEY_COMPACT_LANDSCAPE, value).apply()
 
+    /** Defaults to off - see [MetronomeEngine.symbolicControlsEnabled] for what it toggles. */
+    var symbolicControlsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SYMBOLIC_CONTROLS_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_SYMBOLIC_CONTROLS_ENABLED, value).apply()
+
     /** Defaults to off - most users get equivalent reliability for free by raising their phone's
      * own screen-timeout and keeping the app open (see Settings -> Playback's own copy). When on,
      * a foreground service (`PersistentPlaybackService`) keeps the engine running through
@@ -193,6 +198,7 @@ class MetronomeSettings(context: Context) {
         const val KEY_VISUAL_OFFSET_MS = "visual_offset_ms"
         const val KEY_AUDIO_OFFSET_MS = "audio_offset_ms"
         const val KEY_COMPACT_LANDSCAPE = "compact_landscape"
+        const val KEY_SYMBOLIC_CONTROLS_ENABLED = "symbolic_controls_enabled"
         const val KEY_PERSISTENT_MODE_ENABLED = "persistent_mode_enabled"
         const val KEY_HAS_SHOWN_BPM_HINT = "has_shown_bpm_hint"
         const val KEY_MUTE_PROBABILITY = "mute_probability"

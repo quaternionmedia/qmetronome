@@ -71,6 +71,203 @@ There are two release tracks with different bars:
       adaptive vector icon (`mipmap-anydpi-v26/`), so they were dead weight
       left over from the default Android Studio template, never updated past
       the stock green-robot art.
+- [x] **v0.0.25 dependency/APK size cleanup**: `androidx.compose.material:
+      material-icons-extended` was an 87.5MB dependency (confirmed via the
+      Gradle cache) whose ~2000+ generated icon classes were all fully dexed
+      in the unshrunk debug build the alpha track ships — for a total of 14
+      icons actually used. Replaced with the much smaller `material-icons-
+      core` plus 8 locally-vendored `ImageVector`s
+      (`ui/icons/ExtraIcons.kt`) built from simple geometry rather than
+      hand-copied bezier data. Also dropped `androidx.appcompat` and
+      `com.google.android.material` (the View-based Material Components
+      library, not `material3`) — both were fully unused in code, pulled in
+      only because `themes.xml`'s style inherited
+      `Theme.MaterialComponents.NoActionBar`; switched to a plain platform
+      theme instead. Net effect: the built debug APK dropped from ~64MB to
+      ~29MB (the remainder is legitimate — Glance's widget stack transitively
+      needs WorkManager/DataStore/Room-util).
+- [x] **v0.0.25 audio output latency**: `ClickPlayer.buildTrack()`'s
+      `AudioTrack.Builder` now sets `PERFORMANCE_MODE_LOW_LATENCY` — the
+      standard platform API for a short, timing-sensitive one-shot trigger
+      like this, previously left at the platform's default output path.
+- [x] **v0.0.25 dedicated timing dispatcher**: `MetronomeEngine` and
+      `MidiClockSender` previously ran their beat-firing/render/audio-
+      lookahead/clock-tick loops on the implicit `Dispatchers.Default` shared
+      thread pool, with no isolation from whatever else happened to be
+      running on it. `engine/TimingDispatcher.kt`'s `newTimingDispatcher()`
+      gives each subsystem its own small dedicated pool instead. Tried a
+      genuine single thread first — measurably broke it (a tight lookahead
+      poll starved the actual beat-firing coroutine at fast tempos, zero
+      beats fired in 700ms at 400 BPM where several were expected); settled
+      on 3 threads (matching the number of concurrent loops a single engine
+      can run) after that regression and a follow-up, harder-to-reproduce
+      scheduling-jitter flake in an unrelated bar-boundary timing test both
+      pointed the same direction. **Superseded later in this same round** by
+      the sample-clocked streaming audio engine entry below: `newTimingDispatcher()`
+      now hands out exactly one dedicated thread per role rather than a
+      shared pool, and `MetronomeEngine` grew a 4th role (the streaming
+      writer) - this entry is kept as the historical record of why per-role
+      isolation mattered in the first place, not a description of the
+      dispatcher's current shape.
+- [x] **v0.0.25 render-path allocation reduction**: `GlyphCanvas` used to
+      allocate a fresh `IntArray(size*size)` on every visualizer `render()`
+      call (40×/sec while playing) — now pooled/reused (`GlyphCanvas.
+      BufferPool`), with one defensive `.copyOf()` kept in
+      `MetronomeEngine.renderFrame()` right before anything reaches the
+      published `StateFlow` (preserving the pre-existing "never republish a
+      mutated array" safety guarantee this same file already documented and
+      relied on). `MetronomeGlyphService`'s frame collector also now skips
+      pushing to the real Glyph Matrix hardware when the new frame is
+      pixel-identical to the last one actually pushed.
+- [x] **Audio-lookahead busy-spin at high tempo (real bug, reported on-device
+      at 300 BPM)**: `MetronomeEngine.startAudioLookahead()` (renamed
+      `startAudioScheduling()` in the streaming-engine rewrite below)'s loop,
+      after a beat's audio was resolved/fired, looped straight back to the
+      top with **no delay at all** for the rest of the offset window (up to
+      the full `|audioOffsetMs|`, default 30ms) — one of the engine's 3
+      dedicated timing threads (a shared pool at the time; see the dedicated-
+      timing-dispatcher entry above) pegged at 100% CPU every single beat. At
+      60 BPM that's
+      3% of the beat interval, easy to miss; at 300 BPM it's 15%, real
+      scheduling contention with the tick/render loops sharing that same
+      small pool — the actual cause of the reported timing breakdown, not a
+      flaw in the drift-corrected clock math itself. Fixed: every loop
+      iteration now delays a bounded slice regardless of whether it just
+      fired, mirroring the pattern already correct in the "still waiting"
+      branch and in `MidiClockSender`'s own resync loop. New regression test
+      asserts click-to-click spacing stays even at 400 BPM.
+- [x] **Per-sound `AudioTrack` pool**: `ClickPlayer` used to retrigger the
+      same single `AudioTrack` instance per `ClickSound` every beat — now 2
+      alternating instances per sound (`GlyphCanvas.BufferPool`'s round-robin
+      precedent), so a retrigger never has to interrupt its own
+      still-decaying predecessor. Bounded, precedented hardening alongside
+      the busy-spin fix above, not a response to a separately-confirmed bug
+      of its own.
+- [x] **`docs/realtime-audio-roadmap.md`**: scoped (not implemented) the
+      longer-term direction named alongside the bug report above -
+      independent audio-channel routing per beat type, multiple simultaneous
+      beat "threads" (true polyrhythm), per-beat-type MIDI actions - and what
+      in today's design already accommodates vs. would need to change.
+- [x] **v0.0.25 sample-clocked streaming audio engine (real rewrite, not a
+      further mitigation)**: on-device testing after the busy-spin fix above
+      still showed real placement error at 300+ BPM - the discrete
+      `MODE_STATIC` retrigger model rides the OS scheduler's own granularity
+      for *when the trigger call happens*, which isn't the same thing as
+      *when the audio is produced*, no matter how well-isolated the thread
+      is. `engine/StreamingClickEngine.kt` replaces it with one continuously-
+      running `MODE_STREAM` `AudioTrack`; a dedicated writer thread mixes each
+      click's waveform into the stream at an exact sample-frame offset,
+      computed by self-calibrating `AudioTrack.getTimestamp()`'s
+      frame<->nanoTime mapping against `System.nanoTime()` (the two-arg
+      overload that names a specific timebase turned out to be `@SystemApi`,
+      not in the public SDK - confirmed against the actual android-35/36 stub
+      jars). `ClickPlayer`'s old discrete-retrigger path is kept as an
+      automatic fallback (`StreamingClickEngine.hasFailedWarmup`,
+      `MetronomeEngine.usingStreamingClickEngine`) if `MODE_STREAM`
+      construction or timestamp warm-up doesn't cooperate on a given device.
+      `MetronomeEngine` also moved from one shared timing dispatcher to four
+      dedicated ones (clock/render/audio-schedule/audio-writer - the writer
+      specifically can never share a thread with anything else, since its
+      `AudioTrack.write()` calls block for real), and the render loop
+      tightened from 25ms to 10ms ticks. Found and fixed two genuine
+      concurrency bugs uncovered by this rewrite along the way: a beat-
+      resolution cache that could clobber a validly-resolved future beat when
+      accessed from truly parallel threads for the first time (fixed by
+      switching from a single nullable slot to a small map keyed by beat
+      number), and a resolve-ahead window that was firing a full beat early
+      instead of just the configured offset's lead time (both caught by the
+      existing Robolectric regression tests, not by inspection).
+- [x] **v0.0.25 tempo-stability tightening pass, round 2**: a follow-up review
+      of the streaming rewrite above found the predictive scheduling loop
+      pushed a beat's schedule to `StreamingClickEngine` only once within the
+      configured `audioOffsetMs`'s own lead window - correct for the old
+      discrete-trigger model, but not enough for the new one: the writer
+      thread's own `AudioTrack` buffer keeps its `framesWritten` cursor
+      running some amount *ahead* of real time (steady-state, from its
+      blocking `write()` calls), so a push arriving only `|offsetMs|` early
+      could still land *after* the writer had already committed that frame -
+      silently losing precise placement for exactly the leading case this
+      rewrite was for, falling back to "fires at the earliest frame the
+      writer can still place it" instead. Fixed: `StreamingClickEngine.
+      leadMarginNanos()` exposes the buffer's own duration; the scheduling
+      loop now pushes that much earlier still, capped by *both* an absolute
+      ceiling (100ms - generous for a real low-latency buffer) and a fraction
+      of the current beat interval (25% - what actually binds at fast tempos,
+      where the absolute cap alone could still encroach into resolving more
+      than one beat ahead, re-triggering the exact class of bug the rewrite's
+      own resolve-ahead fix above was for; caught by the same regression
+      tests going flaky again at 400 BPM before the fractional cap was
+      added). Also tightened `InternalClockSource`'s own live-bpm poll
+      granularity (`POLL_SLICE_MS`) from 30ms to 3ms, matching the audio-
+      scheduling loop's own cadence - safe now that the clock loop has a
+      genuinely dedicated, uncontended thread, and negligible overhead even
+      at the very slow end of the new BPH range (a cheap nanoTime() poll,
+      not a delay affecting the eventual beat's own firing precision).
+- [x] **v0.0.25 BPH floor bug**: `EXTENDED_MIN_BPM` was a bare `0.1f` constant
+      - exactly 6 BPH (0.1 × 60) - so the extended range could never go below
+      6 beats/hour no matter how far a press-and-hold or drag went, regardless
+      of the generous-sounding "0.1 BPM" label. Now derived from a new
+      `MIN_BPH = 0.1f` (one beat per *ten hours*) instead of the other way
+      around, so the number that actually matters is the explicit one.
+- [x] **v0.0.25 logarithmic BPH/BPS stepping**: outside the normal 1-400 BPM
+      range, both the +/- hold-repeat buttons and the BPM drag gesture used to
+      apply the same flat step size the normal range uses - imperceptible
+      near the old 3000 BPM ceiling, a giant single leap near 0.1 BPH.
+      `MainScreen.kt`'s new `steppedBpm()` switches to a multiplicative
+      formula outside the normal range instead (unchanged, flat stepping
+      inside it - later tuned from 5%- to 10%-per-step, see the "BPM drag
+      responsiveness cliff" entry below), so traversal feels far more
+      equally responsive at either extreme of the 0.1-12000 BPM span.
+- [x] **v0.0.25 drag-to-scrub on time signature numbers**: `TimeSignatureNumberRow`
+      (both beats-per-bar and unit-note-value) had steppers and long-press-to-
+      type but no drag gesture, unlike the BPM number. Added a second
+      `pointerInput` block with a locally-remembered pixel accumulator (same
+      shape as `PreviewBox`'s existing swipe accumulator - needed since these
+      are `Int`-backed engine state, unlike BPM's `Float`, so reading the value
+      back between drag events would silently discard sub-step progress) at
+      the same 6dp-per-step sensitivity as BPM's own drag.
+- [x] **v0.0.25 BPM/BPH/BPS unit switcher + unit-aware direct entry**: there
+      was no way to type or jump directly to a value in BPH/BPS terms - the
+      long-press dialog only ever accepted raw BPM (typing "30 BPH" meant
+      mentally converting to "0.5" first), and reaching BPH/BPS at all meant
+      dragging the whole way there through the log-scale steps. `ui/BpmUnit.kt`
+      adds an explicit `BpmUnit` (BPM/BPH/BPS) with conversion helpers
+      (`bpmToUnitValue`/`bpmFromUnitValue`/`bpmRangeFor`/`bpmDefaultUnitValue`),
+      matching `bpmDisplayValue`/`bpmDisplayUnit`'s own thresholds exactly so
+      the two can never disagree. `ui/BpmUnitEntryDialog.kt` (replacing the
+      generic `NumericEntryDialog` for BPM specifically) adds unit chips to
+      the long-press dialog - switching units is the "convert between BPH/BPM/
+      BPS" affordance itself. Settings gets a matching "Jump to unit" chip row
+      (mirroring the "Outgoing clock feel" chips) that jumps straight to a
+      representative value in whichever unit is picked, auto-enabling extended
+      range if needed - a quick escape from having to drag the whole way there.
+- [x] **v0.0.25 BPM drag responsiveness cliff at the BPM=1 boundary**: right at
+      the boundary between flat/additive stepping (inside 1-400) and
+      multiplicative/log stepping (outside it), a log step's *absolute* size
+      at bpm≈1 was `1 * (LOG_BPM_STEP_FACTOR-1)` - at the original 5% factor,
+      a 20x smaller step than the flat range's fixed `+1`, so dragging across
+      that exact boundary felt like the control suddenly barely responding.
+      Bumped the factor 5%→10%, narrowing (not eliminating - a single constant
+      factor can't be continuous at both the 1 *and* 400 boundary at once,
+      since they differ by 400x) the cliff to ~10x. The new unit
+      switcher/long-press-convert dialog above exist as the precise,
+      non-drag path into BPH/BPS specifically because of this remaining
+      tension - see `LOG_BPM_STEP_FACTOR`'s kdoc for the full reasoning.
+- [x] **v0.0.25 BPS ceiling raised 3000→12000 BPM (50→200 BPS)**: an estimate,
+      not a measured device limit - `StreamingClickEngine`'s sample-frame
+      placement has no hard ceiling of its own, so the real constraint is
+      `InternalClockSource`'s tick loop keeping up with its own overhead
+      rather than repeatedly hitting its stale-wait resync path. A 5ms floor
+      interval is deliberately generous headroom on a dedicated
+      `THREAD_PRIORITY_URGENT_AUDIO` thread - see `EXTENDED_MAX_BPM`'s kdoc,
+      and revisit from real on-device profiling if it's off in either
+      direction for a given device.
+- [x] **v0.0.25 "Outgoing clock feel" Settings copy clarified**: the
+      Mechanical/Organic explanation didn't say this setting only affects the
+      MIDI clock *sent to other apps/gear*, not this app's own click/flash -
+      easy to test by just listening to the phone and conclude "doesn't do
+      much," when the real test needs a device actually receiving the
+      outgoing clock. Added a sentence making that explicit.
 
 ## Documentation
 
@@ -241,7 +438,12 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       Clock → "Outgoing clock feel" between Mechanical and Organic and
       confirm a listening device/DAW can perceive the difference - Mechanical
       should feel steadier, Organic should let the followed clock's own
-      natural imperfection through rather than ironing it flat.
+      natural imperfection through rather than ironing it flat. **This mode
+      has no effect on this app's own click/flash** - it only changes the
+      MIDI bytes sent out, so this genuinely can't be evaluated by ear on the
+      phone alone; a real receiving device/DAW is the only way to hear a
+      difference (confirmed as working-as-designed this round when reported
+      as "not much effect" - the report was testing without a receiver).
 - [ ] **v0.0.23 outgoing clock phase lock**: run a long session (several
       minutes) with "Send MIDI clock" on in Mechanical mode, internal clock
       (not following anything), and confirm a device receiving our clock
@@ -338,3 +540,148 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       audibly reaches full strength faster with the short ramp and more
       gradually with the long one, rather than the ramp length having no
       audible effect.
+- [ ] **v0.0.25 APK size**: sanity-check the installed app's size (Settings →
+      Apps → qMetronome on the device) against the previous alpha - expect a
+      dramatic drop (measured ~64MB → ~29MB in the build that produced this
+      round) now that `material-icons-extended`/`appcompat`/`material` are
+      gone.
+- [ ] **v0.0.25 vendored icons render correctly**: every icon that used to
+      come from `material-icons-extended` is now hand-built - confirm each
+      one still reads clearly at its actual on-screen size: the Settings
+      section expand/collapse chevrons, the bar-queue LOOP/ONCE/MANUAL mode
+      icons (repeat arrows / skip-next / tap), the play/pause icon, the +/-
+      steppers everywhere (BPM, time signature, sliders), and the USB MIDI
+      star/star-outline. None should look clipped, misaligned, or overly
+      crude compared to the old library icons.
+- [ ] **v0.0.25 theme/background unchanged**: launch the app fresh (cold
+      start, not resumed) and confirm the splash/window background is still
+      solid black with no flash of an unexpected color or system theme
+      bleeding through, now that the theme no longer inherits from
+      AppCompat/MaterialComponents.
+- [ ] **v0.0.25 low-latency audio**: with "Audible click" on, run a fast
+      tempo (e.g. 300+ BPM) for an extended stretch and confirm no clicks
+      glitch, drop, or double-trigger - `PERFORMANCE_MODE_LOW_LATENCY` changes
+      the platform's audio path and is worth specifically stress-testing.
+- [ ] **v0.0.25 unified Settings "Tempo & Bars" control surface**: open
+      Settings while playing - confirm TAP, play/stop, and HOLD now appear
+      there too (not just BPM/bars), centered, and fully functional (tapping
+      TAP in Settings actually taps tempo, HOLD stages/latches, play/stop
+      toggles playback) - not just a read-only mirror anymore.
+- [ ] **v0.0.25 no redundant recomposition while Settings is open**: with the
+      metronome playing, open Settings and confirm the main screen's own BPM/
+      transport controls are no longer visibly live-updating underneath the
+      translucent backdrop (only the Glyph Matrix preview's flash should still
+      glow through) - closing Settings should immediately show the main
+      screen's controls resume, correctly caught up to the current state.
+- [ ] **v0.0.25 symbol-only control mode**: enable "Symbol-only controls" in
+      Settings → Layout and confirm every targeted label disappears from the
+      main screen (and Settings' "Tempo & Bars" mirror): TAP becomes a tap
+      icon, HOLD becomes a lock icon, the BPM unit text (BPM/BPH/BPS)
+      disappears, and both "• staged" texts (BPM and beats-per-bar) become a
+      small red dot instead. Turn it back off and confirm every label returns
+      exactly as before. With a screen reader on, confirm the icon-only
+      elements still announce something meaningful (not silent).
+- [ ] **v0.0.25 visualizers after buffer-reuse change**: cycle through every
+      visualizer (swipe left/right on the preview) while playing, including
+      switching mid-decay and stopping/restarting repeatedly, and confirm none
+      of them show ghosting, stale pixels, or a frozen/corrupted frame - the
+      classic symptom a buffer-reuse bug would produce. Also confirm a
+      multi-bar queue's ambient background (`QueueOverlay`) still renders
+      correctly layered under the active visualizer.
+- [ ] **v0.0.25 audio timing at 300+ BPM (the actual reported bug, now against
+      the rewritten sample-clocked path)**: run at 300 BPM and faster (up to
+      `MAX_BPM`) with the audible click on and the default audio offset, and
+      confirm click placement feels steady and even, with error well under
+      the originally-requested 1/300 tolerance - not the audible breakdown
+      originally reported, and tighter than the earlier busy-spin fix alone
+      achieved. This is the deciding proof for the whole rewrite: a JVM/
+      Robolectric test can verify the *decision* logic (which beat, which
+      sound, resolved once) but its `AudioTrack` shadow doesn't model real
+      HAL/buffer timing, so it cannot itself confirm sample-accurate
+      placement - only a real device can.
+- [ ] **v0.0.25 streaming engine reliability over a long session**: run the
+      audible click continuously for several minutes, changing tempo and
+      switching click sounds/waveforms mid-playback several times, and
+      confirm no glitches, dropouts, or a click that goes silent/stuck - the
+      continuously-running `MODE_STREAM` `AudioTrack` (unlike the old
+      per-beat retrigger) never stops between beats, so this is the scenario
+      most likely to expose a writer-thread stall or an unbounded
+      buffer/latency drift the shorter existing tests wouldn't catch.
+- [ ] **v0.0.25 graceful fallback to discrete retrigger playback**: this can't
+      be forced from the UI, but watch logcat for `StreamingClickEngine`
+      warnings (`MODE_STREAM AudioTrack construction failed`, `AudioTrack.play()
+      failed`, or `failed to warm up in time`) on whatever device is used for
+      the rest of this checklist - confirm that if any of these fire, the
+      click still plays audibly (via the `ClickPlayer` fallback) rather than
+      going silent. Absence of these warnings is itself useful signal that
+      the primary path is the one actually being exercised throughout every
+      other audio item on this list.
+- [ ] **v0.0.25 negative audio offset genuinely leads, not just "close"**: set a
+      clearly audible negative offset (e.g. -100ms) at a fast tempo (300+
+      BPM) and confirm the click leads the visual flash by the *full*
+      configured amount consistently, not by a visibly smaller amount that
+      would suggest the writer's own buffer-ahead time is eating into the
+      requested lead (see `StreamingClickEngine.leadMarginNanos` - the
+      follow-up fix that specifically targets this). If the lead feels
+      shy of what's configured, that's the signal this margin needs
+      revisiting for whatever device this is tested on.
+- [ ] **v0.0.25 extended range reaches well below 6 BPH**: with "Extended
+      range (BPH/BPS)" on, drag or press-and-hold the tempo all the way down
+      and confirm it keeps going well past the old 6 BPH floor (down toward
+      0.1 BPH) rather than stopping there.
+- [ ] **v0.0.25 BPH/BPS hold and drag feel logarithmic**: with extended range
+      on, press-and-hold the +/- steppers (and separately, drag) while deep in
+      BPH or BPS territory, and confirm each step feels like a *consistent
+      proportional* change (similar to how it feels near 120 BPM) rather than
+      either imperceptibly small (near 0.1 BPH) or a jarring single leap (near
+      200 BPS).
+- [ ] **v0.0.25 time signature drag-to-scrub**: drag horizontally on the
+      beats-per-bar number and, separately, the unit-note-value number, and
+      confirm both scrub smoothly at the same sensitivity as the BPM number's
+      own drag, without needing to release and re-drag to keep accumulating
+      partial progress.
+- [ ] **v0.0.25 BPM drag direction, above and below 1 BPM**: with extended
+      range on, drag the BPM number left/right while slowly crossing the 1
+      BPM boundary in both directions, confirming the number consistently
+      moves the same direction your finger does the whole way through (no
+      reversal) - the underlying math is now covered by a direct regression
+      test, but this is the one thing only a real finger on a real screen can
+      confirm. Also confirm the responsiveness cliff right at the boundary
+      feels less jarring than before (a step change is still expected, just
+      not "stopped responding").
+- [ ] **v0.0.25 BPM long-press unit-aware entry**: long-press the BPM number,
+      confirm it opens showing the current tempo already converted into
+      whichever unit (BPM/BPH/BPS) it's currently displaying as, switch chips
+      and confirm the field resets to a sensible starting value in the new
+      unit (not a nonsense number), type a value and confirm it applies
+      correctly converted back to the actual tempo on "Set".
+- [ ] **v0.0.25 Settings "Jump to unit" switcher**: in Settings → Tempo &
+      Bars, tap each of the BPM/BPH/BPS chips and confirm the tempo jumps to
+      a representative value in that unit's range each time (auto-enabling
+      Extended range for BPH/BPS if it was off), and that tapping the
+      already-active unit's chip does nothing (doesn't reset a tempo you'd
+      already dialed in).
+- [ ] **v0.0.25 BPS ceiling at 200 BPS (12000 BPM)**: with extended range on,
+      push the tempo to the new maximum (via the Settings switcher, direct
+      entry, or drag/hold) and confirm the click still fires steadily at that
+      rate without the engine falling behind/stuttering - the ceiling is an
+      estimate, not a measured limit, so this is the test that tells us
+      whether it's too aggressive (or overly conservative) for a given device.
+- [ ] **v0.0.25 long custom click duration at a fast tempo**: in Settings →
+      Click, set a sound's duration close to or beyond the beat interval at a
+      fast tempo (e.g. 150ms+ duration at 300+ BPM, where the interval is
+      200ms or less), and confirm no audible glitch/stutter/clipping. The
+      primary path (`StreamingClickEngine`) *mixes additively* into the
+      continuous stream rather than retriggering, so an overlapping decay
+      tail should sound like genuine layering (two hits overlapping), not a
+      hard cut or silence - listen specifically for audible clipping/
+      distortion where two waveforms sum past 16-bit range. If the
+      `ClickPlayer` fallback is active instead (see the graceful-fallback
+      item above), its per-sound `AudioTrack` pool exists so a retrigger
+      never has to interrupt its own still-playing predecessor - same
+      scenario, different mechanism, same "no audible glitch" bar.
+- [ ] **v0.0.25 no CPU spike from the audio lookahead loop**: with the click
+      on and a fast tempo, watch device temperature/battery drain (or a
+      profiler if available) over a few minutes of continuous playback and
+      confirm nothing suggests a thread pegged at 100% CPU - the busy-spin
+      bug's other symptom besides audible jitter.

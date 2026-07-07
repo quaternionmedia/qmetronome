@@ -276,7 +276,9 @@ class MetronomeEngineTest {
         assertEquals(6, MetronomeEngine.stagedBeatsPerBar.value)
         assertEquals(4, MetronomeEngine.state.value.beatsPerBar)
 
-        Thread.sleep(900) // comfortably past the next bar boundary even with scheduling jitter
+        Thread.sleep(1400) // comfortably past the next bar boundary even with scheduling jitter -
+        // generous margin since the engine's dedicated thread pool (see newTimingDispatcher)
+        // introduces a bit more scheduling variance than Dispatchers.Default's full core count did
 
         assertEquals(6, MetronomeEngine.state.value.beatsPerBar)
         assertNull(MetronomeEngine.stagedBeatsPerBar.value)
@@ -309,7 +311,9 @@ class MetronomeEngineTest {
         MetronomeEngine.setAudioOffsetMs(100f) // lag, not lead
 
         MetronomeEngine.start()
-        Thread.sleep(1300) // beat 1 lands ~1000ms in, its (delayed) click fires ~100ms after that
+        Thread.sleep(1500) // beat 1 lands ~1000ms in, its (delayed) click fires ~100ms after that -
+        // generous margin since the engine's dedicated 2-thread pool (see newTimingDispatcher)
+        // introduces a bit more scheduling variance than Dispatchers.Default's full core count did
 
         assertTrue("expected at least 2 clicks, got ${events.size}", events.size >= 2)
         // The second click must fire only once state has already advanced to totalBeats == 1 -
@@ -338,6 +342,49 @@ class MetronomeEngineTest {
             "expected roughly one click per beat, got ${events.size} clicks for $beatsSoFar+ beats",
             events.size in beatsSoFar..(beatsSoFar + 1),
         )
+    }
+
+    @Test
+    fun `click timestamps stay evenly spaced at a fast tempo - regression test for the lookahead busy-spin`() {
+        // Regression test: the audio-scheduling loop (`startAudioScheduling()`, named
+        // `startAudioLookahead()` at the time this bug was found and fixed) used to loop back with
+        // no delay at all once a beat's audio was already resolved/fired, busy-spinning one of the
+        // engine's dedicated timing threads at 100% CPU for the rest of the offset window every
+        // single beat - real scheduling contention with the tick/render loops sharing that same
+        // small pool, worst at fast tempos where the offset window is a large fraction of the beat
+        // interval. This doesn't reliably reproduce on a well-provisioned test machine (see the
+        // manual on-device checklist for the real proof), but it's a legitimate general-purpose
+        // jitter guard either way.
+        val clickTimestampsNanos = java.util.Collections.synchronizedList(mutableListOf<Long>())
+        MetronomeEngine.setClickListenerForTesting { _, _ -> clickTimestampsNanos.add(System.nanoTime()) }
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 400 BPM, 150ms/beat
+        MetronomeEngine.setAudioOffsetMs(DEFAULT_AUDIO_OFFSET_MS) // the shipped default lead
+
+        MetronomeEngine.start()
+        Thread.sleep(1500) // roughly 10 beats at 150ms/beat
+
+        val beatsSoFar = MetronomeEngine.state.value.totalBeats
+        assertTrue("expected several beats to have fired by now, totalBeats=$beatsSoFar", beatsSoFar >= 6)
+
+        val intervalsMs = clickTimestampsNanos.zip(clickTimestampsNanos.drop(1))
+            .map { (a, b) -> (b - a) / 1_000_000.0 }
+        val expectedIntervalMs = 60_000.0 / MetronomeEngine.MAX_BPM // 150ms
+        // The very first interval (beat 0 -> beat 1) is a structurally different case, not
+        // jitter: beat 0 always resolves reactively in onBeat() itself (it fires before the
+        // scheduling loop gets a chance to run at all - see MetronomeEngine.start()'s kdoc), while
+        // beat 1 onward resolves predictively, `StreamingClickEngine.leadMarginNanos()` earlier
+        // than the offset alone would dictate (see startAudioScheduling()'s kdoc) - a one-time seam
+        // between the two resolution paths, not evenly-spaced-click evidence either way. Every
+        // interval from the second one on is beat-N-to-beat-(N+1) with both endpoints resolved the
+        // same (predictive) way, so those are the ones this regression test actually cares about.
+        intervalsMs.drop(1).forEach { interval ->
+            assertTrue(
+                "expected every click-to-click interval within ${JITTER_TOLERANCE_MS}ms of " +
+                    "${expectedIntervalMs}ms, got $interval - all intervals: $intervalsMs",
+                kotlin.math.abs(interval - expectedIntervalMs) < JITTER_TOLERANCE_MS,
+            )
+        }
     }
 
     @Test
@@ -482,12 +529,29 @@ class MetronomeEngineTest {
         MetronomeEngine.setBpm(0.5f)
         assertEquals(0.5f, MetronomeEngine.state.value.bpm, 0.01f)
 
-        MetronomeEngine.setBpm(9000f)
+        MetronomeEngine.setBpm(90000f)
         assertEquals(MetronomeEngine.EXTENDED_MAX_BPM, MetronomeEngine.state.value.bpm, 0.01f)
 
         // Turning extended range back off re-clamps the current (out-of-normal-range) bpm.
         MetronomeEngine.setExtendedBpmRangeEnabled(false)
         assertEquals(MetronomeEngine.MAX_BPM, MetronomeEngine.state.value.bpm, 0.01f)
+    }
+
+    @Test
+    fun `extended range floor reaches well below the old fixed 0_1 bpm (6 bph) floor`() {
+        // Regression test: EXTENDED_MIN_BPM used to be a bare 0.1f constant - exactly 6 BPH
+        // (0.1 * 60) - which meant nothing slower than 6 BPH was reachable no matter how far a
+        // press-and-hold or drag went. It's now derived from MIN_BPH (0.1 BPH, i.e. 1 beat per ten
+        // hours), so the floor itself should be far below the old one.
+        MetronomeEngine.setExtendedBpmRangeEnabled(true)
+        assertTrue(
+            "expected EXTENDED_MIN_BPM (${MetronomeEngine.EXTENDED_MIN_BPM}) to be well below the " +
+                "old fixed 0.1f floor",
+            MetronomeEngine.EXTENDED_MIN_BPM < 0.1f,
+        )
+
+        MetronomeEngine.setBpm(0.001f) // far below even the new floor - should clamp, not crash
+        assertEquals(MetronomeEngine.EXTENDED_MIN_BPM, MetronomeEngine.state.value.bpm, 0.0001f)
     }
 
     @Test
@@ -892,5 +956,13 @@ class MetronomeEngineTest {
         assertEquals(MetronomeEngine.HoldMode.Off, MetronomeEngine.holdMode.value)
         assertEquals(150f, MetronomeEngine.state.value.bpm)
         assertNull(MetronomeEngine.stagedBpm.value)
+    }
+
+    private companion object {
+        /** Generous enough to absorb this environment's own documented test jitter (~0.1-1.2%
+         * even for an identical repeated scenario) plus real coroutine-dispatcher scheduling
+         * variance, while still tight enough that a reintroduced busy-spin - which stalls the
+         * *other* loops for a large fraction of the beat interval at this tempo - should trip it. */
+        const val JITTER_TOLERANCE_MS = 40.0
     }
 }

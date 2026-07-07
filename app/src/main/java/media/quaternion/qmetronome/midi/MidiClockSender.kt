@@ -8,6 +8,7 @@ import media.quaternion.qmetronome.engine.ClockTimingMode
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.engine.MetronomeSettings
 import media.quaternion.qmetronome.engine.TempoStabilizer
+import media.quaternion.qmetronome.engine.newTimingDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -41,7 +42,7 @@ object MidiClockSender {
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Clock-out loop failed", throwable)
     }
-    private val scope = CoroutineScope(SupervisorJob() + exceptionHandler)
+    private val scope = CoroutineScope(SupervisorJob() + exceptionHandler + newTimingDispatcher("midi-clock-out"))
 
     // addDestination()/removeDestination() are called from the main thread (UI button presses,
     // service onCreate()/onClose()), while sendByte() iterates this from the tick loop's

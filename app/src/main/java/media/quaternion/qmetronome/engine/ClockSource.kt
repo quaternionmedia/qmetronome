@@ -106,7 +106,15 @@ class InternalClockSource : ClockSource {
     }
 
     private companion object {
-        /** How often the tick loop re-checks the live bpm while waiting out a long interval. */
-        const val POLL_SLICE_MS = 30L
+        /** How often the tick loop re-checks the live bpm while waiting out a long interval -
+         * tightened from 30ms once this class got a genuinely dedicated, elevated-priority thread
+         * (see `newTimingDispatcher`) with nothing else contending for it, matching the same 3ms
+         * granularity `MetronomeEngine`'s audio-scheduling loop and `MidiClockSender`'s resync loop
+         * already use. Each wakeup is a cheap nanoTime() read/compare, so even at the very slow end
+         * of the extended BPH range (down to 0.1 BPH, a 10-hour interval) this adds negligible
+         * overhead - it only changes how quickly a mid-wait tempo change gets noticed, not anything
+         * about the eventual beat's own firing precision (the final approach to a target uses a
+         * single direct `delay()`, unaffected by this constant - see [start]). */
+        const val POLL_SLICE_MS = 3L
     }
 }

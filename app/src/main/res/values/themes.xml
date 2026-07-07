@@ -1,13 +1,14 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Always black, regardless of system light/dark setting - the splash/window background
-         before Compose (QMetronomeTheme) takes over, which is the actual source of truth. -->
-    <style name="Theme.Qmetronome" parent="Theme.MaterialComponents.NoActionBar">
-        <item name="colorPrimary">@color/white</item>
-        <item name="colorPrimaryVariant">@color/qm_navy</item>
-        <item name="colorOnPrimary">@color/black</item>
-        <item name="colorSecondary">@color/mid_gray</item>
-        <item name="colorSecondaryVariant">@color/unlit_gray</item>
-        <item name="colorOnSecondary">@color/white</item>
+         before Compose (QMetronomeTheme) takes over, which is the actual source of truth.
+
+         Parented off a plain platform theme (not AppCompat/MaterialComponents - this app is
+         100% Compose, ComponentActivity, no View-system UI) so those two libraries' full
+         resource sets (searchviews, timepickers, datepickers, bottom sheets, etc. - all dead
+         weight here) aren't pulled into the build just to resolve this one style's parent. -->
+    <style name="Theme.Qmetronome" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">@color/white</item>
+        <item name="android:colorAccent">@color/qm_navy</item>
         <item name="android:windowBackground">@color/black</item>
         <item name="android:statusBarColor">@color/black</item>
     </style>

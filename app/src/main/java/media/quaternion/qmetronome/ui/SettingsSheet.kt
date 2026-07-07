@@ -31,10 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -65,6 +62,7 @@ import media.quaternion.qmetronome.engine.DEFAULT_VISUAL_OFFSET_MS
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.midi.MidiClockSender
 import media.quaternion.qmetronome.midi.UsbMidiConnector
+import media.quaternion.qmetronome.ui.icons.ExtraIcons
 import media.quaternion.qmetronome.ui.theme.PureBlack
 import media.quaternion.qmetronome.ui.theme.RecordingRed
 import media.quaternion.qmetronome.visualizers.VisualizerRegistry
@@ -103,6 +101,7 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     val extendedBpmRangeEnabled by MetronomeEngine.extendedBpmRangeEnabled.collectAsState()
     var showBpmDialog by remember { mutableStateOf(false) }
     val compactLandscape by MetronomeEngine.compactLandscape.collectAsState()
+    val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
     val muteProbability by MetronomeEngine.muteProbability.collectAsState()
     val progressiveMuteEnabled by MetronomeEngine.progressiveMuteEnabled.collectAsState()
     val progressiveMuteRampBars by MetronomeEngine.progressiveMuteRampBars.collectAsState()
@@ -152,22 +151,46 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                     )
                 },
             ) {
-                // The exact same composables driving the main screen - guaranteed to live-sync
-                // since they read the same StateFlows, not a second display that could drift.
-                BpmControls(beat = beat, onShowBpmDialog = { showBpmDialog = true })
-                Spacer(Modifier.height(4.dp))
-                BeatsPerBarControls()
+                // The exact same cluster driving the main screen (BPM/bars/TAP/play-stop/HOLD) -
+                // guaranteed to live-sync since it reads the same StateFlows, not a second display
+                // that could drift - and while this is open, it's the *only* composed instance
+                // (see MainScreen's showControls handling).
+                TempoTransportCluster(beat = beat, onShowBpmDialog = { showBpmDialog = true })
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Extended range (BPH/BPS)", style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = extendedBpmRangeEnabled, onCheckedChange = MetronomeEngine::setExtendedBpmRangeEnabled)
                 }
                 Text(
-                    text = "Live mirror of the main screen's tempo, meter and bar queue - changes here " +
-                        "apply immediately and vice versa, including which bar is currently active. " +
-                        "Extended range unlocks tempos below ${MetronomeEngine.MIN_BPM.roundToInt()} BPM " +
-                        "(shown as beats-per-hour) and above ${MetronomeEngine.MAX_BPM.roundToInt()} BPM " +
+                    text = "The same live tempo/meter/bar-queue/transport controls as the main screen - " +
+                        "changes here apply immediately and vice versa, including which bar is currently " +
+                        "active. Extended range unlocks tempos below ${MetronomeEngine.MIN_BPM.roundToInt()} " +
+                        "BPM (shown as beats-per-hour) and above ${MetronomeEngine.MAX_BPM.roundToInt()} BPM " +
                         "(beats-per-second).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text("Jump to unit", style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val currentBpmUnit = bpmUnitFor(stagedBpm ?: beat.bpm)
+                    BpmUnit.entries.forEach { unit ->
+                        FilterChip(
+                            selected = currentBpmUnit == unit,
+                            onClick = {
+                                if (unit != currentBpmUnit) {
+                                    if (unit != BpmUnit.BPM) MetronomeEngine.setExtendedBpmRangeEnabled(true)
+                                    MetronomeEngine.setBpm(bpmFromUnitValue(bpmDefaultUnitValue(unit), unit))
+                                }
+                            },
+                            label = { Text(unit.label) },
+                        )
+                    }
+                }
+                Text(
+                    text = "Jumps straight to a representative tempo in that unit's own range - the same " +
+                        "long-press-to-type dialog on the BPM number itself also lets you type an exact " +
+                        "value in whichever unit you pick, converting it for you.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.secondary,
                 )
@@ -317,6 +340,17 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.secondary,
                 )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Symbol-only controls", style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = symbolicControlsEnabled, onCheckedChange = MetronomeEngine::setSymbolicControlsEnabled)
+                }
+                Text(
+                    text = "Drops words from the main screen's tempo/transport controls in favor of " +
+                        "icons and dots only (TAP, HOLD, the BPM unit label, \"staged\" indicators) - " +
+                        "a more unified, purely iconographic look that also needs no translation.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
             }
 
             HorizontalDivider()
@@ -362,7 +396,7 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             IconButton(onClick = { UsbMidiConnector.toggleStar(device) }) {
                                 Icon(
-                                    imageVector = if (isStarred) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                    imageVector = if (isStarred) Icons.Filled.Star else ExtraIcons.StarBorder,
                                     contentDescription = if (isStarred) {
                                         "Unstar - stop auto-reconnecting this device"
                                     } else {
@@ -432,7 +466,10 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                     text = "Mechanical actively corrects the outgoing clock for the truest, most locked-in " +
                         "beat. Organic skips that correction while repeating a followed clock, letting " +
                         "whatever natural timing variance really occurs come through instead - no fake " +
-                        "randomness, just the honest imprecision of real hardware/scheduling.",
+                        "randomness, just the honest imprecision of real hardware/scheduling. This only " +
+                        "affects the MIDI clock bytes sent to other apps/gear - it has no effect on this " +
+                        "app's own click or flash, so a difference is only audible on a device actually " +
+                        "receiving this clock.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.secondary,
                 )
@@ -778,7 +815,7 @@ private fun CollapsibleSection(
             )
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { summary() }
             Icon(
-                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                imageVector = if (expanded) ExtraIcons.ExpandLess else ExtraIcons.ExpandMore,
                 contentDescription = if (expanded) "Collapse $title" else "Expand $title",
                 tint = MaterialTheme.colorScheme.secondary,
             )

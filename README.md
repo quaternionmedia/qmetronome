@@ -52,9 +52,9 @@ constitution repo).
   "Using the bar queue" below) is the only way to move. Queue *position* isn't staged the way
   editing a bar's own values is (staging-aware exactly as before) - navigating which bar you're
   looking at is closer to "which page am I on" than a pending settings change. `engine/ClickSound`
-  + `engine/ClickPlayer` separate *which* click to play from the playback plumbing - a small tone
-  table keyed by sound (today: a bigger, longer tone for a bar's first beat vs. every other beat)
-  so a new sound is a new table row, not a rewrite.
+  separates *which* click to play from the playback plumbing (`engine/StreamingClickEngine`,
+  `engine/ClickPlayer`) - a small tone table keyed by sound (today: a bigger, longer tone for a
+  bar's first beat vs. every other beat) so a new sound is a new table row, not a rewrite.
 - `engine/ClockSource` — produces beat ticks. `InternalClockSource` drift-corrects against
   `System.nanoTime()` so tempo doesn't slip over a long session, and re-checks the live bpm every
   30ms while waiting rather than committing to one long sleep sized for whatever tempo was in
@@ -62,7 +62,17 @@ constitution repo).
   tempo's long interval had no effect (and the beat/animation looked frozen) until that stale
   wait finished. `midi/MidiClockSource` is the
   external-clock implementation: the engine auto-switches to it the moment MIDI Clock activity
-  arrives, and falls back to internal timing if that feed goes quiet for a few beats.
+  arrives, and falls back to internal timing if that feed goes quiet for a few beats. Both this
+  and `midi/MidiClockSender`'s own coroutines run on `engine/TimingDispatcher.kt`'s
+  `newTimingDispatcher()` - one dedicated, elevated-priority (`THREAD_PRIORITY_URGENT_AUDIO`)
+  thread per timing-critical role, isolated from `Dispatchers.Default`'s shared, general-purpose
+  pool *and* from every other role, so unrelated background work elsewhere in the app - or another
+  timing-critical role's own work - can never delay a beat firing. `MetronomeEngine` alone uses
+  four of these (clock loop, render loop, audio-scheduling loop, and `StreamingClickEngine`'s
+  sample-clocked writer - see below); a shared pool was tried first (a genuine single thread
+  measurably broke it, a fast tempo's audio-scheduling poll starved the actual beat-firing
+  coroutine entirely) before settling on one dedicated thread per role rather than a pool sized to
+  however many roles happen to exist today.
 - `midi/` — MIDI Clock (24 ppqn) support, in both directions, over both virtual (inter-app) and
   USB transports. `MidiClockSource` parses real-time bytes and measures tempo from a smoothed
   rolling average of tick intervals, regardless of transport; `VirtualMidiClockService` exposes
@@ -78,8 +88,20 @@ constitution repo).
   [`docs/external-midi-clock.md`](docs/external-midi-clock.md) for the design rationale and
   [`docs/usb-midi-test-plan.md`](docs/usb-midi-test-plan.md) for how to verify either USB
   direction (including starring/auto-reconnect) against real hardware.
-- `engine/ClickPlayer` — the audible click (`ToneGenerator`), so this also works as a real
-  metronome for practicing/performing musicians, with or without the Glyph Matrix.
+- `engine/StreamingClickEngine` — the audible click, so this also works as a real metronome for
+  practicing/performing musicians, with or without the Glyph Matrix. Each `ClickSound` is a
+  generated waveform (`engine/ClickSynth`, tunable waveform/frequency/duration/gain - see Settings
+  → Click). Rather than discretely retriggering audio per beat (which can only ever be timed by a
+  coroutine waking up at approximately the right wall-clock moment), one continuously-running
+  `MODE_STREAM` `AudioTrack` plays for the whole session; a dedicated writer thread mixes each
+  click's waveform into the stream at an exact sample-frame offset, computed by self-calibrating
+  `AudioTrack`'s frame-position/timestamp reporting against `System.nanoTime()` - timed by the
+  audio hardware's own sample clock, not a wakeup. `engine/ClickPlayer` (the older discrete
+  `MODE_STATIC`-retrigger implementation, `PERFORMANCE_MODE_LOW_LATENCY`) is kept as an automatic
+  fallback for whatever device/OEM audio stack doesn't cooperate with `MODE_STREAM` construction or
+  timestamp warm-up. See [`docs/realtime-audio-roadmap.md`](docs/realtime-audio-roadmap.md) for the
+  longer-term direction (multi-channel routing, polyrhythm, per-beat-type MIDI actions) this was
+  a prerequisite for.
 - `visualizers/` — the animation algorithms. See below.
 - `glyph/GlyphMatrixToyService` — reusable Glyph Toy boilerplate (bind lifecycle, device
   registration, Glyph Button message handling). `glyph/MetronomeGlyphService` is the concrete
@@ -88,20 +110,29 @@ constitution repo).
 - `ui/` — Compose UI. `MainScreen` keeps the Glyph Matrix preview as the dominant, focal
   element with tempo/tap/play-stop and beats-per-bar alongside it - live meter/tempo controls
   belong on the main screen, not a settings overlay you'd have to leave the beat to open.
-  Everything else (a live "Tempo & Bars" mirror of the main screen's own BPM/meter/bar-queue
-  controls plus an extended-BPM-range toggle, random mute, click toggle, visualizer picker,
-  independent beat-visualizer/bar-queue-background toggles, visual and audio timing offsets, MIDI
-  clock status/USB connection/clock-out) lives behind the bottom-right settings button in
-  `SettingsSheet`, a full-screen translucent overlay (not a half-open bottom sheet) so the
-  matrix preview's flashes still glow through dimly behind it. The preview shows a dim ghost of
+  Everything else (a "Tempo & Bars" section embedding the *exact same* `TempoTransportCluster`
+  shown on the main screen - BPM/meter/bar-queue plus TAP/play-stop/HOLD, not a second copy that
+  could drift - plus an extended-BPM-range toggle, random mute, click toggle, visualizer picker,
+  independent beat-visualizer/bar-queue-background toggles, visual and audio timing offsets, a
+  symbol-only-controls toggle, MIDI clock status/USB connection/clock-out) lives behind the
+  bottom-right settings button in `SettingsSheet`, a full-screen translucent overlay (not a
+  half-open bottom sheet) so the matrix preview's flashes still glow through dimly behind it -
+  the main screen itself stops composing its own tempo/transport cluster while Settings is open,
+  so there's only ever one live instance of it rather than an invisible duplicate still
+  recomposing underneath. The preview shows a dim ghost of
   the current visualizer at rest even when the metronome is stopped (6% brightness idle frame),
   so the AMOLED screen never looks fully off. The settings button isn't the only way in:
   long-pressing the preview also opens settings; double-tapping the preview toggles play/stop;
   swiping left/right cycles visualizers; and the BPM number itself is triple-duty — tap it for
-  tap-tempo, long-press it for a direct-entry dialog (range 1–400 BPM, extendable to 0.1–3000 via
-  Settings → Tempo & Bars, displayed as BPH/BPS outside the normal range), or drag it left/right for
-  continuous fine adjustment (a one-time hint the first time it's shown explains all three, then
-  never appears again). `BeatsPerBarControls` mirrors that same pattern (steppers, long-press to
+  tap-tempo, long-press it for a unit-aware direct-entry dialog (`ui/BpmUnitEntryDialog`; range
+  1–400 BPM, extendable to 0.1–12000 via Settings → Tempo & Bars, displayed/entered as BPH/BPS
+  outside the normal range - switching the dialog's own BPM/BPH/BPS chips *is* the "convert
+  between units" gesture, landing on a sensible starting value in whichever unit you switch to
+  rather than a literal, often-nonsensical arithmetic conversion of what was typed in the old
+  one), or drag it left/right for continuous fine adjustment (a one-time hint the first time it's
+  shown explains all three, then never appears again). Settings' "Jump to unit" chip row is the
+  same idea one level up - jump the live tempo straight into BPM/BPH/BPS range without dragging
+  there. `BeatsPerBarControls` mirrors that same pattern (steppers, long-press to
   type an exact value) at a visually secondary scale just below it. A second row beneath it is
   the entry point to the bar queue - see "Using the bar queue" below - kept to explicit
   taps/buttons rather than gestures layered onto the tempo row, since a narrow label wedged

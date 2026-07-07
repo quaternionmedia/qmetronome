@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -22,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import media.quaternion.qmetronome.ui.icons.ExtraIcons
 import kotlin.math.roundToInt
 
 /**
@@ -64,7 +64,7 @@ fun SteppedSlider(
             onStep = { onValueChange((currentValue() - step).coerceIn(valueRange)) },
             modifier = Modifier.size(40.dp),
         ) {
-            Icon(Icons.Filled.Remove, contentDescription = "Decrease")
+            Icon(ExtraIcons.Remove, contentDescription = "Decrease")
         }
         Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
             Slider(

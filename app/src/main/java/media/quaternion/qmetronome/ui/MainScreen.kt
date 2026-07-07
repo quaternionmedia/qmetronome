@@ -29,13 +29,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,23 +51,30 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import media.quaternion.qmetronome.engine.BeatPhase
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.engine.TimeSignature
+import media.quaternion.qmetronome.ui.icons.ExtraIcons
 import media.quaternion.qmetronome.ui.theme.PureWhite
 import media.quaternion.qmetronome.ui.theme.RecordingRed
 import media.quaternion.qmetronome.visualizers.decayEase
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
  * The Glyph Matrix preview is the focal point by design - it's a 1:1 stand-in for what's
  * actually showing on the hardware, and the rest of the screen exists to support it, not
- * compete with it. Everything that isn't "look at the beat" or "start/stop/tap" lives behind
- * the settings button in a full-screen overlay (see [SettingsSheet]), so the main screen stays
- * down to one functional grouping at a time.
+ * compete with it. Settings (see [SettingsSheet]) now embeds the same live [TempoTransportCluster]
+ * shown here too - not because tempo/transport belongs there conceptually, but so there is only
+ * ever one live, composed instance of it: while Settings is open, this screen stops composing its
+ * own copy entirely (its layouts' `showControls` parameter) rather than leaving an invisible,
+ * still-recomposing duplicate running underneath the overlay.
  *
  * A few affordances don't rely on that small button: long-pressing the preview opens settings
  * (the bottom-right button sits close to the brand footer and can be a small target on some
@@ -103,6 +105,7 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
                 previewSize = previewSize,
                 frame = frame,
                 beat = beat,
+                showControls = !showSettings,
                 onShowSettings = { showSettings = true },
                 onShowBpmDialog = { showBpmDialog = true },
             )
@@ -111,6 +114,7 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
                 previewSize = previewSize,
                 frame = frame,
                 beat = beat,
+                showControls = !showSettings,
                 onShowSettings = { showSettings = true },
                 onShowBpmDialog = { showBpmDialog = true },
             )
@@ -146,16 +150,16 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
     }
 
     if (showBpmDialog) {
-        val extendedBpmRangeEnabled by MetronomeEngine.extendedBpmRangeEnabled.collectAsState()
-        NumericEntryDialog(
-            title = "Set BPM",
-            initialValue = stagedBpm ?: beat.bpm,
-            valueRange = if (extendedBpmRangeEnabled) {
-                MetronomeEngine.EXTENDED_MIN_BPM..MetronomeEngine.EXTENDED_MAX_BPM
-            } else {
-                MetronomeEngine.MIN_BPM..MetronomeEngine.MAX_BPM
-            },
+        BpmUnitEntryDialog(
+            initialBpm = stagedBpm ?: beat.bpm,
             onConfirm = { bpm ->
+                // A BPH/BPS-range value needs the extended range actually turned on, or
+                // setBpm's own clamping would immediately snap it back into 1-400 - the
+                // dialog itself doesn't gate unit selection on this toggle, so this is the
+                // one place that has to.
+                if (bpm < MetronomeEngine.MIN_BPM || bpm > MetronomeEngine.MAX_BPM) {
+                    MetronomeEngine.setExtendedBpmRangeEnabled(true)
+                }
                 MetronomeEngine.setBpm(bpm)
                 showBpmDialog = false
             },
@@ -182,6 +186,26 @@ internal fun bpmDisplayUnit(bpm: Float): String = when {
     else -> "BPM"
 }
 
+/**
+ * BPM/BPH/BPS stepping shared by [BpmControls]' +/- hold-repeat buttons and its drag-to-scrub
+ * gesture - flat, additive stepping inside [MetronomeEngine.MIN_BPM]..[MetronomeEngine.MAX_BPM]
+ * (identical to this app's original, everyday behavior - a fixed [BPM_STEP] per whole step), and
+ * multiplicative/logarithmic stepping outside it. A flat step size that feels right at 120 BPM is
+ * either imperceptible or a single giant leap at the extremes of the 0.1-12000 BPM extended range -
+ * a ~5%-per-step multiplicative formula instead covers that same huge range by *ratio*, so
+ * traversal feels equally responsive near either end. [steps] is a signed, possibly-fractional
+ * step count (fractional for the drag gesture's per-pixel progress, whole for the hold-repeat
+ * buttons); this only computes the candidate value - [MetronomeEngine.setBpm]'s own clamping is
+ * what actually enforces whichever bound (normal or extended) is currently in effect.
+ */
+internal fun steppedBpm(currentBpm: Float, steps: Float): Float {
+    return if (currentBpm in MetronomeEngine.MIN_BPM..MetronomeEngine.MAX_BPM) {
+        currentBpm + steps * BPM_STEP
+    } else {
+        currentBpm * LOG_BPM_STEP_FACTOR.pow(steps)
+    }
+}
+
 // ── Shared preview + controls sub-composables ──────────────────────────────
 
 @Composable
@@ -189,6 +213,7 @@ private fun PortraitLayout(
     previewSize: Int,
     frame: IntArray,
     beat: BeatPhase,
+    showControls: Boolean,
     onShowSettings: () -> Unit,
     onShowBpmDialog: () -> Unit,
 ) {
@@ -206,16 +231,13 @@ private fun PortraitLayout(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        Spacer(Modifier.height(28.dp))
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.alpha(CONTROLS_ALPHA),
-        ) {
-            BpmControls(beat = beat, onShowBpmDialog = onShowBpmDialog)
-            Spacer(Modifier.height(12.dp))
-            BeatsPerBarControls()
-            Spacer(Modifier.height(24.dp))
-            TransportRow(beat = beat)
+        if (showControls) {
+            Spacer(Modifier.height(28.dp))
+            TempoTransportCluster(
+                beat = beat,
+                onShowBpmDialog = onShowBpmDialog,
+                modifier = Modifier.alpha(CONTROLS_ALPHA),
+            )
         }
     }
 }
@@ -225,6 +247,7 @@ private fun CompactLandscapeLayout(
     previewSize: Int,
     frame: IntArray,
     beat: BeatPhase,
+    showControls: Boolean,
     onShowSettings: () -> Unit,
     onShowBpmDialog: () -> Unit,
 ) {
@@ -241,21 +264,50 @@ private fun CompactLandscapeLayout(
             onShowSettings = onShowSettings,
             modifier = Modifier.fillMaxHeight().aspectRatio(1f),
         )
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .padding(bottom = 32.dp)
-                .alpha(CONTROLS_ALPHA),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            BpmControls(beat = beat, onShowBpmDialog = onShowBpmDialog)
-            Spacer(Modifier.height(8.dp))
-            BeatsPerBarControls()
-            Spacer(Modifier.height(16.dp))
-            TransportRow(beat = beat)
+        if (showControls) {
+            TempoTransportCluster(
+                beat = beat,
+                onShowBpmDialog = onShowBpmDialog,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(bottom = 32.dp)
+                    .alpha(CONTROLS_ALPHA),
+                verticalArrangement = Arrangement.Center,
+                bpmToBeatsSpacing = 8.dp,
+                beatsToTransportSpacing = 16.dp,
+            )
         }
+    }
+}
+
+/**
+ * The BPM/time-signature/bar-queue controls plus TAP/play-stop/HOLD transport, bundled into one
+ * composable and reused by both the main screen's own layouts and [SettingsSheet]'s "Tempo &
+ * Bars" mirror - a single live instance of this cluster rather than two independently-recomposing
+ * copies of the same `StateFlow`-driven UI (see [MainScreen]'s `showControls` handling, which stops
+ * composing the main screen's own copy entirely while Settings is open, rather than leaving it
+ * running invisibly underneath). Centered horizontally wherever it's used.
+ */
+@Composable
+internal fun TempoTransportCluster(
+    beat: BeatPhase,
+    onShowBpmDialog: () -> Unit,
+    modifier: Modifier = Modifier,
+    verticalArrangement: Arrangement.Vertical = Arrangement.Top,
+    bpmToBeatsSpacing: Dp = 12.dp,
+    beatsToTransportSpacing: Dp = 24.dp,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = verticalArrangement,
+    ) {
+        BpmControls(beat = beat, onShowBpmDialog = onShowBpmDialog)
+        Spacer(Modifier.height(bpmToBeatsSpacing))
+        BeatsPerBarControls()
+        Spacer(Modifier.height(beatsToTransportSpacing))
+        TransportRow(beat = beat)
     }
 }
 
@@ -313,6 +365,7 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
     val holdMode by MetronomeEngine.holdMode.collectAsState()
     val stagedBpm by MetronomeEngine.stagedBpm.collectAsState()
     val hasShownBpmHint by MetronomeEngine.hasShownBpmHint.collectAsState()
+    val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
     val bpmDragPxPerStep = with(LocalDensity.current) { 6.dp.toPx() }
 
     val displayBpm = stagedBpm ?: beat.bpm
@@ -330,10 +383,10 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         HoldRepeatButton(
-            onStep = { MetronomeEngine.setBpm(currentBpm() - BPM_STEP) },
+            onStep = { MetronomeEngine.setBpm(steppedBpm(currentBpm(), -1f)) },
             modifier = Modifier.size(48.dp),
         ) {
-            Icon(Icons.Filled.Remove, contentDescription = "Decrease BPM")
+            Icon(ExtraIcons.Remove, contentDescription = "Decrease BPM")
         }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -350,35 +403,61 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures { change, dragAmount ->
                         change.consume()
-                        MetronomeEngine.setBpm(currentBpm() + dragAmount / bpmDragPxPerStep)
+                        MetronomeEngine.setBpm(steppedBpm(currentBpm(), dragAmount / bpmDragPxPerStep))
                     }
                 },
         ) {
             Text(
                 text = bpmDisplayValue(displayBpm),
                 style = MaterialTheme.typography.displayMedium,
+                modifier = if (symbolicControlsEnabled) {
+                    Modifier.semantics { contentDescription = "${bpmDisplayValue(displayBpm)} ${bpmDisplayUnit(displayBpm)}" }
+                } else {
+                    Modifier
+                },
             )
             if (holdMode != MetronomeEngine.HoldMode.Off) {
-                Text(
-                    text = "• staged",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = RecordingRed,
-                )
+                StagedIndicator(symbolMode = symbolicControlsEnabled)
             }
         }
         HoldRepeatButton(
-            onStep = { MetronomeEngine.setBpm(currentBpm() + BPM_STEP) },
+            onStep = { MetronomeEngine.setBpm(steppedBpm(currentBpm(), 1f)) },
             modifier = Modifier.size(48.dp),
         ) {
             Icon(Icons.Filled.Add, contentDescription = "Increase BPM")
         }
     }
-    Text(
-        text = bpmDisplayUnit(displayBpm),
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.secondary,
-    )
+    if (!symbolicControlsEnabled) {
+        Text(
+            text = bpmDisplayUnit(displayBpm),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.secondary,
+        )
+    }
     BpmGestureHint(visible = !hasShownBpmHint)
+}
+
+/** The "this value is staged, not yet applied" indicator - a small [RecordingRed] dot in symbol
+ * mode (the same 6dp `CircleShape` badge already used elsewhere for staged/active-state cues, e.g.
+ * [QueueIconButton]'s destructive badge), or the literal text otherwise. Shared by [BpmControls]
+ * and [TimeSignatureNumberRow] so the two can never disagree on which form is showing. */
+@Composable
+private fun StagedIndicator(symbolMode: Boolean) {
+    if (symbolMode) {
+        Box(
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .size(6.dp)
+                .background(RecordingRed, CircleShape)
+                .semantics { contentDescription = "Staged, not yet applied" },
+        )
+    } else {
+        Text(
+            text = "• staged",
+            style = MaterialTheme.typography.labelSmall,
+            color = RecordingRed,
+        )
+    }
 }
 
 /** Shown once, ever, so the BPM number's tap/long-press/drag trio isn't a hidden secret -
@@ -492,7 +571,7 @@ internal fun BeatsPerBarControls() {
             )
 
             QueueIconButton(
-                icon = Icons.Filled.Remove,
+                icon = ExtraIcons.Remove,
                 contentDescription = "Remove the active bar from the queue",
                 enabled = hasQueue,
                 onClick = MetronomeEngine::removeCurrentBarFromQueue,
@@ -519,9 +598,9 @@ internal fun BeatsPerBarControls() {
             }
             QueueIconButton(
                 icon = when (queueMode) {
-                    MetronomeEngine.QueueMode.LOOP -> Icons.Filled.Repeat
-                    MetronomeEngine.QueueMode.ONCE -> Icons.Filled.SkipNext
-                    MetronomeEngine.QueueMode.MANUAL -> Icons.Filled.TouchApp
+                    MetronomeEngine.QueueMode.LOOP -> ExtraIcons.Repeat
+                    MetronomeEngine.QueueMode.ONCE -> ExtraIcons.SkipNext
+                    MetronomeEngine.QueueMode.MANUAL -> ExtraIcons.TouchApp
                 },
                 contentDescription = "Bar queue mode: ${queueMode.name.lowercase()} - tap to change",
                 onClick = { MetronomeEngine.setQueueMode(nextMode) },
@@ -549,7 +628,9 @@ internal fun BeatsPerBarControls() {
  * deliberately a notch smaller than BPM's own steppers to keep the visual hierarchy (tempo
  * first, meter second), and a fixed minimum width so the numerator and denominator rows stay
  * aligned with each other regardless of digit count (e.g. "4" vs "24"). Long-press opens the
- * combined [TimeSignatureEntryDialog] from either number. */
+ * combined [TimeSignatureEntryDialog] from either number; a horizontal drag scrubs it, same
+ * pixel-per-step sensitivity as [BpmControls]' own drag, for the same gesture on every number in
+ * this app rather than just the BPM one. */
 @Composable
 private fun TimeSignatureNumberRow(
     value: Int,
@@ -559,6 +640,8 @@ private fun TimeSignatureNumberRow(
     contentDescriptionNoun: String,
     stagedLabel: Boolean,
 ) {
+    val dragPxPerStep = with(LocalDensity.current) { 6.dp.toPx() }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -567,7 +650,7 @@ private fun TimeSignatureNumberRow(
             onStep = onDecrement,
             modifier = Modifier.size(TIME_SIG_STEPPER_SIZE),
         ) {
-            Icon(Icons.Filled.Remove, contentDescription = "Fewer $contentDescriptionNoun", modifier = Modifier.size(TIME_SIG_ICON_SIZE))
+            Icon(ExtraIcons.Remove, contentDescription = "Fewer $contentDescriptionNoun", modifier = Modifier.size(TIME_SIG_ICON_SIZE))
         }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -575,6 +658,25 @@ private fun TimeSignatureNumberRow(
                 .widthIn(min = TIME_SIG_NUMBER_MIN_WIDTH)
                 .pointerInput(Unit) {
                     detectTapGestures(onLongPress = { onLongPress() })
+                }
+                .pointerInput(Unit) {
+                    // A local accumulator, not a step-per-event call: value is Int-backed (unlike
+                    // BPM's Float engine state), so reading it back between events would silently
+                    // discard sub-step drag progress without something to carry the remainder -
+                    // same shape as PreviewBox's own swipe accumulator.
+                    var dragAccumulatedPx = 0f
+                    detectHorizontalDragGestures { change, dragAmount ->
+                        change.consume()
+                        dragAccumulatedPx += dragAmount
+                        while (dragAccumulatedPx >= dragPxPerStep) {
+                            onIncrement()
+                            dragAccumulatedPx -= dragPxPerStep
+                        }
+                        while (dragAccumulatedPx <= -dragPxPerStep) {
+                            onDecrement()
+                            dragAccumulatedPx += dragPxPerStep
+                        }
+                    }
                 },
         ) {
             // No fillMaxWidth() here - this Column only has a *minimum* width (widthIn(min=...)),
@@ -589,11 +691,8 @@ private fun TimeSignatureNumberRow(
                 color = MaterialTheme.colorScheme.secondary,
             )
             if (stagedLabel) {
-                Text(
-                    text = "• staged",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = RecordingRed,
-                )
+                val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
+                StagedIndicator(symbolMode = symbolicControlsEnabled)
             }
         }
         HoldRepeatButton(
@@ -727,6 +826,7 @@ private fun QueueIconButton(
 
 @Composable
 private fun TransportRow(beat: BeatPhase) {
+    val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -735,14 +835,18 @@ private fun TransportRow(beat: BeatPhase) {
             onClick = { MetronomeEngine.tapTempo() },
             modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
         ) {
-            Text("TAP")
+            if (symbolicControlsEnabled) {
+                Icon(ExtraIcons.TouchApp, contentDescription = "Tap tempo")
+            } else {
+                Text("TAP")
+            }
         }
         FilledIconButton(
             onClick = MetronomeEngine::toggle,
             modifier = Modifier.size(PLAY_PAUSE_SIZE),
         ) {
             Icon(
-                imageVector = if (beat.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                imageVector = if (beat.isPlaying) ExtraIcons.Pause else Icons.Filled.PlayArrow,
                 contentDescription = if (beat.isPlaying) "Stop" else "Start",
                 modifier = Modifier.size(PLAY_PAUSE_ICON_SIZE),
             )
@@ -752,6 +856,20 @@ private fun TransportRow(beat: BeatPhase) {
 }
 
 private const val BPM_STEP = 1f
+
+/** [steppedBpm]'s multiplicative step size outside the normal BPM range - ~10% per step.
+ * Deliberately larger than a "just barely log-scale" 5% would suggest: right at the BPM=1
+ * boundary, a log step's *absolute* size is `1 * (factor-1)`, while the linear step just inside
+ * the boundary is a full [BPM_STEP] (1) - at 5% that's a 20x responsiveness cliff crossing from
+ * "drag right below 1 BPM" into "drag right at/above 1 BPM" (or the reverse, decreasing into BPH
+ * territory), which reads as the control suddenly barely responding, not just stepping
+ * differently. 10% narrows that cliff to ~10x without fully sacrificing this factor's other job -
+ * feeling *equally* responsive by ratio out toward 12000 BPM. A single constant factor can't make
+ * both boundaries (BPM=1 *and* BPM=400) perfectly continuous with the linear region at once (the
+ * two boundary values differ by 400x) - this is a deliberate middle ground, not a full fix; the
+ * BPM number's long-press dialog and Settings' "Jump to unit" switcher exist as the precise,
+ * non-drag path into BPH/BPS territory specifically because of this tension. */
+private const val LOG_BPM_STEP_FACTOR = 1.1f
 private const val BPM_HINT_DURATION_MS = 4000L
 private const val CONTROLS_ALPHA = 0.82f
 private val PLAY_PAUSE_SIZE = 76.dp

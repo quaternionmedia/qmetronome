@@ -88,6 +88,15 @@ class MetronomeSettingsTest {
     }
 
     @Test
+    fun `symbolic controls default off, and round-trip once set`() {
+        assertFalse(settings.symbolicControlsEnabled)
+
+        settings.symbolicControlsEnabled = true
+
+        assertEquals(true, settings.symbolicControlsEnabled)
+    }
+
+    @Test
     fun `bar queue defaults to a single default bar, and round-trips once set`() {
         assertEquals(listOf(TimeSignature.DEFAULT), settings.queue)
         assertEquals(0, settings.queueIndex)

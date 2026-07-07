@@ -39,10 +39,18 @@ class MetronomeGlyphService : GlyphMatrixToyService("MetronomeGlyph") {
         )
         toyScope = scope
         scope.launch {
+            // Every emission from a running render loop is a genuinely new array instance (see
+            // GlyphCanvas.BufferPool's kdoc), but not necessarily different *content* frame to
+            // frame - e.g. a fully-decayed resting pose repeated across several polls at a slow
+            // tempo. Skipping an unchanged push saves a real hardware/IPC call each time, not just
+            // a wasted allocation.
+            var lastPushedFrame: IntArray? = null
             MetronomeEngine.frame.collect { frame ->
                 if (frame.isEmpty()) return@collect
+                if (lastPushedFrame?.contentEquals(frame) == true) return@collect
                 try {
                     glyphMatrixManager.setMatrixFrame(frame)
+                    lastPushedFrame = frame
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to update Glyph Matrix", e)
                 }

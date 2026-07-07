@@ -36,10 +36,17 @@ are part of the record, not just the eventual fix.
   (a silently-dying update collector, then a one-shot-snapshot-vs-reactive-
   composition bug that took two attempts to correctly diagnose). Ends with
   its own manual test checklist.
+- **[`realtime-audio-roadmap.md`](realtime-audio-roadmap.md)** — **not
+  started**, a scoping doc rather than a feasibility investigation with a
+  build behind it yet: independent audio-channel routing per beat type,
+  multiple simultaneous beat "threads" (true polyrhythm), and per-beat-type
+  MIDI actions. Written down explicitly so this direction is built toward
+  deliberately rather than boxed out by today's singleton-shaped engine.
 
 Corresponding decision records:
 `governance/qm/adr/DRAFT-midi-clock-as-open-standard-seam.md` and
-`governance/qm/adr/DRAFT-home-screen-widget-via-glance.md`.
+`governance/qm/adr/DRAFT-home-screen-widget-via-glance.md`. No ADR yet for
+the real-time audio roadmap - nothing to ratify until something's decided.
 
 ## Project governance
 
