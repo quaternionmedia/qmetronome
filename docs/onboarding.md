@@ -4,10 +4,12 @@ This is the step-by-step path for someone new to Android development (or just
 new to this stack). If you already know Gradle and ADB, skip to
 [`cookbook.md`](cookbook.md) instead.
 
-**What you're building:** qMetronome is an Android app — a tempo visualizer
-that drives a Glyph LED matrix on Nothing phones. You don't need a Nothing
-phone to work on it. The app runs on any Android 13+ device or emulator and
-shows a pixel-accurate preview of the Glyph Matrix on screen.
+**What you're building:** qMetronome is a metronome and tempo visualizer for
+performing musicians, built for any Android 13+ device or emulator - no
+Nothing hardware needed to work on it, or to use it. On a Nothing Phone (3)
+or Phone (4a) Pro it additionally drives a physical Glyph LED matrix; the
+on-screen preview mirrors that exact same output, so Glyph-facing features
+can be developed and tested without owning one.
 
 ---
 

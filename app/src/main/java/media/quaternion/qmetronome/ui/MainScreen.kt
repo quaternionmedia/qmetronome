@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -90,14 +91,16 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
     val frame by MetronomeEngine.frame.collectAsState()
     val compactLandscape by MetronomeEngine.compactLandscape.collectAsState()
     val stagedBpm by MetronomeEngine.stagedBpm.collectAsState()
-    val previewSize = if (frame.isNotEmpty()) sqrt(frame.size.toDouble()).roundToInt() else 25
+    val previewSize = previewSizeFor(frame)
 
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val useCompactLayout = isLandscape && compactLandscape
 
     var showSettings by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
     var showBpmDialog by remember { mutableStateOf(false) }
+    val showControls = !showSettings && !showHelp
 
     Box(modifier = modifier.fillMaxSize()) {
         if (useCompactLayout) {
@@ -105,7 +108,7 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
                 previewSize = previewSize,
                 frame = frame,
                 beat = beat,
-                showControls = !showSettings,
+                showControls = showControls,
                 onShowSettings = { showSettings = true },
                 onShowBpmDialog = { showBpmDialog = true },
             )
@@ -114,20 +117,24 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
                 previewSize = previewSize,
                 frame = frame,
                 beat = beat,
-                showControls = !showSettings,
+                showControls = showControls,
                 onShowSettings = { showSettings = true },
                 onShowBpmDialog = { showBpmDialog = true },
             )
         }
 
-        IconButton(
-            onClick = { showSettings = true },
+        Row(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .navigationBarsPadding()
                 .padding(8.dp),
         ) {
-            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+            IconButton(onClick = { showHelp = true }) {
+                Icon(ExtraIcons.Help, contentDescription = "Help")
+            }
+            IconButton(onClick = { showSettings = true }) {
+                Icon(Icons.Filled.Settings, contentDescription = "Settings")
+            }
         }
 
         QmBrandMark(
@@ -147,6 +154,10 @@ fun MainScreen(onActivateToy: () -> Unit, modifier: Modifier = Modifier) {
 
     if (showSettings) {
         SettingsSheet(onDismiss = { showSettings = false }, onActivateToy = onActivateToy)
+    }
+
+    if (showHelp) {
+        HelpScreen(onDismiss = { showHelp = false })
     }
 
     if (showBpmDialog) {
@@ -185,6 +196,14 @@ internal fun bpmDisplayUnit(bpm: Float): String = when {
     bpm > MetronomeEngine.MAX_BPM -> "BPS"
     else -> "BPM"
 }
+
+/** [MatrixPreview]'s `matrixSize` derived from [frame]'s own length (it's always a perfect
+ * square - one brightness value per cell) rather than a guessed constant - shared by [MainScreen]
+ * and [HelpScreen] so neither can pass a mismatched size that samples the wrong corner of the
+ * real matrix. Falls back to 25 (this app's actual physical Glyph Matrix dimension) only for the
+ * one frame [frame] is ever empty: before [MetronomeEngine.attach] has run. */
+internal fun previewSizeFor(frame: IntArray): Int =
+    if (frame.isNotEmpty()) sqrt(frame.size.toDouble()).roundToInt() else 25
 
 /**
  * BPM/BPH/BPS stepping shared by [BpmControls]' +/- hold-repeat buttons and its drag-to-scrub
@@ -311,8 +330,11 @@ internal fun TempoTransportCluster(
     }
 }
 
+/** Internal (not private): [PreviewGestureScreenshotTest] drives this composable's swipe/double-
+ * tap/long-press gestures directly, the same "test the real production composable" pattern as
+ * [BpmControls] and the rest. */
 @Composable
-private fun PreviewBox(
+internal fun PreviewBox(
     previewSize: Int,
     frame: IntArray,
     onShowSettings: () -> Unit,
@@ -325,6 +347,7 @@ private fun PreviewBox(
     // horizontal drag below. Single-tap is left unhandled (not needed on the preview itself).
     Box(
         modifier = modifier
+            .testTag("matrix_preview")
             .pointerInput(Unit) {
                 detectTapGestures(
                     onLongPress = { onShowSettings() },
@@ -391,6 +414,7 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
+                .testTag("bpm_number")
                 .padding(horizontal = 12.dp)
                 .pointerInput(Unit) {
                     // A plain tap registers a tap-tempo beat; long-press opens exact entry. Both
@@ -533,6 +557,7 @@ internal fun BeatsPerBarControls() {
             onLongPress = { showDialog = true },
             contentDescriptionNoun = "beats per bar",
             stagedLabel = holdMode != MetronomeEngine.HoldMode.Off,
+            testTag = "beats_per_bar_number",
         )
         TimeSignatureNumberRow(
             value = timeSignature.unitNoteValue,
@@ -545,6 +570,7 @@ internal fun BeatsPerBarControls() {
             onLongPress = { showDialog = true },
             contentDescriptionNoun = "note value",
             stagedLabel = false,
+            testTag = "unit_note_value_number",
         )
 
         Spacer(Modifier.height(4.dp))
@@ -568,6 +594,7 @@ internal fun BeatsPerBarControls() {
                 contentDescription = "Long-press to clear the queue and reset to a single default bar",
                 showDestructiveBadge = true,
                 onClick = MetronomeEngine::resetQueueToDefault,
+                modifier = Modifier.testTag("queue_reset_button"),
             )
 
             QueueIconButton(
@@ -575,6 +602,7 @@ internal fun BeatsPerBarControls() {
                 contentDescription = "Remove the active bar from the queue",
                 enabled = hasQueue,
                 onClick = MetronomeEngine::removeCurrentBarFromQueue,
+                modifier = Modifier.testTag("queue_remove_button"),
             )
 
             BarQueueDots(
@@ -589,6 +617,7 @@ internal fun BeatsPerBarControls() {
                 icon = Icons.Filled.Add,
                 contentDescription = "Add a bar to the queue",
                 onClick = MetronomeEngine::addBarToQueue,
+                modifier = Modifier.testTag("queue_add_button"),
             )
 
             val nextMode = when (queueMode) {
@@ -604,6 +633,7 @@ internal fun BeatsPerBarControls() {
                 },
                 contentDescription = "Bar queue mode: ${queueMode.name.lowercase()} - tap to change",
                 onClick = { MetronomeEngine.setQueueMode(nextMode) },
+                modifier = Modifier.testTag("queue_mode_button"),
             )
         }
     }
@@ -639,6 +669,7 @@ private fun TimeSignatureNumberRow(
     onLongPress: () -> Unit,
     contentDescriptionNoun: String,
     stagedLabel: Boolean,
+    testTag: String,
 ) {
     val dragPxPerStep = with(LocalDensity.current) { 6.dp.toPx() }
 
@@ -655,6 +686,7 @@ private fun TimeSignatureNumberRow(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
+                .testTag(testTag)
                 .widthIn(min = TIME_SIG_NUMBER_MIN_WIDTH)
                 .pointerInput(Unit) {
                     detectTapGestures(onLongPress = { onLongPress() })
@@ -744,6 +776,7 @@ private fun BarQueueDots(
 
             Box(
                 modifier = Modifier
+                    .testTag("queue_bar_$index")
                     .width(barWidth.coerceAtLeast(MIN_BAR_HIT_WIDTH))
                     .height(MAX_BAR_HEIGHT)
                     .pointerInput(index) {
@@ -796,10 +829,11 @@ private fun QueueIconButton(
     contentDescription: String,
     enabled: Boolean = true,
     showDestructiveBadge: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(26.dp)
             .combinedClickable(
                 enabled = enabled,

@@ -30,174 +30,22 @@ the repo — no separate SDK download or account is required.
 **Windows note:** on Windows, use `gradlew.bat` instead of `./gradlew`
 everywhere in this doc. `./gradlew` requires Git Bash; `gradlew.bat` works
 in PowerShell and CMD without any extra tools. Gradle also requires `JAVA_HOME`
-to be set — see the setup paths below for where to find it.
-
-> New to Android development? [`docs/onboarding.md`](docs/onboarding.md) walks
-> through every step with annotated output and "if this goes wrong" notes.
-> Experienced but just need the commands? [`docs/cookbook.md`](docs/cookbook.md)
-> is the quick reference.
+to be set — see [`docs/onboarding.md`](docs/onboarding.md) for where to find it.
 
 ---
 
-## Setup: with Android Studio
+## Setup
 
-1. **Clone the repo.**
-   ```sh
-   git clone https://github.com/quaternionmedia/qmetronome.git
-   cd qmetronome
-   ```
+[`docs/onboarding.md`](docs/onboarding.md) is the source of truth for
+getting from zero to a running build - JDK/SDK install (with or without
+Android Studio), `local.properties`, cloning, building, running the tests,
+installing on a device, and what to do if any of those steps fail. Follow it
+first if you're setting up this project for the first time; this doc doesn't
+repeat those steps.
 
-2. **Open in Android Studio.**
-   File → Open → select the `qmetronome` directory (the one containing
-   `settings.gradle.kts`). Not the `app/` subdirectory.
-
-3. **Let the Gradle sync finish.** Android Studio prompts to install missing
-   SDK components if needed — accept all of them. On first sync it downloads
-   Gradle 9.4.1 and resolves Maven dependencies (~200 MB total, cached after
-   the first time).
-
-4. **Run on a device or emulator.**
-   - Any Android 13+ (API 33+) device or emulator works.
-   - The app runs fine without Nothing hardware — you get the full UI and
-     the on-screen Glyph Matrix preview. The "Activate as Glyph Toy" button
-     will show a toast on non-Nothing devices instead of opening the toys
-     manager.
-   - To see the real Glyph Matrix output, deploy to a Nothing Phone (3) or
-     (4a) Pro, then use the Glyph Toys manager to enable the toy.
-
-5. **Run the tests.** In the terminal panel at the bottom:
-   ```sh
-   ./gradlew test        # macOS/Linux or Android Studio's built-in terminal
-   gradlew.bat test      # Windows PowerShell / CMD
-   ```
-   All tests run on the JVM via Robolectric — no device or emulator needed.
-
-   > **Windows:** Android Studio's built-in terminal (View → Tool Windows → Terminal)
-   > already has `JAVA_HOME` configured — both `./gradlew` and `gradlew.bat` work
-   > there. In an external PowerShell window you need `JAVA_HOME` set first; see
-   > the CLI setup below or [`docs/onboarding.md`](docs/onboarding.md).
-
----
-
-## Setup: without Android Studio (command line)
-
-Any editor works for code — VS Code with the Kotlin extension, IntelliJ IDEA
-Community, Neovim, whatever. You need the Android SDK separately.
-
-### 1 — JDK 21
-
-**Windows with Android Studio already installed:** use the bundled JDK — no
-separate download needed:
-
-```powershell
-# PowerShell — add to your $PROFILE for persistence
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
-$env:PATH      = "$env:JAVA_HOME\bin;$env:PATH"
-```
-
-**Everyone else:** download [Temurin 21](https://adoptium.net/) (the CI
-distribution) and set `JAVA_HOME`:
-
-```sh
-# macOS / Linux (add to ~/.zshrc or ~/.bashrc)
-export JAVA_HOME=/path/to/jdk-21
-export PATH="$JAVA_HOME/bin:$PATH"
-
-# Windows without Android Studio (PowerShell)
-$env:JAVA_HOME = "C:\path\to\temurin-21"
-$env:PATH      = "$env:JAVA_HOME\bin;$env:PATH"
-```
-
-Verify: `java -version` should print `openjdk version "21…"`.
-
-### 2 — Install the Android SDK
-
-**Option A: command-line tools only** (no Android Studio)
-
-Download [Android command-line tools](https://developer.android.com/studio#command-line-tools-only)
-and unzip to a location of your choice (e.g. `~/android-sdk` on Linux/macOS,
-`C:\android-sdk` on Windows). Then:
-
-```sh
-# Set ANDROID_HOME (add to shell profile)
-export ANDROID_HOME=~/android-sdk      # Linux/macOS
-# or
-$env:ANDROID_HOME = "C:\android-sdk"  # Windows PowerShell
-
-# Install the required SDK components
-$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-  "platform-tools" \
-  "platforms;android-35" \
-  "build-tools;35.0.0"
-```
-
-**Option B: reuse an existing Android Studio SDK**
-
-If Android Studio is installed elsewhere on the machine (but you want to use
-a different editor), point to its SDK instead:
-
-```sh
-# macOS
-export ANDROID_HOME=~/Library/Android/sdk
-# Linux
-export ANDROID_HOME=~/Android/Sdk
-```
-
-```powershell
-# Windows PowerShell
-$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
-```
-
-### 3 — Tell Gradle where the SDK is
-
-**Android Studio users:** Android Studio already created `local.properties`
-with `sdk.dir=` pointing to your SDK. Skip this step — you're done.
-
-**CLI-only setups:** create `local.properties` in the project root:
-
-```properties
-# macOS/Linux
-sdk.dir=/home/yourname/android-sdk
-
-# Windows — use forward slashes or escape backslashes
-sdk.dir=C\:/android-sdk
-```
-
-Alternatively, if `ANDROID_HOME` is set the Gradle Android plugin picks it up
-automatically and `local.properties` isn't required.
-
-`local.properties` is gitignored — don't commit it.
-
-### 4 — Clone and build
-
-```sh
-git clone https://github.com/quaternionmedia/qmetronome.git
-cd qmetronome
-
-# First build — downloads Gradle 9.4.1 and all Maven dependencies (~200 MB, cached after)
-./gradlew assembleDebug          # macOS/Linux
-gradlew.bat assembleDebug        # Windows PowerShell/CMD
-
-# Run all unit tests (JVM only, no device needed)
-./gradlew test                   # macOS/Linux
-gradlew.bat test                 # Windows
-```
-
-### 5 — Install on a device
-
-Enable USB debugging on your Android 13+ device, then:
-
-```sh
-# macOS/Linux (adb is in $ANDROID_HOME/platform-tools/)
-adb install app/build/outputs/apk/debug/app-debug.apk
-
-# Windows — if adb isn't in PATH, use the full path:
-& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" install app\build\outputs\apk\debug\app-debug.apk
-```
-
-To add `adb` to your PATH permanently on Windows, add
-`%LOCALAPPDATA%\Android\Sdk\platform-tools` to System Properties → Environment
-Variables → Path.
+Once you're set up, the quick-reference version of the same commands (build,
+test, install, plus `adb`/logcat one-liners) lives in
+[`docs/cookbook.md`](docs/cookbook.md).
 
 ---
 
@@ -210,18 +58,21 @@ qmetronome/
 │   ├── visualizers/     # GlyphVisualizer implementations + GlyphCanvas
 │   ├── midi/            # MIDI clock in/out, USB connector, virtual device service
 │   ├── glyph/           # Glyph Matrix SDK integration (isolated here — see ADR)
-│   ├── ui/              # Compose UI: MainScreen, SettingsSheet, MatrixPreview, etc.
+│   ├── ui/              # Compose UI: MainScreen, SettingsSheet, HelpScreen, MatrixPreview, etc.
+│   ├── tutorial/        # TutorialTopics — shared source of truth for user-guide.md + HelpScreen
 │   └── widget/          # Home screen widget (Jetpack Glance)
 ├── app/libs/            # glyph-matrix-sdk-2.0.aar — committed, no separate download
-├── docs/                # Feature investigations, test plans, release checklists
+├── docs/                # Feature investigations, test plans, release checklists, user-guide.md
 ├── governance/qm/       # org constitution submodule; adr/ here holds this project's own ADRs
 ├── scripts/             # Helper scripts (e.g. generate-release-key.bat)
 └── .github/workflows/   # CI (ci.yml) and release pipeline (release.yml)
 ```
 
-The root [`README.md`](README.md) is the architecture reference — read the
-`engine/`, `midi/`, and `ui/` bullets there first. [`docs/README.md`](docs/README.md)
-indexes the feature-specific investigations and test plans.
+The root [`README.md`](README.md) is the architecture reference — its "Using qMetronome"
+section is the narrative walkthrough, and its [Glossary](README.md#glossary) covers every
+`engine/`, `midi/`, and `ui/` class and singleton by name; skim the Glossary before diving into
+any of those packages. [`docs/README.md`](docs/README.md) indexes the feature-specific
+investigations and test plans.
 [`governance/qm/adr/README.md`](governance/qm/adr/README.md) explains the
 decision-record process — this project's own ADRs live inside that
 submodule, on this project's dedicated `project/qmetronome` branch, not as a
@@ -259,6 +110,53 @@ JUnit 4 + Robolectric for anything that touches Android framework classes
 (`@RunWith(RobolectricTestRunner::class)`, `@Config(sdk = [33])`). Pure
 Kotlin logic uses plain JUnit. New behaviour should come with tests; new
 engine or MIDI behaviour needs them.
+
+**Compose UI gestures are tests-as-source-of-truth, not just tests.** Every
+major user-facing gesture (drag-to-scrub, long-press-to-type, HOLD's
+momentary/latch staging, the bar queue, Settings' chip rows, the Glyph Matrix
+preview's swipe/double-tap/long-press, layout toggles) has a
+`*ScreenshotTest.kt` under `app/src/test/java/.../ui/` that drives the real
+production composable through an actual simulated gesture
+(`performTouchInput`), asserts genuine behavior, *and* captures a
+[Roborazzi](https://github.com/takahirom/roborazzi) screenshot in the same
+test - almost always by rendering the actual, full `MainScreen` (or
+`SettingsSheet`/`HelpScreen`) at `FULLSCREEN_QUALIFIERS`' resolution
+(1080x2400, a realistic modern-phone size) rather than the one composable
+under test in isolation, so every screenshot looks like a genuine phone
+screen. The one exception is `BpmUnitEntryDialogScreenshotTest` - see its own
+kdoc for why a real Android dialog is captured differently. Motion-heavy
+topics (drags, swipes, HOLD's timing) additionally have a
+[`recordRoboVideo`](https://github.com/takahirom/roborazzi)-captured GIF
+alongside the static screenshot - see `*VideoTest.kt` files for the pattern.
+
+Adding a new gesture/topic means:
+
+1. Add a `TutorialTopic` to `tutorial/TutorialTopic.kt`'s `TutorialTopics.all`
+   (id, title, end-user-facing description, category).
+2. Write a `*ScreenshotTest` that drives the gesture and calls
+   `composeTestRule.onScreenshotRoot().captureRoboImage(screenshotPath(topic.id))`
+   (see `ComposeTestSupport.kt` for the shared theming/capture helpers - read
+   its kdoc before writing a new test, several non-obvious gotchas are
+   documented there, e.g. why gestures use hand-rolled `performTouchInput`
+   sequences over `swipeLeft()`/`swipeRight()`, why some clicks inside
+   `SettingsSheet` need `.invokeOnClick()` instead of `.performClick()`, and
+   why drag distances are 3x what they'd look like at 1x density). Add a
+   `*VideoTest` alongside it too if the gesture is genuinely motion-based.
+3. Run `./gradlew generateUserGuide` (implies `testDebugUnitTest`, which
+   captures the screenshot/video) to regenerate
+   [`docs/user-guide.md`](docs/user-guide.md) - this also *fails* if any
+   topic's screenshot is missing, so a new topic without a matching test
+   can't silently ship a broken doc image link.
+4. **Wire the new screenshot into git** - `docs/images/generated/` is
+   gitignored by default (see `.gitignore`'s own comment) precisely so a
+   topic's file only ends up tracked as a deliberate step, not automatically
+   the moment a test happens to produce one locally. Add an explicit `!`
+   negation line for the new file(s) (`!docs/images/generated/screenshots/
+   your-topic-id.png`, and the `videos/` equivalent if it has one) right
+   next to the existing ones, then `git add` it normally.
+5. Add a live-composable branch for the topic's category in
+   `ui/HelpScreen.kt` if it isn't already covered by an existing one (several
+   categories share one live control - see that file's `when` block).
 
 The Glyph Matrix SDK (`glyph/`) and the live `MidiManager` device-open path
 are not unit-testable (closed AAR with real Binder calls; Robolectric's MIDI
@@ -311,6 +209,18 @@ change you're making.
 ---
 
 ## Cutting a release
+
+[`CHANGELOG.md`](CHANGELOG.md) is generated from this repo's own annotated
+tag history (`scripts/generate-changelog.sh`), and both release workflows
+below regenerate it and attach it as a release asset automatically - but
+that's a CI-local copy, not committed back to the repo. If you want the
+tracked `CHANGELOG.md` itself current, run the script and commit it
+(before or after tagging, either works, since it reads *all* existing tags):
+
+```sh
+bash scripts/generate-changelog.sh
+git add CHANGELOG.md && git commit -m "Regenerate CHANGELOG.md"
+```
 
 There are two tag series, each with its own workflow:
 

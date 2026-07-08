@@ -72,6 +72,14 @@ jobs:
             -PversionName=${{ steps.version.outputs.name }} \
             --console=plain
 
+      # ── Changelog ────────────────────────────────────────────────────────
+      # Regenerated from tag history (including this one, already pushed) and
+      # attached as a release asset - not committed back to the repo (see
+      # scripts/generate-changelog.sh's own kdoc-equivalent comment for why
+      # that's left a manual step, same precedent as ADR numbering).
+      - name: Regenerate CHANGELOG.md
+        run: bash scripts/generate-changelog.sh
+
       # ── GitHub Release (pre-release) ──────────────────────────────────────
       - name: Create pre-release
         uses: softprops/action-gh-release@v2
@@ -94,3 +102,4 @@ jobs:
             signed releases see the `v1.x.x` tag series.
           files: |
             app/build/outputs/apk/debug/app-debug.apk
+            CHANGELOG.md

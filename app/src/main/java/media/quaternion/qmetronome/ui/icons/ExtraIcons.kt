@@ -48,6 +48,18 @@ object ExtraIcons {
         close()
     }
 
+    /** An open (unclosed) arc, the same trig-segment approach as [circle] - used for [Help]'s
+     * question-mark hook, where a full closed shape isn't what's wanted. Degrees, not radians,
+     * to keep the call site's sweep readable. */
+    private fun PathBuilder.arc(cx: Float, cy: Float, r: Float, startDeg: Double, endDeg: Double, segments: Int = 16) {
+        for (i in 0..segments) {
+            val angle = Math.toRadians(startDeg + (endDeg - startDeg) * i / segments)
+            val x = (cx + r * cos(angle)).toFloat()
+            val y = (cy + r * sin(angle)).toFloat()
+            if (i == 0) moveTo(x, y) else lineTo(x, y)
+        }
+    }
+
     val Remove: ImageVector by lazy {
         icon("Remove") {
             path(fill = SolidColor(Color.Black)) {
@@ -170,6 +182,28 @@ object ExtraIcons {
                 moveTo(points[0].x, points[0].y)
                 points.drop(1).forEach { lineTo(it.x, it.y) }
                 close()
+            }
+        }
+    }
+
+    /** A ring with a question-mark hook + stem + dot inside - not Google's exact glyph, built
+     * from the same [arc]/[circle] trig primitives as everything else here (see the file kdoc). */
+    val Help: ImageVector by lazy {
+        icon("Help") {
+            path(fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 1.6f) {
+                circle(cx = 12f, cy = 12f, r = 9f)
+            }
+            path(
+                fill = null,
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.8f,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                arc(cx = 12f, cy = 9.5f, r = 3f, startDeg = -160.0, endDeg = 90.0)
+                lineTo(12f, 13.5f)
+            }
+            path(fill = SolidColor(Color.Black)) {
+                circle(cx = 12f, cy = 17f, r = 1.2f)
             }
         }
     }

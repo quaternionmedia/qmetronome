@@ -51,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import media.quaternion.qmetronome.engine.ClickSound
@@ -93,7 +94,6 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     val clickEnabled by MetronomeEngine.clickEnabled.collectAsState()
     val clickSpecs by MetronomeEngine.clickSpecs.collectAsState()
     val clockOutEnabled by MidiClockSender.enabled.collectAsState()
-    val clockOutTimingMode by MidiClockSender.timingMode.collectAsState()
     val visualOffsetMs by MetronomeEngine.visualOffsetMs.collectAsState()
     val audioOffsetMs by MetronomeEngine.audioOffsetMs.collectAsState()
     val stagedBpm by MetronomeEngine.stagedBpm.collectAsState()
@@ -172,21 +172,7 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                 )
                 Spacer(Modifier.height(4.dp))
                 Text("Jump to unit", style = MaterialTheme.typography.bodyMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val currentBpmUnit = bpmUnitFor(stagedBpm ?: beat.bpm)
-                    BpmUnit.entries.forEach { unit ->
-                        FilterChip(
-                            selected = currentBpmUnit == unit,
-                            onClick = {
-                                if (unit != currentBpmUnit) {
-                                    if (unit != BpmUnit.BPM) MetronomeEngine.setExtendedBpmRangeEnabled(true)
-                                    MetronomeEngine.setBpm(bpmFromUnitValue(bpmDefaultUnitValue(unit), unit))
-                                }
-                            },
-                            label = { Text(unit.label) },
-                        )
-                    }
-                }
+                JumpToUnitChips()
                 Text(
                     text = "Jumps straight to a representative tempo in that unit's own range - the same " +
                         "long-press-to-type dialog on the BPM number itself also lets you type an exact " +
@@ -331,7 +317,11 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
             CollapsibleSection(
                 title = "Layout",
                 summary = {
-                    Switch(checked = compactLandscape, onCheckedChange = MetronomeEngine::setCompactLandscape)
+                    Switch(
+                        checked = compactLandscape,
+                        onCheckedChange = MetronomeEngine::setCompactLandscape,
+                        modifier = Modifier.testTag("compact_landscape_switch"),
+                    )
                 },
             ) {
                 Text(
@@ -342,7 +332,11 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                 )
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Symbol-only controls", style = MaterialTheme.typography.bodyMedium)
-                    Switch(checked = symbolicControlsEnabled, onCheckedChange = MetronomeEngine::setSymbolicControlsEnabled)
+                    Switch(
+                        checked = symbolicControlsEnabled,
+                        onCheckedChange = MetronomeEngine::setSymbolicControlsEnabled,
+                        modifier = Modifier.testTag("symbol_only_controls_switch"),
+                    )
                 }
                 Text(
                     text = "Drops words from the main screen's tempo/transport controls in favor of " +
@@ -453,15 +447,7 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
 
                 Spacer(Modifier.height(4.dp))
                 Text("Outgoing clock feel", style = MaterialTheme.typography.bodyMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ClockTimingMode.entries.forEach { mode ->
-                        FilterChip(
-                            selected = clockOutTimingMode == mode,
-                            onClick = { MidiClockSender.setTimingMode(mode) },
-                            label = { Text(if (mode == ClockTimingMode.MECHANICAL) "Mechanical" else "Organic") },
-                        )
-                    }
-                }
+                ClockFeelChips()
                 Text(
                     text = "Mechanical actively corrects the outgoing clock for the truest, most locked-in " +
                         "beat. Organic skips that correction while repeating a followed clock, letting " +
@@ -776,6 +762,51 @@ private fun AudioOffsetDetails(bpm: Float) {
     }
 }
 
+// ── Jump to unit / clock feel chip rows ────────────────────────────────────
+
+/** The "Jump to unit" chip row - internal (not private) so [HelpScreen] can embed this exact
+ * live control rather than a static screenshot, the same "one shared live instance" pattern
+ * [TempoTransportCluster] already establishes. Self-contained (reads its own engine state)
+ * rather than taking parameters, so either call site can drop it in with no wiring. */
+@Composable
+internal fun JumpToUnitChips() {
+    val beat by MetronomeEngine.state.collectAsState()
+    val stagedBpm by MetronomeEngine.stagedBpm.collectAsState()
+    val currentBpmUnit = bpmUnitFor(stagedBpm ?: beat.bpm)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        BpmUnit.entries.forEach { unit ->
+            FilterChip(
+                selected = currentBpmUnit == unit,
+                onClick = {
+                    if (unit != currentBpmUnit) {
+                        if (unit != BpmUnit.BPM) MetronomeEngine.setExtendedBpmRangeEnabled(true)
+                        MetronomeEngine.setBpm(bpmFromUnitValue(bpmDefaultUnitValue(unit), unit))
+                    }
+                },
+                label = { Text(unit.label) },
+                modifier = Modifier.testTag("jump_to_unit_${unit.name}"),
+            )
+        }
+    }
+}
+
+/** The "Outgoing clock feel" chip row - internal (not private) for the same reason as
+ * [JumpToUnitChips]: [HelpScreen] embeds this exact live control directly. */
+@Composable
+internal fun ClockFeelChips() {
+    val clockOutTimingMode by MidiClockSender.timingMode.collectAsState()
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ClockTimingMode.entries.forEach { mode ->
+            FilterChip(
+                selected = clockOutTimingMode == mode,
+                onClick = { MidiClockSender.setTimingMode(mode) },
+                label = { Text(if (mode == ClockTimingMode.MECHANICAL) "Mechanical" else "Organic") },
+                modifier = Modifier.testTag("clock_feel_${mode.name}"),
+            )
+        }
+    }
+}
+
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
 /**
@@ -799,11 +830,16 @@ private fun CollapsibleSection(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    // A dedicated tag rather than relying on finding this row by its title text: that title
+    // shares a merged semantics node with `summary`'s own control (e.g. a Switch), and a test
+    // clicking by text risks resolving to the wrong one of the two actions living on that node.
+    val headerTestTag = remember(title) { "section_header_${title.replace(" ", "_").replace("&", "and")}" }
 
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .testTag(headerTestTag)
                 .clickable { expanded = !expanded },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -815,6 +851,7 @@ private fun CollapsibleSection(
             )
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { summary() }
             Icon(
+                modifier = Modifier.testTag("${headerTestTag}_chevron"),
                 imageVector = if (expanded) ExtraIcons.ExpandLess else ExtraIcons.ExpandMore,
                 contentDescription = if (expanded) "Collapse $title" else "Expand $title",
                 tint = MaterialTheme.colorScheme.secondary,

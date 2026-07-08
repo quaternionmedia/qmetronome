@@ -103,6 +103,14 @@ jobs:
             -PversionName=${{ steps.version.outputs.name }} \
             --console=plain
 
+      # ── Changelog ────────────────────────────────────────────────────────
+      # Regenerated from tag history (including this one, already pushed) and
+      # attached as a release asset - not committed back to the repo (see
+      # scripts/generate-changelog.sh's own kdoc-equivalent comment for why
+      # that's left a manual step, same precedent as ADR numbering).
+      - name: Regenerate CHANGELOG.md
+        run: bash scripts/generate-changelog.sh
+
       # ── GitHub Release ────────────────────────────────────────────────────
       # generate_release_notes pulls commit messages since the previous tag;
       # edit the release on GitHub afterwards if you want a hand-written summary.
@@ -115,3 +123,4 @@ jobs:
           files: |
             app/build/outputs/apk/release/app-release.apk
             app/build/outputs/bundle/release/app-release.aab
+            CHANGELOG.md

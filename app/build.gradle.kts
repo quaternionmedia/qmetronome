@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.roborazzi)
 }
 
 /** Fallback versionName for local/debug builds, so the in-app version footer (Settings -> the
@@ -115,6 +116,38 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.ui.test.junit4)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(libs.roborazzi.junit.rule)
+    debugImplementation(libs.androidx.ui.test.manifest)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+}
+
+/** Screenshots captured by [io.github.takahirom.roborazzi] (see `tutorial/` package + `*ScreenshotTest`
+ * files under `app/src/test/`) are the illustrations for `docs/user-guide.md` - written straight
+ * into a tracked repo location (not the gitignored `build/` default) so they render on GitHub
+ * without a build step, and stay in sync automatically the moment the tests that produce them are
+ * re-run (`./gradlew testDebugUnitTest -Proborazzi.test.record=true`). */
+roborazzi {
+    outputDir.set(file("../docs/images/generated/screenshots"))
+}
+
+/** Regenerates `docs/user-guide.md` from `TutorialTopics.all` - the one step of "tests spawn the
+ * rest" that isn't itself a Compose UI test (see `GenerateUserGuideTest.kt`'s own kdoc for why
+ * it's a `Test` task rather than a plain one: it reuses `testDebugUnitTest`'s own classpath
+ * wholesale rather than hand-assembling a second one, and `dependsOn` it so every topic's
+ * screenshot is freshly (re)captured - by the *whole* suite, not just this one filtered class -
+ * before the doc embedding them gets written. */
+tasks.register<Test>("generateUserGuide") {
+    group = "documentation"
+    description = "Regenerates docs/user-guide.md from TutorialTopics.all + the screenshots testDebugUnitTest just captured."
+    val unitTest = tasks.named<Test>("testDebugUnitTest")
+    dependsOn(unitTest)
+    testClassesDirs = unitTest.get().testClassesDirs
+    classpath = unitTest.get().classpath
+    filter {
+        includeTestsMatching("media.quaternion.qmetronome.tools.GenerateUserGuideTest")
+    }
 }
