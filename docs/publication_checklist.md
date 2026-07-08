@@ -271,16 +271,16 @@ There are two release tracks with different bars:
 
 ## Documentation
 
-- [x] **Tempo controls & MIDI clock-out**: README's `ui/` and `midi/`
-      architecture bullets cover the press-and-hold step buttons,
-      drag-to-scrub, and bidirectional MIDI clock (virtual + USB, both
-      ways). `docs/external-midi-clock.md` and the MIDI ADR cover the
-      design rationale, including the deliberate choice to allow rather
-      than block following-and-sending-to-the-same-USB-device.
+- [x] **Tempo controls & MIDI clock-out**: README's "Using qMetronome" section covers the
+      press-and-hold step buttons, drag-to-scrub, and bidirectional MIDI clock (virtual + USB,
+      both ways) as narrative; its Glossary covers the same ground by class/file name (`ui/` and
+      `midi/`). `docs/external-midi-clock.md` and the MIDI ADR cover the design rationale,
+      including the deliberate choice to allow rather than block
+      following-and-sending-to-the-same-USB-device.
 - [x] **Widget implementation**: `docs/home-screen-widget.md` documents the
       `collectAsState` reactivity pattern and the round-by-round path to it.
-- [x] **User guide**: README now has a "Using the widget" section (placement,
-      toggle, the background-tap app shortcut, why it's not a live preview).
+- [x] **User guide**: README's "Using qMetronome" section has "A widget for the home screen"
+      (placement, toggle, the background-tap app shortcut, why it's not a live preview).
 - [x] **Developer handover**: the standalone `walkthrough.md` has been
       folded into `docs/home-screen-widget.md` as that doc's fourth test
       round, instead of living as a second, overlapping narrative of the same

@@ -68,9 +68,11 @@ qmetronome/
 └── .github/workflows/   # CI (ci.yml) and release pipeline (release.yml)
 ```
 
-The root [`README.md`](README.md) is the architecture reference — read the
-`engine/`, `midi/`, and `ui/` bullets there first. [`docs/README.md`](docs/README.md)
-indexes the feature-specific investigations and test plans.
+The root [`README.md`](README.md) is the architecture reference — its "Using qMetronome"
+section is the narrative walkthrough, and its [Glossary](README.md#glossary) covers every
+`engine/`, `midi/`, and `ui/` class and singleton by name; skim the Glossary before diving into
+any of those packages. [`docs/README.md`](docs/README.md) indexes the feature-specific
+investigations and test plans.
 [`governance/qm/adr/README.md`](governance/qm/adr/README.md) explains the
 decision-record process — this project's own ADRs live inside that
 submodule, on this project's dedicated `project/qmetronome` branch, not as a

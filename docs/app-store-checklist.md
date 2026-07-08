@@ -56,18 +56,23 @@ worth establishing first rather than assuming.
       generate from source). Suggest: main screen mid-beat with a visualizer
       active, the full-screen settings overlay (visualizer picker + MIDI
       clock section), and the home screen widget placed.
-- [ ] **Short description** (≤80 chars) - "Precision metronome for Nothing phones with Glyph Matrix and MIDI clock sync."
+- [ ] **Short description** (≤80 chars) - "Metronome & tempo visualizer for musicians. Extra Glyph Matrix flair on Nothing."
 - [ ] **Full description** (≤4000 chars) -
-      "qMetronome is a professional-grade metronome and beat visualizer designed
-      specifically for Nothing phones.
+      "qMetronome is a precision metronome and tempo visualizer for performing and
+      practicing musicians, built for any Android 13+ phone.
 
       Key Features:
-      - Glyph Matrix Integration: Custom animations for Phone (3) and (4a) Pro.
+      - Multiple Input Methods: Tap tempo, step buttons, or drag-to-scrub.
+      - Bar Queue: Line up a sequence of differently-metered, differently-paced bars for a
+        whole set ahead of time.
       - MIDI Clock Sync: Send/receive MIDI clock over USB or inter-app.
       - Precision Timing: Drift-corrected engine for rock-solid performance.
-      - Multiple Input Methods: Tap tempo, step buttons, or drag-to-scrub.
       - Home Screen Widget: Toggle play/stop directly from your launcher.
       - Minimalist Design: Pure monochrome aesthetic.
+
+      On a Nothing Phone (3) or Phone (4a) Pro, qMetronome also drives the physical Glyph
+      Matrix with custom beat-synced animations - a bonus display layered on top of
+      everything above, not a requirement to use the app.
 
       qMetronome is open source and collects zero user data."
 - [ ] **App category** - "Music & Audio" fits better than "Tools" given the
