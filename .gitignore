@@ -26,13 +26,14 @@ keystore.properties
 .cxx
 local.properties
 
-# Roborazzi screenshots/videos (docs/user-guide.md's illustrations, `app/src/test/.../ui/
+# Roborazzi screenshots/videos (docs/user-guide/'s illustrations, `app/src/test/.../ui/
 # *ScreenshotTest.kt`) regenerate on every `./gradlew testDebugUnitTest` - ignored by default so
 # routine UI changes don't churn binary diffs into every commit. Un-ignore a specific file with an
-# explicit `!` line below once it's actually embedded in docs/user-guide.md (i.e. once its
+# explicit `!` line below once it's actually embedded in docs/user-guide/ (i.e. once its
 # TutorialTopic exists in `tutorial/TutorialTopic.kt`) - see CONTRIBUTING.md's "Test coverage"
 # section for the full "wire in a screenshot" steps. New topics are gitignored (generated locally,
-# not shipped) until deliberately wired in this way.
+# not shipped) until deliberately wired in this way. `app-running.gif` is the one exception not
+# tied to a TutorialTopic - the plain "app at rest" hero shot used by the top-level docs.
 docs/images/generated/screenshots/*
 docs/images/generated/videos/*
 !docs/images/generated/screenshots/bpm-drag-scrub.png
@@ -67,3 +68,4 @@ docs/images/generated/videos/*
 !docs/images/generated/videos/preview-long-press-settings.gif
 !docs/images/generated/videos/compact-landscape-layout.gif
 !docs/images/generated/videos/symbol-only-controls.gif
+!docs/images/generated/videos/app-running.gif

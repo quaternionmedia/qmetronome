@@ -2,7 +2,7 @@ package media.quaternion.qmetronome.tutorial
 
 /**
  * One demonstrable, user-facing behavior - the single shared source of *content* for both the
- * generated end-user doc (`docs/user-guide.md`, built by the `generateUserGuide` Gradle task from
+ * generated end-user doc (`docs/user-guide/`, built by the `generateUserGuide` Gradle task from
  * this list) and the in-app Help screen (`ui/HelpScreen.kt`). Each topic also has exactly one
  * Compose UI test (a `*ScreenshotTest.kt` file under `app/src/test/java/.../ui/`) that both asserts the real
  * behavior and captures the illustrative screenshot the doc embeds - [id] is that screenshot's

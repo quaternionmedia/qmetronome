@@ -20,15 +20,15 @@ the *why* and *how to verify*, not the *what*.
 
 ## For end users, not contributors
 
-- **[`user-guide.md`](user-guide.md)** — every major gesture (tempo scrub,
+- **[`user-guide/`](user-guide/README.md)** — every major gesture (tempo scrub,
   HOLD staging, the bar queue, Settings' chip rows, the Glyph Matrix preview,
-  layout toggles), one topic each with a screenshot. Generated, not
-  hand-written - see `TutorialTopics.all` (`app/src/main/java/.../tutorial/`)
-  and CONTRIBUTING.md's "Test coverage" section for how a new topic gets
-  added and why the screenshot can never silently go stale. The same content
-  also drives the in-app Help screen (`ui/HelpScreen.kt`), reached via the
-  help icon next to Settings' gear - that version embeds the real, live
-  controls instead of a static image.
+  layout toggles), one page per topic with a screenshot (or video, for
+  motion-based gestures). Generated, not hand-written - see `TutorialTopics.all`
+  (`app/src/main/java/.../tutorial/`) and CONTRIBUTING.md's "Test coverage" section
+  for how a new topic gets added and why the screenshot can never silently go
+  stale. The same content also drives the in-app Help screen (`ui/HelpScreen.kt`),
+  reached via the help icon next to Settings' gear - that version embeds the
+  real, live controls instead of a static image.
 - **[`../CHANGELOG.md`](../CHANGELOG.md)** — generated from this repo's own
   annotated tag history (`scripts/generate-changelog.sh`); see
   CONTRIBUTING.md's "Cutting a release" section.

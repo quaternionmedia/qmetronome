@@ -1,6 +1,7 @@
 package media.quaternion.qmetronome.ui
 
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
@@ -20,7 +21,11 @@ import org.robolectric.annotation.GraphicsMode
 
 /** The animated-GIF counterpart to [SettingsClockFeelScreenshotTest] - see [BpmDragVideoTest]'s
  * kdoc for why this is a separate test/file from the screenshot one and why it's wrapped in
- * [TouchIndicatorOverlay]. */
+ * [TouchIndicatorOverlay]. Opens from [MainScreen] with Settings closed, tapping the gear icon
+ * first, rather than composing [SettingsSheet] pre-opened - this is the one Settings-category
+ * video reused as a top-level doc's hero (see `readme/using-qmetronome/staying-in-sync-with-other-
+ * gear.md`), so it shows the real, complete path in: default running app, then into Settings,
+ * not a mid-Settings starting point a reader would never actually land on. */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [33], qualifiers = FULLSCREEN_QUALIFIERS)
@@ -46,18 +51,24 @@ class SettingsClockFeelVideoTest {
     @Test
     fun `record expanding Clock, then toggling Mechanical and Organic`() {
         MidiClockSender.setTimingMode(ClockTimingMode.MECHANICAL)
+        MetronomeEngine.markBpmHintShown()
         composeTestRule.setThemedContent {
-            TouchIndicatorOverlay { SettingsSheet(onDismiss = {}, onActivateToy = {}) }
+            TouchIndicatorOverlay { MainScreen(onActivateToy = {}) }
         }
 
-        // The header row itself, unmerged tree - see SettingsClockFeelScreenshotTest's own kdoc
-        // for why the merged node can't be resolved directly here.
-        val header = composeTestRule.onNodeWithTag("section_header_Clock", useUnmergedTree = true)
+        val settingsButton = composeTestRule.onNodeWithContentDescription("Settings")
         composeTestRule.onScreenshotRoot().recordRoboVideo(
             composeRule = composeTestRule,
             filePath = videoPath("settings-clock-feel"),
             videoOptions = RoboVideoOptions(fps = 10),
         ) {
+            tapWithIndicator(settingsButton)
+            delay(300)
+
+            // Fetched fresh here, not before the block starts - SettingsSheet doesn't exist in
+            // the tree until the tap above opens it (same pattern BarQueueManagementVideoTest
+            // uses for nodes that only appear partway through a recording).
+            val header = composeTestRule.onNodeWithTag("section_header_Clock", useUnmergedTree = true)
             invokeClickWithIndicator(header)
             delay(300)
 

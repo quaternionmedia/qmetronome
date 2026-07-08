@@ -64,7 +64,7 @@ fun ComposeContentTestRule.setThemedContent(content: @Composable () -> Unit) {
  * in, and what every screenshot test should call `captureRoboImage()` on instead of `onRoot()`. */
 fun ComposeContentTestRule.onScreenshotRoot() = onNodeWithTag(SCREENSHOT_ROOT_TAG)
 
-/** Screenshots captured by these tests are the illustrations for `docs/user-guide.md` - see
+/** Screenshots captured by these tests are the illustrations for `docs/user-guide/` - see
  * `app/build.gradle.kts`'s `roborazzi { }` block for why this is a hand-built path rather than
  * relying on that DSL's `outputDir` (it only applies to auto-named captures, not an explicit
  * filename like the one this builds). */

@@ -59,20 +59,20 @@ qmetronome/
 │   ├── midi/            # MIDI clock in/out, USB connector, virtual device service
 │   ├── glyph/           # Glyph Matrix SDK integration (isolated here — see ADR)
 │   ├── ui/              # Compose UI: MainScreen, SettingsSheet, HelpScreen, MatrixPreview, etc.
-│   ├── tutorial/        # TutorialTopics — shared source of truth for user-guide.md + HelpScreen
+│   ├── tutorial/        # TutorialTopics — shared source of truth for docs/user-guide/ + HelpScreen
 │   └── widget/          # Home screen widget (Jetpack Glance)
 ├── app/libs/            # glyph-matrix-sdk-2.0.aar — committed, no separate download
-├── docs/                # Feature investigations, test plans, release checklists, user-guide.md
+├── docs/                # Feature investigations, test plans, release checklists, user-guide/
 ├── governance/qm/       # org constitution submodule; adr/ here holds this project's own ADRs
 ├── scripts/             # Helper scripts (e.g. generate-release-key.bat)
 └── .github/workflows/   # CI (ci.yml) and release pipeline (release.yml)
 ```
 
-The root [`README.md`](README.md) is the architecture reference — its "Using qMetronome"
-section is the narrative walkthrough, and its [Glossary](README.md#glossary) covers every
-`engine/`, `midi/`, and `ui/` class and singleton by name; skim the Glossary before diving into
-any of those packages. [`docs/README.md`](docs/README.md) indexes the feature-specific
-investigations and test plans.
+The root [`README.md`](README.md) is a short index into [`readme/`](readme/README.md) - its
+["Using qMetronome"](readme/using-qmetronome/README.md) section is the narrative walkthrough, and
+its [Glossary](readme/glossary.md) covers every `engine/`, `midi/`, and `ui/` class and singleton
+by name; skim the Glossary before diving into any of those packages. [`docs/README.md`](docs/README.md)
+indexes the feature-specific investigations and test plans.
 [`governance/qm/adr/README.md`](governance/qm/adr/README.md) explains the
 decision-record process — this project's own ADRs live inside that
 submodule, on this project's dedicated `project/qmetronome` branch, not as a
@@ -84,8 +84,8 @@ top-level directory in this repo.
 
 Implement `GlyphVisualizer`, add an instance to `VisualizerRegistry.all`, and
 you're done — no service registration or threading needed. The existing
-`VisualizerRenderTest` will automatically cover your new entry. See the
-"Adding a new visualizer" section in [`README.md`](README.md) for the two
+`VisualizerRenderTest` will automatically cover your new entry. See
+[`readme/adding-a-new-visualizer.md`](readme/adding-a-new-visualizer.md) for the two
 behavioural contracts every visualizer must satisfy (beat must read without
 audio; bar 1 must read distinctly from other beats).
 
@@ -144,9 +144,9 @@ Adding a new gesture/topic means:
    `*VideoTest` alongside it too if the gesture is genuinely motion-based.
 3. Run `./gradlew generateUserGuide` (implies `testDebugUnitTest`, which
    captures the screenshot/video) to regenerate
-   [`docs/user-guide.md`](docs/user-guide.md) - this also *fails* if any
-   topic's screenshot is missing, so a new topic without a matching test
-   can't silently ship a broken doc image link.
+   [`docs/user-guide/`](docs/user-guide/README.md) (a `README.md` index plus one page per topic)
+   - this also *fails* if any topic's screenshot is missing, so a new topic without a matching
+   test can't silently ship a broken doc image link.
 4. **Wire the new screenshot into git** - `docs/images/generated/` is
    gitignored by default (see `.gitignore`'s own comment) precisely so a
    topic's file only ends up tracked as a deliberate step, not automatically

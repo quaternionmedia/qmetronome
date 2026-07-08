@@ -11,10 +11,11 @@ import java.io.File
  * `app/build.gradle.kts`'s `generateUserGuide` `Test` task, which reuses this exact classpath and
  * filters down to just this one class, `dependsOn(testDebugUnitTest)` so every topic's screenshot
  * (and video, for [TutorialTopic.hasVideo] topics) has already been (re)captured by the time this
- * runs). Regenerates `docs/user-guide.md` from [TutorialTopics.all] grouped by category, embedding
- * each topic's already-captured screenshot (see `ComposeTestSupport.kt`'s `screenshotPath`) - the
- * one step of "tests spawn the rest" that isn't itself a Compose UI test, since there's no UI here
- * to drive, just [TutorialTopics]' own content plus files those *other* tests already produced.
+ * runs). Regenerates `docs/user-guide/` - one `README.md` index plus one file per
+ * [TutorialTopics.all] entry, grouped by category - the one step of "tests spawn the rest" that
+ * isn't itself a Compose UI test, since there's no UI here to drive, just [TutorialTopics]' own
+ * content plus files those *other* tests already produced. A folder rather than one long file so
+ * each topic reads as its own page (one gif, one story) instead of a single ever-growing scroll.
  *
  * Asserting each topic's screenshot (and video, where expected) actually exists here (rather than
  * only trusting it was produced) is the real regression protection: a new [TutorialTopic] added
@@ -24,10 +25,12 @@ import java.io.File
 class GenerateUserGuideTest {
 
     @Test
-    fun `regenerate user-guide md from TutorialTopics`() {
+    fun `regenerate docs user-guide from TutorialTopics`() {
         val docsDir = File("../docs")
         val screenshotsDir = File(docsDir, "images/generated/screenshots")
         val videosDir = File(docsDir, "images/generated/videos")
+        val userGuideDir = File(docsDir, "user-guide")
+        userGuideDir.mkdirs()
 
         val missingScreenshots = TutorialTopics.all.filterNot { File(screenshotsDir, "${it.id}.png").isFile }
         assertTrue(
@@ -47,7 +50,28 @@ class GenerateUserGuideTest {
         )
 
         val categories = TutorialTopics.all.groupBy { it.category }
-        val markdown = buildString {
+
+        // One page per topic - exactly one gif each (the video, where it has one; the static
+        // screenshot otherwise), matching this project's "single gif per doc" convention.
+        TutorialTopics.all.forEach { topic ->
+            val page = buildString {
+                appendLine("# ${topic.title}")
+                appendLine()
+                appendLine("[← User Guide](README.md) · ${topic.category.displayName}")
+                appendLine()
+                appendLine(topic.description)
+                appendLine()
+                if (topic.hasVideo) {
+                    appendLine("![${topic.title} (in motion)](../images/generated/videos/${topic.id}.gif)")
+                } else {
+                    appendLine("![${topic.title}](../images/generated/screenshots/${topic.id}.png)")
+                }
+                appendLine()
+            }
+            File(userGuideDir, "${topic.id}.md").writeText(page)
+        }
+
+        val index = buildString {
             appendLine("# qMetronome User Guide")
             appendLine()
             appendLine(
@@ -59,6 +83,8 @@ class GenerateUserGuideTest {
                     "control - richer than what's on this page, since it's the real thing rather " +
                     "than a picture of it.",
             )
+            appendLine()
+            appendLine("![qMetronome running the default visualizer at the default tempo](../images/generated/videos/app-running.gif)")
             appendLine()
             appendLine(
                 "*Generated from `TutorialTopics.all` - do not edit by hand; regenerate via " +
@@ -77,25 +103,14 @@ class GenerateUserGuideTest {
                 appendLine("## ${category.displayName}")
                 appendLine()
                 topics.forEach { topic ->
-                    appendLine("### ${topic.title}")
-                    appendLine()
-                    appendLine(topic.description)
-                    appendLine()
-                    appendLine("![${topic.title}](images/generated/screenshots/${topic.id}.png)")
-                    appendLine()
-                    if (topic.hasVideo) {
-                        appendLine("**In motion:**")
-                        appendLine()
-                        appendLine("![${topic.title} (in motion)](images/generated/videos/${topic.id}.gif)")
-                        appendLine()
-                    }
+                    appendLine("- [${topic.title}](${topic.id}.md) - ${topic.description}")
                 }
+                appendLine()
             }
         }
+        val indexFile = File(userGuideDir, "README.md")
+        indexFile.writeText(index)
 
-        val outputFile = File(docsDir, "user-guide.md")
-        outputFile.writeText(markdown)
-
-        assertTrue("expected a non-empty user-guide.md to have been written", outputFile.length() > 0)
+        assertTrue("expected a non-empty docs/user-guide/README.md to have been written", indexFile.length() > 0)
     }
 }

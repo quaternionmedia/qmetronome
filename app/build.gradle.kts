@@ -126,7 +126,7 @@ dependencies {
 }
 
 /** Screenshots captured by [io.github.takahirom.roborazzi] (see `tutorial/` package + `*ScreenshotTest`
- * files under `app/src/test/`) are the illustrations for `docs/user-guide.md` - written straight
+ * files under `app/src/test/`) are the illustrations for `docs/user-guide/` - written straight
  * into a tracked repo location (not the gitignored `build/` default) so they render on GitHub
  * without a build step, and stay in sync automatically the moment the tests that produce them are
  * re-run (`./gradlew testDebugUnitTest -Proborazzi.test.record=true`). */
@@ -134,15 +134,15 @@ roborazzi {
     outputDir.set(file("../docs/images/generated/screenshots"))
 }
 
-/** Regenerates `docs/user-guide.md` from `TutorialTopics.all` - the one step of "tests spawn the
- * rest" that isn't itself a Compose UI test (see `GenerateUserGuideTest.kt`'s own kdoc for why
- * it's a `Test` task rather than a plain one: it reuses `testDebugUnitTest`'s own classpath
- * wholesale rather than hand-assembling a second one, and `dependsOn` it so every topic's
- * screenshot is freshly (re)captured - by the *whole* suite, not just this one filtered class -
- * before the doc embedding them gets written. */
+/** Regenerates `docs/user-guide/` (a `README.md` index plus one page per topic) from
+ * `TutorialTopics.all` - the one step of "tests spawn the rest" that isn't itself a Compose UI
+ * test (see `GenerateUserGuideTest.kt`'s own kdoc for why it's a `Test` task rather than a plain
+ * one: it reuses `testDebugUnitTest`'s own classpath wholesale rather than hand-assembling a
+ * second one, and `dependsOn` it so every topic's screenshot is freshly (re)captured - by the
+ * *whole* suite, not just this one filtered class - before the doc embedding them gets written. */
 tasks.register<Test>("generateUserGuide") {
     group = "documentation"
-    description = "Regenerates docs/user-guide.md from TutorialTopics.all + the screenshots testDebugUnitTest just captured."
+    description = "Regenerates docs/user-guide/ from TutorialTopics.all + the screenshots testDebugUnitTest just captured."
     val unitTest = tasks.named<Test>("testDebugUnitTest")
     dependsOn(unitTest)
     testClassesDirs = unitTest.get().testClassesDirs

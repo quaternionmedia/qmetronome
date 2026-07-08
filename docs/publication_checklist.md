@@ -356,7 +356,7 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
 - [x] **Double-tap and long-press on preview**: now covered end-to-end by
       `PreviewGestureScreenshotTest` (double-tap toggles play/stop, long-press
       opens Settings, swipe cycles visualizers - see
-      [`docs/user-guide.md`](user-guide.md)'s Glyph Matrix section). Remaining
+      [`docs/user-guide/`](user-guide/README.md)'s Glyph Matrix section). Remaining
       manual nuance, if ever revisited: real-finger gesture disambiguation
       timing (a brief swipe not accidentally read as a long-press) isn't
       something a synthetic touch sequence can fully stand in for.

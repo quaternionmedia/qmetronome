@@ -283,5 +283,6 @@ opening the system toys manager. That's intentional and not a bug.
   discipline, and the release tagging process.
 - [`docs/cookbook.md`](cookbook.md) — quick-reference command table for daily
   use once you're set up.
-- [`README.md`](../README.md) — architecture: how `MetronomeEngine`,
-  visualizers, MIDI, and the widget fit together.
+- [`README.md`](../README.md) — short index; its
+  [Glossary](../readme/glossary.md) covers how `MetronomeEngine`, visualizers,
+  MIDI, and the widget fit together, class by class.

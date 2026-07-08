@@ -33,7 +33,7 @@ import media.quaternion.qmetronome.tutorial.TutorialTopic
 import media.quaternion.qmetronome.tutorial.TutorialTopics
 
 /**
- * An in-app counterpart to `docs/user-guide.md`, reading the same [TutorialTopics] content - but
+ * An in-app counterpart to `docs/user-guide/`, reading the same [TutorialTopics] content - but
  * rather than a static screenshot per topic, each category embeds the *real, live* production
  * composable it's about (the same shared-instance pattern [SettingsSheet] already established for
  * [TempoTransportCluster]: one composed instance, wired to the actual [MetronomeEngine], not a
