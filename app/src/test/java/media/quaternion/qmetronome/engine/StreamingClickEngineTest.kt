@@ -102,4 +102,54 @@ class StreamingClickEngineTest {
         engine.stop()
         assertEquals(0L, engine.leadMarginNanos())
     }
+
+    @Test
+    fun `resetSchedule before start is a harmless no-op`() {
+        engine.resetSchedule()
+    }
+
+    @Test
+    fun `a start-resetSchedule-start cycle does not rebuild - leadMarginNanos never drops to zero`() {
+        // Mirrors how MetronomeEngine now calls this between play/stop sessions (resetSchedule,
+        // not a real stop) - see MetronomeEngine.stop()'s own kdoc for why. Contrast with
+        // `leadMarginNanos returns to zero after stop` above, which still exercises the real
+        // teardown path via .stop() and is unaffected by this change.
+        engine.start(scope)
+        val marginAfterFirstStart = engine.leadMarginNanos()
+        assertTrue("expected a non-zero lead margin once running", marginAfterFirstStart > 0L)
+
+        engine.resetSchedule()
+        engine.scheduleBeat(0L, ClickSound.BAR, System.nanoTime())
+        engine.start(scope) // simulates the next session's start() - should be a no-op rebuild-wise
+
+        assertEquals(
+            "a second start() after resetSchedule (not a real stop) should not have rebuilt the track",
+            marginAfterFirstStart,
+            engine.leadMarginNanos(),
+        )
+    }
+
+    @Test
+    fun `a dead writer is detected and rebuilt on the next start, not trusted as still running`() {
+        // Simulates the writer coroutine dying mid-session (e.g. a real AudioTrack.write()
+        // failure) without going through engine.stop() - cancelling its own scope directly is the
+        // closest a test can get to that without faking a write() failure. Regression guard for
+        // the liveness check in start(): trusting a stale `track != null` alone here would leave
+        // the engine reporting "already running" forever with nothing ever mixed in again.
+        val deadScope = CoroutineScope(Dispatchers.Default)
+        engine.start(deadScope)
+        deadScope.cancel()
+
+        val freshScope = CoroutineScope(Dispatchers.Default)
+        try {
+            val started = engine.start(freshScope)
+            assertTrue("expected start() to recover from a dead writer by rebuilding", started)
+            assertTrue(
+                "expected a non-negative lead margin after rebuilding, got ${engine.leadMarginNanos()}",
+                engine.leadMarginNanos() >= 0L,
+            )
+        } finally {
+            freshScope.cancel()
+        }
+    }
 }

@@ -388,6 +388,34 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `a second play session still clicks on every beat - regression test for stale consumedTotalBeats after keep-warm`() {
+        // Regression test for a bug introduced (and caught, before shipping) while fixing the
+        // reported first-beat lag/catch-up: StreamingClickEngine now stays warm across stop()/
+        // start() instead of being torn down and rebuilt (see StreamingClickEngine.resetSchedule's
+        // kdoc) - MetronomeEngine.stop() must actually reset its consumed/pending high-water marks,
+        // or a second session's low totalBeats values would already read as "consumed" from the
+        // first session's much higher count, silently dropping every one of its early clicks.
+        val events = java.util.Collections.synchronizedList(mutableListOf<Long>())
+        MetronomeEngine.setClickListenerForTesting { _, _ -> events.add(System.nanoTime()) }
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat - several beats in a short sleep
+
+        MetronomeEngine.start()
+        Thread.sleep(700) // several beats' worth, well past totalBeats == 0
+        assertTrue("expected the first session to have clicked", events.isNotEmpty())
+        MetronomeEngine.stop()
+
+        events.clear()
+        MetronomeEngine.start()
+        Thread.sleep(300) // comfortably past beat 0 of the *second* session
+
+        assertTrue(
+            "expected the second session to click too, not silently drop its early beats - got $events",
+            events.isNotEmpty(),
+        )
+    }
+
+    @Test
     fun `muted beats produce no click at all, lookahead or reactive`() {
         val events = java.util.Collections.synchronizedList(mutableListOf<Long>())
         MetronomeEngine.setClickListenerForTesting { _, _ -> events.add(System.nanoTime()) }

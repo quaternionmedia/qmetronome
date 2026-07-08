@@ -117,9 +117,10 @@ object MetronomeEngine {
     private val streamingClickEngine = StreamingClickEngine()
 
     /** Whether [streamingClickEngine] is the active audio-trigger path for the current session -
-     * decided once per [start] call by whether it initialized successfully, and flipped back to
-     * false mid-session if [StreamingClickEngine.hasFailedWarmup] ever reports true (see
-     * [startAudioScheduling]). False means every click for this session falls back to
+     * re-checked on every [start] call (cheap after the first successful one - see
+     * [StreamingClickEngine.start]'s own kdoc for why repeat calls don't rebuild anything), and
+     * flipped back to false mid-session if [StreamingClickEngine.hasFailedWarmup] ever reports
+     * true (see [startAudioScheduling]). False means every click for this session falls back to
      * [clickPlayer]'s discrete-retrigger path - see [onBeat] and [fireLookaheadAudioIfNeeded]. */
     @Volatile private var usingStreamingClickEngine = false
 
@@ -798,6 +799,10 @@ object MetronomeEngine {
             _state.update { it.copy(isPlaying = true) }
         }
         usingStreamingClickEngine = streamingClickEngine.start(audioWriterScope)
+        // A no-op after the first successful session (see StreamingClickEngine.start's own
+        // kdoc) - stop() below no longer tears the engine down, so this just re-confirms it's
+        // still alive rather than paying warm-up again on every play press.
+        streamingClickEngine.resetSchedule()
         clock.start(clockScope, _state.value.bpm, ::onBeat)
         startRenderLoop()
         startAudioScheduling()
@@ -821,7 +826,15 @@ object MetronomeEngine {
         renderJob = null
         audioSchedulingJob?.cancel()
         audioSchedulingJob = null
-        streamingClickEngine.stop()
+        // Not a real streamingClickEngine.stop() - the AudioTrack/writer stay warm (mixing
+        // silence) across sessions now, so the *next* start() doesn't have to re-pay
+        // AudioTrack.getTimestamp()'s warm-up wait. This just cancels anything scheduled-but-
+        // not-yet-mixed and resets the consumed/pending high-water marks so a future session's
+        // beat 0 isn't born already "consumed" by this session's totalBeats count - see
+        // StreamingClickEngine.resetSchedule's own kdoc. A genuine teardown only happens in
+        // release() or if the writer itself fails (see startAudioScheduling's hasFailedWarmup
+        // check).
+        streamingClickEngine.resetSchedule()
         synchronized(audioResolutionLock) { resolvedBeatAudioCache.clear() }
         pendingBeatsPerBarCommit?.let {
             applyBeatsPerBarImmediate(it)
@@ -869,8 +882,13 @@ object MetronomeEngine {
         }
     }
 
+    /** Full teardown, including the streaming engine's `AudioTrack`/writer itself - [stop] alone
+     * deliberately leaves those warm (see its own kdoc), so this is the one place that actually
+     * releases them. Not called anywhere in production today (there's no process-lifecycle hook
+     * that would call it), but should stay correct regardless. */
     fun release() {
         stop()
+        streamingClickEngine.stop()
         clickPlayer.release()
     }
 
@@ -1112,7 +1130,12 @@ object MetronomeEngine {
      *
      * Also polls [StreamingClickEngine.hasFailedWarmup] once per iteration regardless of gating -
      * the one place a mid-session fallback to [ClickPlayer] gets noticed and applied, since this
-     * loop already runs for as long as the engine is playing.
+     * loop already runs for as long as the engine is playing. Effectively a first-launch-only
+     * concern now that [StreamingClickEngine] stays warm across [stop]/[start] cycles instead of
+     * re-warming on every one: its internal readiness never resets to false again once a session
+     * has warmed up successfully, so a later session can only hit this path if the very first one
+     * already failed (or the writer itself dies - see [StreamingClickEngine.start]'s own liveness
+     * check for that recovery path, which happens on the *next* [start] instead).
      *
      * Polls in slices bounded by [AUDIO_LOOKAHEAD_POLL_NANOS] (matching
      * `MidiClockSender.RESYNC_POLL_NANOS`'s precedent) while gated, and every iteration delays a

@@ -683,3 +683,28 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       profiler if available) over a few minutes of continuous playback and
       confirm nothing suggests a thread pegged at 100% CPU - the busy-spin
       bug's other symptom besides audible jitter.
+- [ ] **v0.0.28 first-beat lag/catch-up, fixed by keeping the streaming click engine warm**:
+      reported as "substantial lag in the first beat followed by what seems like a
+      catchup, especially noticeable when trying to line up with an existing tempo."
+      Root cause: `StreamingClickEngine` was torn down and rebuilt on every single
+      play/stop toggle, re-paying `AudioTrack.getTimestamp()`'s warm-up wait (and, on
+      real hardware, real HAL/buffer settling time Robolectric can't model) every time,
+      not just once per app session - most commonly triggered by the Glyph Toy's own
+      lock/unlock-stops-playback behavior (persistent mode off) mid-practice-session, not
+      just a cold app launch. With the click on at a moderate tempo, toggle play/stop (or
+      lock/unlock the phone via the Glyph Toy) several times in a row and confirm the
+      first click of each *subsequent* session lands as promptly as later beats, not with
+      the previously-reported lag/catch-up. Compare specifically against the very first
+      play after a fresh install/launch, which is still expected to pay a one-time
+      warm-up cost - only *repeated* sessions should now feel instant.
+- [ ] **v0.0.28 no stale click after pressing stop**: press stop immediately after a
+      beat's predictive schedule would have just landed (timing is inexact - repeat
+      several times to catch it) and confirm no click sounds after the press. The
+      streaming engine's `AudioTrack`/writer now keep running (mixing silence) between
+      sessions instead of being torn down, so this specifically guards against a
+      schedule that was already pending at the moment of stop still audibly firing.
+- [ ] **v0.0.28 long idle-then-resume session**: leave the app open (or backgrounded,
+      persistent mode off) for several minutes without playing, then press play and
+      confirm the first beat still lands promptly - guards against the writer having
+      silently died while idle with nothing to catch it (the one scenario that still
+      forces a real rebuild - see `StreamingClickEngine.start()`'s liveness check).

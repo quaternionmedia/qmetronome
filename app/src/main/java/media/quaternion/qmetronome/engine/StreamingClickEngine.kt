@@ -14,7 +14,13 @@ import kotlinx.coroutines.launch
 /**
  * Sample-clocked, continuously-running click engine - the real-time rewrite `ClickPlayer`'s
  * discrete `MODE_STATIC` retrigger model can't reach. Owns one `AudioTrack` in `MODE_STREAM`,
- * built once and played continuously for as long as the metronome is running; a dedicated writer
+ * built on the first [start] call and then kept running (mixing silence between beats, or
+ * between metronome sessions entirely) rather than being torn down and rebuilt on every
+ * `MetronomeEngine.stop()`/`start()` toggle - see [resetSchedule] for the lightweight per-session
+ * reset `MetronomeEngine` uses instead of a real [stop] between sessions, and that function's own
+ * kdoc for why: rebuilding on every play press meant re-paying [AudioTrack.getTimestamp]'s warm-up
+ * wait (gating [ready], and with it every mixed beat) on every single press, not once per app
+ * session - the dominant cause of a reported lag on a session's first beat. A dedicated writer
  * thread mixes each click's waveform into the stream at an exact sample-frame offset, computed
  * from `AudioTrack`'s own hardware-sampled frame<->nanoTime mapping ([AudioTrack.getTimestamp])
  * rather than from a coroutine waking up at approximately the right wall-clock moment. The
@@ -108,6 +114,21 @@ class StreamingClickEngine {
         }
     }
 
+    /**
+     * Clears whatever's pending/consumed so far, without touching the `AudioTrack`/writer -
+     * `MetronomeEngine.stop()`'s counterpart to a full [stop] now that this engine stays warm
+     * across play/stop cycles (see that function's own kdoc for why). Cancels anything
+     * scheduled-but-not-yet-mixed (no stale click after the user presses stop) and resets the
+     * high-water mark so the *next* session's beat 0 isn't silently born already "consumed" by a
+     * previous session's totalBeats count.
+     */
+    fun resetSchedule() {
+        synchronized(scheduleLock) {
+            pendingTotalBeats = -1L
+            consumedTotalBeats = -1L
+        }
+    }
+
     /** True once [AudioTrack.getTimestamp] has never returned valid data within [WARMUP_TIMEOUT_NANOS]
      * of [start] - the signal for [MetronomeEngine] to give up on this engine for the session and
      * fall back to [ClickPlayer]. Always false before that deadline, even if warm-up hasn't
@@ -139,9 +160,22 @@ class StreamingClickEngine {
      * and must never share a thread with anything else that has its own timing requirements).
      * Returns false (having cleaned up after itself) if `MODE_STREAM` construction or the initial
      * `play()` call fails, telling the caller to use the [ClickPlayer] fallback instead.
+     *
+     * Safe to call repeatedly - `MetronomeEngine` now calls this on every `start()` (not just the
+     * first one) so it stays the single source of truth for whether the streaming path is usable
+     * this session, but a real rebuild only happens the first time, or after a genuine failure.
+     * The liveness check below is what makes that safe: `track != null` alone isn't proof the
+     * writer is still running - if it died mid-session (a real `write()` failure below `break`s
+     * the loop without nulling `track`), trusting the stale reference would silently leave the
+     * engine reporting "already running" forever while nothing is ever mixed in again. Noticing
+     * that and falling through to a real rebuild is what keeps that scenario recoverable instead
+     * of permanently silent.
      */
     fun start(scope: CoroutineScope): Boolean {
-        if (track != null) return true
+        if (track != null) {
+            if (writerJob?.isActive == true) return true
+            stop() // writer died after warm-up; stale track, do a genuine rebuild below
+        }
         val builtTrack = try {
             buildTrack()
         } catch (e: Exception) {
@@ -151,10 +185,7 @@ class StreamingClickEngine {
         framesWritten = 0L
         ready = false
         warmupDeadlineNanos = System.nanoTime() + WARMUP_TIMEOUT_NANOS
-        synchronized(scheduleLock) {
-            pendingTotalBeats = -1L
-            consumedTotalBeats = -1L
-        }
+        resetSchedule()
         try {
             builtTrack.play()
         } catch (e: Exception) {
