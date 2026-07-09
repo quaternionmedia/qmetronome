@@ -154,6 +154,10 @@ object MetronomeEngine {
     private val _audioOffsetMs = MutableStateFlow(DEFAULT_AUDIO_OFFSET_MS)
     val audioOffsetMs: StateFlow<Float> = _audioOffsetMs.asStateFlow()
 
+    /** See [beatZeroCountInNanos] for how this is actually used. */
+    private val _firstBeatCountInCapMs = MutableStateFlow(DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS)
+    val firstBeatCountInCapMs: StateFlow<Float> = _firstBeatCountInCapMs.asStateFlow()
+
     private val _compactLandscape = MutableStateFlow(false)
     val compactLandscape: StateFlow<Boolean> = _compactLandscape.asStateFlow()
 
@@ -243,6 +247,12 @@ object MetronomeEngine {
     private var renderJob: Job? = null
     private var audioSchedulingJob: Job? = null
     private var persistBpmJob: Job? = null
+
+    /** The pending "wait out beat 0's count-in, then actually start ticking" coroutine - see
+     * [start]/[beatZeroCountInNanos]. Null whenever no count-in is in flight (no delay configured,
+     * or ticking has already begun). Tracked so a second [start] call (or [stop]) during the
+     * window cancels it rather than leaving two overlapping starts racing. */
+    private var countInJob: Job? = null
     private var lastTapNanos = 0L
     private val tapIntervalsMs = mutableListOf<Long>()
 
@@ -298,6 +308,7 @@ object MetronomeEngine {
         _clickSpecs.value = restoredSpecs
         _visualOffsetMs.value = store.visualOffsetMs
         _audioOffsetMs.value = store.audioOffsetMs
+        _firstBeatCountInCapMs.value = store.firstBeatCountInCapMs
         _compactLandscape.value = store.compactLandscape
         _symbolicControlsEnabled.value = store.symbolicControlsEnabled
         _persistentModeEnabled.value = store.persistentModeEnabled
@@ -664,6 +675,14 @@ object MetronomeEngine {
         settings?.audioOffsetMs = clamped
     }
 
+    /** See [beatZeroCountInNanos] for how this cap is actually used - 0 opts back out to today's
+     * instant-but-unled first beat. */
+    fun setFirstBeatCountInCapMs(ms: Float) {
+        val clamped = ms.coerceIn(0f, 500f)
+        _firstBeatCountInCapMs.value = clamped
+        settings?.firstBeatCountInCapMs = clamped
+    }
+
     fun setCompactLandscape(enabled: Boolean) {
         _compactLandscape.value = enabled
         settings?.compactLandscape = enabled
@@ -728,6 +747,13 @@ object MetronomeEngine {
         clickListenerForTesting = listener
     }
 
+    /** For on-device benchmarking only - thin pass-through to
+     * [StreamingClickEngine.setMixListenerForTesting], since [streamingClickEngine] itself isn't
+     * visible outside this class. */
+    fun setStreamingMixListenerForTesting(listener: ((totalBeats: Long, targetNanos: Long, actualNanos: Long) -> Unit)?) {
+        streamingClickEngine.setMixListenerForTesting(listener)
+    }
+
     /** The mute chance actually in effect [barsElapsed] bars into playback - the configured
      * target immediately, or ramped up linearly from 0 over [progressiveMuteRampBars] bars
      * when progressive start is on. Exposed (not private) so it's directly unit-testable without
@@ -784,6 +810,13 @@ object MetronomeEngine {
      * be one. Passing `false` skips the priming and leaves [lastBeatNanos] stale, so the render
      * loop reads a saturated, fully-decayed/resting frame until the real tick-driven [onBeat] call
      * supplies the one correct flash.
+     *
+     * Actually beginning to tick ([beginTicking]) is itself deferred by [beatZeroCountInNanos] when
+     * that's non-zero - see that function's kdoc for why beat 0's *audio* specifically needs a
+     * real, if brief, head start to land as precisely as every later beat, and
+     * [firstBeatCountInCapMs] for the user-facing dial on how much of a pause that's worth.
+     * [_state]'s `isPlaying` flips true immediately either way (so the transport button responds
+     * the instant it's pressed), independent of whether the flash/first tick themselves wait.
      */
     fun start(primeVisualFlash: Boolean = true) {
         if (_state.value.isPlaying && renderJob?.isActive == true) return
@@ -792,20 +825,93 @@ object MetronomeEngine {
         barsElapsedSincePlay = 0
         synchronized(audioResolutionLock) { resolvedBeatAudioCache.clear() }
         goToQueueBar(0)
+        usingStreamingClickEngine = streamingClickEngine.start(audioWriterScope)
+        // A no-op after the first successful session (see StreamingClickEngine.start's own
+        // kdoc) - stop() below no longer tears the engine down, so this just re-confirms it's
+        // still alive rather than paying warm-up again on every play press.
+        streamingClickEngine.resetSchedule()
+
+        countInJob?.cancel()
+        val countInNanos = beatZeroCountInNanos(primeVisualFlash)
+        if (countInNanos <= 0L) {
+            beginTicking(primeVisualFlash)
+            return
+        }
+        _state.update { it.copy(isPlaying = true) }
+        val resolved = resolveBeatAudio(totalBeatsForBeat = 0, beatIndexForBeat = 0)
+        synchronized(audioResolutionLock) { resolvedBeatAudioCache[0] = resolved }
+        val now = System.nanoTime()
+        resolved.sound?.let { sound ->
+            clickListenerForTesting?.invoke(sound, now)
+            val offsetNanos = (-_audioOffsetMs.value * 1_000_000.0).toLong()
+            streamingClickEngine.scheduleBeat(0, sound, now + countInNanos - offsetNanos)
+        }
+        countInJob = clockScope.launch {
+            delay(countInNanos / 1_000_000)
+            beginTicking(primeVisualFlash = true)
+        }
+    }
+
+    /** The actual "make it tick" half of [start] - [primeVisualFlash]'s flash/[lastBeatNanos]
+     * reset, then handing off to [clock]/[startRenderLoop]/[startAudioScheduling]. Split out so
+     * [start] can defer calling this by [beatZeroCountInNanos] without duplicating any of it. */
+    private fun beginTicking(primeVisualFlash: Boolean) {
+        countInJob = null
         if (primeVisualFlash) {
             lastBeatNanos = System.nanoTime()
             _state.update { it.copy(isPlaying = true, beatIndex = 0, phase = 0f, isAccent = true) }
         } else {
             _state.update { it.copy(isPlaying = true) }
         }
-        usingStreamingClickEngine = streamingClickEngine.start(audioWriterScope)
-        // A no-op after the first successful session (see StreamingClickEngine.start's own
-        // kdoc) - stop() below no longer tears the engine down, so this just re-confirms it's
-        // still alive rather than paying warm-up again on every play press.
-        streamingClickEngine.resetSchedule()
         clock.start(clockScope, _state.value.bpm, ::onBeat)
         startRenderLoop()
         startAudioScheduling()
+    }
+
+    /**
+     * How long [start] should hold beat 0 back, in nanoseconds - 0 for "don't, fire instantly"
+     * (today's behavior: the flash and the real first [onBeat] land within microseconds of each
+     * other, per [InternalClockSource]'s documented instant-first-tick behavior, but beat 0's
+     * *audio* has no equivalent lead: [onBeat] resolves and schedules it reactively, with none of
+     * the advance notice [startAudioScheduling]'s predictive loop gives beat 1 onward - a
+     * structural gap, not a bug in any one function, confirmed by tracing the frame math in
+     * [StreamingClickEngine.mixPendingBeatIfDue]: an already-past target there clamps to "the
+     * earliest available frame," which is *not* "now," it's already
+     * [StreamingClickEngine.leadMarginNanos] in the future, because the writer keeps its buffer
+     * that far ahead of real playback).
+     *
+     * The only way to give beat 0 genuine lead is to defer its own nominal instant - this
+     * function's return value - long enough that [start] can push a real schedule call before the
+     * flash/tick actually happen, the same "call arrives [StreamingClickEngine.leadMarginNanos]
+     * before its own target" shape [refreshPredictedSchedule] already relies on for every later
+     * beat. Bounded by three things, the smallest wins: the actual lead+offset this session needs
+     * ([StreamingClickEngine.leadMarginNanos] plus the configured [audioOffsetMs]'s own magnitude),
+     * [firstBeatCountInCapMs] (the user's own tolerance for a pause before playback visibly
+     * starts), and [MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION] of the current beat interval (so the
+     * pause never reads as disproportionate to the tempo itself, the same guard
+     * [startAudioScheduling] already applies to its own margin). Zero whenever there's nothing to
+     * lead in the first place: no local "pressed play" instant to count in from
+     * ([primeVisualFlash] false - a MIDI-driven start), the streaming engine isn't the active audio
+     * path this session, the click is off, the configured offset isn't actually a lead (`>= 0`),
+     * or the user's own cap is 0.
+     *
+     * Exposed (not private) so this is directly unit-testable without driving a real beat loop -
+     * the same "pure decision logic, testable in isolation" precedent
+     * [rescaledBpmForUnitNoteValueChange]/[nextQueueIndexAfterBar] already establish.
+     */
+    fun beatZeroCountInNanos(primeVisualFlash: Boolean): Long {
+        if (!primeVisualFlash || !usingStreamingClickEngine || !_clickEnabled.value || usingMidiClock) return 0L
+        val offsetMs = _audioOffsetMs.value
+        if (offsetMs >= 0f) return 0L
+        val capNanos = _firstBeatCountInCapMs.value * 1_000_000.0
+        if (capNanos <= 0.0) return 0L
+        val idealNanos = streamingClickEngine.leadMarginNanos() + (-offsetMs * 1_000_000.0).toLong()
+        val intervalNanos = 60_000_000_000.0 / _state.value.bpm
+        return minOf(
+            idealNanos.toDouble(),
+            capNanos,
+            intervalNanos * MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION,
+        ).toLong().coerceAtLeast(0L)
     }
 
     /**
@@ -816,6 +922,11 @@ object MetronomeEngine {
      */
     fun stop() {
         clock.stop()
+        // Cancels a pending beat-0 count-in (see start()/beatZeroCountInNanos) if stop() lands
+        // during that window - otherwise beginTicking() would still fire later and incorrectly
+        // resume playback after the user already pressed stop.
+        countInJob?.cancel()
+        countInJob = null
         // Flipped first, before cancelling anything - playClickSafely's own isPlaying check is
         // what actually stops an in-flight reactive delay (scheduleReactiveAudio's one-off
         // coroutine isn't tracked/cancelled the way renderJob/audioSchedulingJob are) or a
@@ -940,6 +1051,7 @@ object MetronomeEngine {
         _clickSpecs.value = ClickSound.entries.associateWith(ClickSpec::defaultFor)
         _visualOffsetMs.value = DEFAULT_VISUAL_OFFSET_MS
         _audioOffsetMs.value = DEFAULT_AUDIO_OFFSET_MS
+        _firstBeatCountInCapMs.value = DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS
         synchronized(audioResolutionLock) { resolvedBeatAudioCache.clear() }
         clickListenerForTesting = null
         _compactLandscape.value = false

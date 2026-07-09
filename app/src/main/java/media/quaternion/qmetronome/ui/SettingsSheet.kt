@@ -59,6 +59,7 @@ import media.quaternion.qmetronome.engine.ClickSpec
 import media.quaternion.qmetronome.engine.ClickWaveform
 import media.quaternion.qmetronome.engine.ClockTimingMode
 import media.quaternion.qmetronome.engine.DEFAULT_AUDIO_OFFSET_MS
+import media.quaternion.qmetronome.engine.DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS
 import media.quaternion.qmetronome.engine.DEFAULT_VISUAL_OFFSET_MS
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.midi.MidiClockSender
@@ -96,6 +97,7 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     val clockOutEnabled by MidiClockSender.enabled.collectAsState()
     val visualOffsetMs by MetronomeEngine.visualOffsetMs.collectAsState()
     val audioOffsetMs by MetronomeEngine.audioOffsetMs.collectAsState()
+    val firstBeatCountInCapMs by MetronomeEngine.firstBeatCountInCapMs.collectAsState()
     val stagedBpm by MetronomeEngine.stagedBpm.collectAsState()
     val timeSignature by MetronomeEngine.timeSignature.collectAsState()
     val extendedBpmRangeEnabled by MetronomeEngine.extendedBpmRangeEnabled.collectAsState()
@@ -310,6 +312,37 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                 },
             ) {
                 AudioOffsetDetails(bpm = beat.bpm)
+            }
+
+            HorizontalDivider()
+
+            CollapsibleSection(
+                title = "First beat count-in",
+                summary = {
+                    SteppedSlider(
+                        value = firstBeatCountInCapMs,
+                        onValueChange = MetronomeEngine::setFirstBeatCountInCapMs,
+                        currentValue = { MetronomeEngine.firstBeatCountInCapMs.value },
+                        valueRange = 0f..300f,
+                        step = 10f,
+                        defaultValue = DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS,
+                        dialogTitle = "Set count-in cap (ms)",
+                        valueLabel = { "${it.roundToInt()} ms" },
+                    )
+                },
+            ) {
+                Text(
+                    text = "The very first beat of a session can't lead its own click the way every " +
+                        "later beat does - there's no advance notice a play press is coming. This is " +
+                        "the longest pause qMetronome may hold that first beat back by, to give it " +
+                        "a real head start instead: 0 keeps the very first press instant, but that " +
+                        "beat's click can trail the flash by roughly the audio offset above. Higher " +
+                        "values trade a short, consistent pause for a first beat as precisely timed " +
+                        "as the rest. Defaults to ${DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS.roundToInt()} " +
+                        "ms, comfortably covering real hardware; double-tap the value above to reset.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
             }
 
             HorizontalDivider()

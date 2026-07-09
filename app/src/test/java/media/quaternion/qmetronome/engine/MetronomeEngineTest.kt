@@ -61,6 +61,125 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `a count-in cap of zero keeps the first beat exactly as instant as before`() {
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(60f)
+        MetronomeEngine.setAudioOffsetMs(-30f)
+        MetronomeEngine.setFirstBeatCountInCapMs(0f)
+
+        MetronomeEngine.start()
+
+        assertTrue(MetronomeEngine.state.value.isPlaying)
+        assertEquals(0, MetronomeEngine.state.value.beatIndex)
+        assertEquals(0f, MetronomeEngine.state.value.phase, 0.01f)
+        assertTrue("beat 0's priming flash should already be primed, no delay", MetronomeEngine.state.value.isAccent)
+    }
+
+    @Test
+    fun `a non-zero count-in cap flips isPlaying immediately but delays the first tick`() {
+        // 40 BPM (1500ms/beat) so MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION's 25%-of-interval cap
+        // (375ms) doesn't itself clip the deliberately-large 300ms count-in cap below - this test
+        // is specifically about the *cap* being honored, not about the interval-fraction guard.
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(40f)
+        MetronomeEngine.setAudioOffsetMs(-30f)
+        MetronomeEngine.setFirstBeatCountInCapMs(300f)
+
+        MetronomeEngine.start()
+        val countInNanos = MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true)
+        assertTrue("isPlaying should flip immediately regardless of any count-in", MetronomeEngine.state.value.isPlaying)
+        assertEquals(
+            "no real tick yet - still mid count-in (countInNanos=$countInNanos)",
+            0L,
+            MetronomeEngine.state.value.totalBeats,
+        )
+
+        Thread.sleep(50) // well inside any count-in up to the 300ms cap
+        assertEquals("still mid count-in, no tick yet", 0L, MetronomeEngine.state.value.totalBeats)
+
+        Thread.sleep(1500) // generous margin past the largest possible count-in (300ms cap)
+        assertTrue(
+            "expected the first real tick once the count-in elapsed (countInNanos=$countInNanos), " +
+                "totalBeats=${MetronomeEngine.state.value.totalBeats}",
+            MetronomeEngine.state.value.totalBeats >= 1,
+        )
+    }
+
+    @Test
+    fun `stop during an active count-in cancels it rather than resuming playback later`() {
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(40f)
+        MetronomeEngine.setAudioOffsetMs(-30f)
+        MetronomeEngine.setFirstBeatCountInCapMs(300f)
+
+        MetronomeEngine.start()
+        Thread.sleep(50) // well inside the count-in window
+        MetronomeEngine.stop()
+
+        assertFalse(MetronomeEngine.state.value.isPlaying)
+        Thread.sleep(500) // comfortably past when the cancelled count-in would have fired
+        assertFalse("stop() during the count-in must not let it resume playback later", MetronomeEngine.state.value.isPlaying)
+        assertEquals(0L, MetronomeEngine.state.value.totalBeats)
+    }
+
+    @Test
+    fun `beatZeroCountInNanos returns zero whenever there is nothing to lead`() {
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(60f)
+        MetronomeEngine.setAudioOffsetMs(-30f)
+        MetronomeEngine.setFirstBeatCountInCapMs(100f)
+        MetronomeEngine.start() // establishes usingStreamingClickEngine for the direct calls below
+
+        assertEquals(
+            "no local 'pressed play' instant to lead from on a MIDI-driven start",
+            0L,
+            MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = false),
+        )
+
+        MetronomeEngine.setClickEnabled(false)
+        assertEquals(0L, MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true))
+        MetronomeEngine.setClickEnabled(true)
+
+        MetronomeEngine.setAudioOffsetMs(0f)
+        assertEquals(0L, MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true))
+        MetronomeEngine.setAudioOffsetMs(-30f)
+
+        MetronomeEngine.setFirstBeatCountInCapMs(0f)
+        assertEquals(0L, MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true))
+    }
+
+    @Test
+    fun `beatZeroCountInNanos never exceeds the user's own cap`() {
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(60f)
+        MetronomeEngine.setAudioOffsetMs(-200f) // a large lead that would otherwise dominate
+        MetronomeEngine.start()
+
+        MetronomeEngine.setFirstBeatCountInCapMs(5f) // 5ms - deliberately smaller than the offset alone
+        val countInNanos = MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true)
+        assertTrue(
+            "expected the count-in to be bounded by the user's 5ms cap, got ${countInNanos}ns",
+            countInNanos <= 5_000_000L,
+        )
+    }
+
+    @Test
+    fun `beatZeroCountInNanos never exceeds a quarter of the current beat interval`() {
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 400 BPM, 150ms/beat - 25% is 37.5ms
+        MetronomeEngine.setAudioOffsetMs(-30f)
+        MetronomeEngine.setFirstBeatCountInCapMs(500f) // deliberately huge, so the interval fraction binds instead
+        MetronomeEngine.start()
+
+        val countInNanos = MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true)
+        val intervalNanos = 60_000_000_000.0 / MetronomeEngine.MAX_BPM
+        assertTrue(
+            "expected the count-in to be bounded by 25% of the beat interval (~${intervalNanos * 0.25}ns), got ${countInNanos}ns",
+            countInNanos <= (intervalNanos * 0.25).toLong(),
+        )
+    }
+
+    @Test
     fun `setBpm clamps to the supported range`() {
         MetronomeEngine.setBpm(1f)
         assertEquals(MetronomeEngine.MIN_BPM, MetronomeEngine.state.value.bpm)

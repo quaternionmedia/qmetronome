@@ -90,6 +90,19 @@ class StreamingClickEngine {
 
     private data class PendingBeat(val totalBeats: Long, val sound: ClickSound?, val targetNanos: Long)
 
+    /** For on-device benchmarking only (see `FirstBeatTimingBenchmarkTest` in `androidTest`) - lets
+     * a test observe, for every beat actually mixed into the stream, its intended target nanoTime
+     * against the real nanoTime (via the same [frameForNanoTime]/[nanoTimeForFrame] calibration,
+     * running against real `AudioTrack`/HAL behavior - not Robolectric's shadow, which doesn't
+     * model this) it actually landed at. The delta between the two *is* this engine's real
+     * placement error, without needing a microphone/acoustic loopback to observe it - the mixing
+     * decision itself already carries everything a test needs. */
+    @Volatile private var mixListenerForTesting: ((totalBeats: Long, targetNanos: Long, actualNanos: Long) -> Unit)? = null
+
+    fun setMixListenerForTesting(listener: ((totalBeats: Long, targetNanos: Long, actualNanos: Long) -> Unit)?) {
+        mixListenerForTesting = listener
+    }
+
     fun setSpec(sound: ClickSound, spec: ClickSpec) {
         specs[sound] = spec
         renderedSamples.remove(sound)
@@ -250,6 +263,7 @@ class StreamingClickEngine {
         if (offsetInChunk >= chunk.size) return // not due yet
         pending.sound?.let { mixInto(chunk, offsetInChunk.toInt(), it) }
         synchronized(scheduleLock) { consumedTotalBeats = pending.totalBeats }
+        mixListenerForTesting?.invoke(pending.totalBeats, pending.targetNanos, nanoTimeForFrame(chunkStartFrame + offsetInChunk))
     }
 
     private fun mixInto(chunk: ShortArray, startFrame: Int, sound: ClickSound) {
@@ -272,6 +286,14 @@ class StreamingClickEngine {
         val deltaNanos = nanos - referenceNanos
         val deltaFrames = deltaNanos.toDouble() * sampleRateHz / 1_000_000_000.0
         return referenceFramePosition + deltaFrames.toLong()
+    }
+
+    /** The inverse of [frameForNanoTime] - for [mixListenerForTesting] only, to report back which
+     * real nanoTime a given frame (where a beat actually got mixed) corresponds to. */
+    private fun nanoTimeForFrame(frame: Long): Long {
+        val deltaFrames = frame - referenceFramePosition
+        val deltaNanos = deltaFrames.toDouble() * 1_000_000_000.0 / sampleRateHz
+        return referenceNanos + deltaNanos.toLong()
     }
 
     private fun chunkFrames(): Int = (sampleRateHz * CHUNK_DURATION_MS / 1000).toInt().coerceAtLeast(1)

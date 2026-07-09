@@ -79,6 +79,15 @@ class MetronomeSettingsTest {
     }
 
     @Test
+    fun `first-beat count-in cap defaults to DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS, and round-trips once set`() {
+        assertEquals(DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS, settings.firstBeatCountInCapMs)
+
+        settings.firstBeatCountInCapMs = 0f
+
+        assertEquals(0f, settings.firstBeatCountInCapMs)
+    }
+
+    @Test
     fun `extended bpm range defaults off, and round-trips once set`() {
         assertFalse(settings.extendedBpmRangeEnabled)
 

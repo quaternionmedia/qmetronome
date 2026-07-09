@@ -11,6 +11,12 @@ const val DEFAULT_VISUAL_OFFSET_MS = -50f
  * render/transmit path. See [MetronomeEngine.audioOffsetMs] for how it's actually applied. */
 const val DEFAULT_AUDIO_OFFSET_MS = -30f
 
+/** Default [MetronomeSettings.firstBeatCountInCapMs] - matches [MetronomeEngine]'s own
+ * `MAX_STREAMING_LEAD_MARGIN_NANOS` (100ms) rather than introducing a second magic number: this
+ * is the same "generous headroom for an unusually large buffer" ceiling the steady-state lookahead
+ * loop already uses, just applied to beat 0 specifically. See [MetronomeEngine.beatZeroCountInNanos]. */
+const val DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS = 100f
+
 /** Persists the last-used tempo, time signature and visualizer choice across process restarts. */
 class MetronomeSettings(context: Context) {
 
@@ -65,6 +71,16 @@ class MetronomeSettings(context: Context) {
     var audioOffsetMs: Float
         get() = prefs.getFloat(KEY_AUDIO_OFFSET_MS, DEFAULT_AUDIO_OFFSET_MS)
         set(value) = prefs.edit().putFloat(KEY_AUDIO_OFFSET_MS, value).apply()
+
+    /** Maximum pause (ms) [MetronomeEngine] may hold the very first beat back by, to give its
+     * click the same genuine lead-scheduling every later beat gets - see
+     * [MetronomeEngine.beatZeroCountInNanos] for the full mechanism and why beat 0 structurally
+     * can't get that lead for free. 0 keeps the first beat instant (today's behavior, at the cost
+     * of that beat's click potentially trailing the visual flash); [DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS]
+     * comfortably covers real hardware out of the box. */
+    var firstBeatCountInCapMs: Float
+        get() = prefs.getFloat(KEY_FIRST_BEAT_COUNT_IN_CAP_MS, DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS)
+        set(value) = prefs.edit().putFloat(KEY_FIRST_BEAT_COUNT_IN_CAP_MS, value).apply()
 
     /** When true and the device is in landscape, the main screen switches to a side-by-side
      * preview+controls layout that fits within the screen height instead of overflowing. */
@@ -197,6 +213,7 @@ class MetronomeSettings(context: Context) {
         const val KEY_CLOCK_OUT_TIMING_MODE = "clock_out_timing_mode"
         const val KEY_VISUAL_OFFSET_MS = "visual_offset_ms"
         const val KEY_AUDIO_OFFSET_MS = "audio_offset_ms"
+        const val KEY_FIRST_BEAT_COUNT_IN_CAP_MS = "first_beat_count_in_cap_ms"
         const val KEY_COMPACT_LANDSCAPE = "compact_landscape"
         const val KEY_SYMBOLIC_CONTROLS_ENABLED = "symbolic_controls_enabled"
         const val KEY_PERSISTENT_MODE_ENABLED = "persistent_mode_enabled"
