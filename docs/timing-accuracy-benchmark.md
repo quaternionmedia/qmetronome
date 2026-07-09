@@ -71,19 +71,42 @@ benchmark cares about. Runs twice: once at the shipped default (100ms count-in c
 the count-in disabled (0ms cap, today's pre-fix behavior) - same device, same session shape, so the
 report shows the actual measured difference, not an assertion of one.
 
-**Run it**:
+**Run it** (AGP's connected-test task takes its class filter differently from `test`'s `--tests`):
 ```sh
-./gradlew connectedDebugAndroidTest --tests "*.FirstBeatTimingBenchmarkTest"
+./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=media.quaternion.qmetronome.benchmark.FirstBeatTimingBenchmarkTest
+adb logcat -d -s FirstBeatBenchmark:I *:S   # after the run, to read the report back
 ```
 Results are logged (`adb logcat -s FirstBeatBenchmark`) and printed to the instrumentation
 runner's own stdout - both the per-session beat-0 error and the steady-state (beats 3-8) mean/max,
 plus every raw sample.
 
-**Results**: *pending first on-device run* - no device was connected in the session that wrote
-this benchmark. Update this section with real numbers (both the count-in-enabled and
-count-in-disabled runs, ideally across more than one physical device) the next time one is
-available, and track them here over time rather than overwriting - a single run is a data point,
-not a verified fix.
+**Results**:
+
+| Date | Device | Count-in cap | Beat 0 \|error\| (mean / max, ms) | Steady-state \|error\| (mean / max, ms) | Notes |
+|---|---|---|---|---|---|
+| 2026-07-09 | Nothing A024 (SDK 36) | 0ms (old behavior) | 174.94 / 176.32 | 46.88 / 51.54 | Excess over steady-state baseline: **~128ms**. Remarkably consistent across all 4 sessions (173.6-176.3ms) - this is a real, repeatable gap, not noise. |
+| 2026-07-09 | Nothing A024 (SDK 36) | 100ms (shipped default) | 83.16 / 103.12 | 47.44 / 51.37 | Excess over steady-state baseline: **~36ms** (session 0 was an outlier at 103ms - likely a cold-run/first-session-of-the-test-process effect; sessions 1-3 clustered tightly at 76-77ms). |
+
+**Interpretation, honestly**: the count-in fix is real and measured - it cuts beat 0's excess
+error (the part attributable to the structural gap this round targeted, over and above a ~47ms
+baseline every beat on this device carries - see below) from ~128ms to ~36ms, a 72% reduction,
+consistent across every session in both runs. **It does not yet reach the ≤10ms target this doc
+sets.** The likely reason: unlike steady-state beats, whose `refreshPredictedSchedule` gets
+*repeatedly* refined by `startAudioScheduling`'s poll loop right up until each beat's own deadline,
+the count-in currently schedules beat 0 *once*, at the very start of the pause, and never corrects
+for dispatch/scheduling jitter that accumulates during the wait. Giving the count-in window its own
+short refine-loop - the same repeated-polling shape `startAudioScheduling` already uses for every
+later beat, just applied during the pause instead of before a steady-state beat - is the natural
+next step, not implemented in this round pending review of these numbers.
+
+**An independent finding worth its own note**: steady-state beats on this device carry a
+consistent ~47ms baseline `|error|` in *this benchmark's own measurement*, not just beat 0. That
+almost certainly reflects `StreamingClickEngine`'s real buffer-ahead depth on this specific device
+(`leadMarginNanos()`) showing up in the measurement itself, rather than genuine placement
+imprecision - this benchmark measures target-vs-actual-mixed-frame, not true acoustic latency (see
+the deferred mic-loopback section below), so a constant, device-specific offset here is expected,
+not alarming. Worth confirming this reads similarly on a second device before treating the ~47ms
+figure as anything more than "this is what Nothing A024 specifically reports."
 
 | Date | Device | Count-in cap | Beat 0 \|error\| (mean / max, ms) | Steady-state \|error\| (mean / max, ms) | Notes |
 |---|---|---|---|---|---|

@@ -32,9 +32,12 @@ import kotlin.math.abs
  * precisely as the beats after it, on real hardware, across repeated play/stop sessions - not just
  * the very first one after a fresh install.
  *
- * Run via `./gradlew connectedDebugAndroidTest --tests "*.FirstBeatTimingBenchmarkTest"` with a
- * device attached; results are logged (tag `FirstBeatBenchmark`) and printed to stdout, visible via
- * `adb logcat -s FirstBeatBenchmark` or the instrumentation test runner's own output.
+ * Run via `./gradlew connectedDebugAndroidTest
+ * -Pandroid.testInstrumentationRunnerArguments.class=media.quaternion.qmetronome.benchmark.FirstBeatTimingBenchmarkTest`
+ * with a device attached (AGP's connected-test task doesn't take `test`'s `--tests` filter);
+ * results are logged (tag `FirstBeatBenchmark`) and printed to stdout, visible via
+ * `adb logcat -s FirstBeatBenchmark` or the instrumentation test runner's own output. See
+ * `docs/timing-accuracy-benchmark.md` for the actual measured results this has produced so far.
  */
 @RunWith(AndroidJUnit4::class)
 class FirstBeatTimingBenchmarkTest {

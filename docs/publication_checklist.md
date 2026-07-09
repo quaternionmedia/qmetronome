@@ -708,18 +708,19 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       confirm the first beat still lands promptly - guards against the writer having
       silently died while idle with nothing to catch it (the one scenario that still
       forces a real rebuild - see `StreamingClickEngine.start()`'s liveness check).
-- [ ] **v0.0.29 first-beat count-in (Gap B follow-up)**: reported that the warm-keep fix
-      above wasn't sufficient on its own - beat 0 structurally has no lead-scheduling
-      window the way every later beat does, traced and confirmed in
-      `docs/timing-accuracy-benchmark.md`. Fixed with a small, user-tunable, bounded pause
-      (Settings → Audio timing offset → "First beat count-in," default 100ms cap) that
-      gives beat 0's audio the same genuine lead every other beat gets, at the cost of a
-      brief delay before the very first press's flash/click. Run
-      `FirstBeatTimingBenchmarkTest` (see that doc for the exact command) with the click
-      on at a moderate tempo and confirm: (1) the count-in's pause is barely perceptible
-      at the default cap: (2) setting the cap to 0 restores the exact old instant-but-
-      unled behavior, for comparison; (3) the benchmark's logged beat-0-vs-steady-state
-      numbers - not just a feel check - actually meet the ≤10ms target that doc defines.
-      This item isn't checkable from feel alone; it's the manual on-device counterpart to
-      that doc's own measured-results table, which should be filled in from the same
-      session this box gets checked.
+- [ ] **v0.0.29 first-beat count-in (Gap B follow-up) - measured, not yet meeting target**:
+      reported that the warm-keep fix above wasn't sufficient on its own - beat 0
+      structurally has no lead-scheduling window the way every later beat does, traced and
+      confirmed in `docs/timing-accuracy-benchmark.md`. Fixed with a small, user-tunable,
+      bounded pause (Settings → Audio timing offset → "First beat count-in," default 100ms
+      cap) that gives beat 0's audio the same genuine lead every other beat gets, at the
+      cost of a brief delay before the very first press's flash/click.
+      `FirstBeatTimingBenchmarkTest` has now actually been run (Nothing A024, SDK 36,
+      2026-07-09 - see that doc's results table): beat 0's excess error over this device's
+      own steady-state baseline dropped from ~128ms (count-in off) to ~36ms (shipped
+      default) - a real, 72% measured reduction - but still short of the doc's ≤10ms
+      target. Likely cause identified (a one-shot schedule vs. the repeated refinement
+      every later beat gets from the existing lookahead loop), not yet fixed. Remaining
+      manual check once that's addressed: confirm the count-in's pause is barely
+      perceptible at the default cap, and that cap=0 still restores the exact old
+      instant-but-unled behavior for comparison.
