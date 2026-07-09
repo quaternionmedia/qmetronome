@@ -817,6 +817,19 @@ object MetronomeEngine {
      * [firstBeatCountInCapMs] for the user-facing dial on how much of a pause that's worth.
      * [_state]'s `isPlaying` flips true immediately either way (so the transport button responds
      * the instant it's pressed), independent of whether the flash/first tick themselves wait.
+     *
+     * That deferred window feeds beat 0 through the *exact same* predictive-scheduling loop
+     * ([startAudioScheduling]/[refreshPredictedSchedule]) every later beat already uses, via a
+     * synthetic [lastBeatNanos] that makes "beat 0 is due" land precisely [beatZeroCountInNanos]
+     * nanoseconds from now - not a bespoke one-shot [StreamingClickEngine.scheduleBeat] call. An
+     * earlier version of this fix used a one-shot call and measurably under-performed this: on
+     * real hardware, steady-state beats (already going through the polling loop) carry their own
+     * consistent baseline placement error - real, device-specific buffer/HAL behavior this
+     * benchmark doesn't otherwise correct for - and a hand-rolled parallel computation reproduced
+     * that same baseline *plus* its own extra error on top, rather than matching it. Reusing the
+     * identical mechanism (same arithmetic, same repeated refinement right up to the deadline)
+     * means beat 0 inherits the same baseline as every other beat instead of a second, larger one -
+     * see `docs/timing-accuracy-benchmark.md`'s results table for the measured before/after.
      */
     fun start(primeVisualFlash: Boolean = true) {
         if (_state.value.isPlaying && renderJob?.isActive == true) return
@@ -838,14 +851,9 @@ object MetronomeEngine {
             return
         }
         _state.update { it.copy(isPlaying = true) }
-        val resolved = resolveBeatAudio(totalBeatsForBeat = 0, beatIndexForBeat = 0)
-        synchronized(audioResolutionLock) { resolvedBeatAudioCache[0] = resolved }
-        val now = System.nanoTime()
-        resolved.sound?.let { sound ->
-            clickListenerForTesting?.invoke(sound, now)
-            val offsetNanos = (-_audioOffsetMs.value * 1_000_000.0).toLong()
-            streamingClickEngine.scheduleBeat(0, sound, now + countInNanos - offsetNanos)
-        }
+        val intervalNanos = (60_000_000_000.0 / _state.value.bpm).toLong()
+        lastBeatNanos = System.nanoTime() + countInNanos - intervalNanos
+        startAudioScheduling()
         countInJob = clockScope.launch {
             delay(countInNanos / 1_000_000)
             beginTicking(primeVisualFlash = true)
@@ -881,10 +889,11 @@ object MetronomeEngine {
      * that far ahead of real playback).
      *
      * The only way to give beat 0 genuine lead is to defer its own nominal instant - this
-     * function's return value - long enough that [start] can push a real schedule call before the
-     * flash/tick actually happen, the same "call arrives [StreamingClickEngine.leadMarginNanos]
-     * before its own target" shape [refreshPredictedSchedule] already relies on for every later
-     * beat. Bounded by three things, the smallest wins: the actual lead+offset this session needs
+     * function's return value - long enough that [start] can feed it through the *same*
+     * [startAudioScheduling]/[refreshPredictedSchedule] polling loop every later beat already
+     * uses (via a synthetic [lastBeatNanos] - see [start]'s own kdoc for why that, rather than a
+     * one-shot [StreamingClickEngine.scheduleBeat] push, is what actually closes the gap on real
+     * hardware). Bounded by three things, the smallest wins: the actual lead+offset this session needs
      * ([StreamingClickEngine.leadMarginNanos] plus the configured [audioOffsetMs]'s own magnitude),
      * [firstBeatCountInCapMs] (the user's own tolerance for a pause before playback visibly
      * starts), and [MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION] of the current beat interval (so the
@@ -994,8 +1003,8 @@ object MetronomeEngine {
     }
 
     /** Full teardown, including the streaming engine's `AudioTrack`/writer itself - [stop] alone
-     * deliberately leaves those warm (see its own kdoc), so this is the one place that actually
-     * releases them. Not called anywhere in production today (there's no process-lifecycle hook
+     * deliberately leaves that warm (see its own kdoc), so this is the one place that actually
+     * releases it. Not called anywhere in production today (there's no process-lifecycle hook
      * that would call it), but should stay correct regardless. */
     fun release() {
         stop()
@@ -1256,6 +1265,19 @@ object MetronomeEngine {
      * clears it, up to a full `|audioOffsetMs|` window later. Measured as the actual cause of
      * audible timing trouble at high BPM before this loop's first fix; still the reason every
      * branch here ends in a `delay()`.
+     *
+     * Cancels and relaunches on every call, deliberately - unlike [StreamingClickEngine]'s
+     * `AudioTrack`/writer (genuinely expensive to rebuild, hence kept warm across sessions), this
+     * coroutine owns no resource worth preserving, only control flow. Tried keeping it warm too
+     * (mirroring that fix), reasoning it would eliminate a same-shaped cold-dispatch tax - measured
+     * on real hardware instead to be a net *regression* (see `docs/timing-accuracy-benchmark.md`'s
+     * results table), because a warm-but-idle instance of this loop is asleep inside its own
+     * [AUDIO_LOOKAHEAD_IDLE_POLL_MS] `delay()` while gated off, and a `delay()` already in flight
+     * can't be woken early just because [start] flips `isPlaying` true - it only notices on its
+     * *next* wake, up to a full [AUDIO_LOOKAHEAD_IDLE_POLL_MS] later. A fresh relaunch has no such
+     * in-flight sleep to wait out: its first iteration runs immediately, already seeing the new
+     * state. Reverted for that reason - this is the opposite lifecycle from the writer, not a
+     * smaller version of the same fix.
      */
     private fun startAudioScheduling() {
         audioSchedulingJob?.cancel()

@@ -716,11 +716,15 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       cap) that gives beat 0's audio the same genuine lead every other beat gets, at the
       cost of a brief delay before the very first press's flash/click.
       `FirstBeatTimingBenchmarkTest` has now actually been run (Nothing A024, SDK 36,
-      2026-07-09 - see that doc's results table): beat 0's excess error over this device's
-      own steady-state baseline dropped from ~128ms (count-in off) to ~36ms (shipped
-      default) - a real, 72% measured reduction - but still short of the doc's ≤10ms
-      target. Likely cause identified (a one-shot schedule vs. the repeated refinement
-      every later beat gets from the existing lookahead loop), not yet fixed. Remaining
-      manual check once that's addressed: confirm the count-in's pause is barely
-      perceptible at the default cap, and that cap=0 still restores the exact old
-      instant-but-unled behavior for comparison.
+      2026-07-09 - see that doc's results table, four dated runs): beat 0's excess error
+      over this device's own steady-state baseline dropped from ~128ms (count-in off) to
+      ~31-36ms (shipped default) - a real, ~75% measured reduction - but still short of
+      the doc's ≤10ms target. Two follow-up hypotheses for the residual were tried and
+      measured the same day: routing beat 0 through the exact same polling loop
+      steady-state beats use (no measured difference - kept anyway for the cleaner
+      architecture) and keeping that loop's own coroutine warm across sessions (a
+      measured *regression*, root-caused to an idle-poll wake-latency tax, reverted same
+      day). The ~31-36ms floor survived both attempts unchanged; the doc's own next
+      proposed step is a self-calibrating lead margin, not yet built. Remaining manual
+      check: confirm the count-in's pause is barely perceptible at the default cap, and
+      that cap=0 still restores the exact old instant-but-unled behavior for comparison.

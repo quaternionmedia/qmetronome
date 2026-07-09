@@ -85,28 +85,71 @@ plus every raw sample.
 | Date | Device | Count-in cap | Beat 0 \|error\| (mean / max, ms) | Steady-state \|error\| (mean / max, ms) | Notes |
 |---|---|---|---|---|---|
 | 2026-07-09 | Nothing A024 (SDK 36) | 0ms (old behavior) | 174.94 / 176.32 | 46.88 / 51.54 | Excess over steady-state baseline: **~128ms**. Remarkably consistent across all 4 sessions (173.6-176.3ms) - this is a real, repeatable gap, not noise. |
-| 2026-07-09 | Nothing A024 (SDK 36) | 100ms (shipped default) | 83.16 / 103.12 | 47.44 / 51.37 | Excess over steady-state baseline: **~36ms** (session 0 was an outlier at 103ms - likely a cold-run/first-session-of-the-test-process effect; sessions 1-3 clustered tightly at 76-77ms). |
+| 2026-07-09 | Nothing A024 (SDK 36) | 100ms (shipped default) | 83.16 / 103.12 | 47.44 / 51.37 | One-shot `StreamingClickEngine.scheduleBeat` push. Excess over steady-state baseline: **~36ms** (session 0 was an outlier at 103ms - likely a cold-run/first-session-of-the-test-process effect; sessions 1-3 clustered tightly at 76-77ms). |
+| 2026-07-09 | Nothing A024 (SDK 36) | 100ms (shipped default) | 115.04 / 187.50 | 47.91 / 51.96 | Redesign attempt: beat 0 routed through the same `startAudioScheduling`/`refreshPredictedSchedule` loop as every later beat, **plus** kept that loop's coroutine warm/idle across sessions (mirroring `StreamingClickEngine`'s own warm-keep fix). Excess over baseline: **~43ms (sessions 1-3)** - a regression, not an improvement. Root cause and revert below. |
+| 2026-07-09 | Nothing A024 (SDK 36) | 100ms (shipped default) | 101.26 / 168.86 | 47.20 / 49.72 | Same loop-routed redesign, warm-keep **reverted** (coroutine cancelled/relaunched every session again). Excess over baseline: **~31-36ms (sessions 1-3: 31.28, 29.40, 33.91)** - back to, if anything marginally better than, the one-shot row above. This is the current shipped state. |
 
-**Interpretation, honestly**: the count-in fix is real and measured - it cuts beat 0's excess
-error (the part attributable to the structural gap this round targeted, over and above a ~47ms
-baseline every beat on this device carries - see below) from ~128ms to ~36ms, a 72% reduction,
-consistent across every session in both runs. **It does not yet reach the ≤10ms target this doc
-sets.** The likely reason: unlike steady-state beats, whose `refreshPredictedSchedule` gets
-*repeatedly* refined by `startAudioScheduling`'s poll loop right up until each beat's own deadline,
-the count-in currently schedules beat 0 *once*, at the very start of the pause, and never corrects
-for dispatch/scheduling jitter that accumulates during the wait. Giving the count-in window its own
-short refine-loop - the same repeated-polling shape `startAudioScheduling` already uses for every
-later beat, just applied during the pause instead of before a steady-state beat - is the natural
-next step, not implemented in this round pending review of these numbers.
+**Interpretation, honestly - three hypotheses, in the order they were actually tried**:
 
-**An independent finding worth its own note**: steady-state beats on this device carry a
-consistent ~47ms baseline `|error|` in *this benchmark's own measurement*, not just beat 0. That
-almost certainly reflects `StreamingClickEngine`'s real buffer-ahead depth on this specific device
-(`leadMarginNanos()`) showing up in the measurement itself, rather than genuine placement
-imprecision - this benchmark measures target-vs-actual-mixed-frame, not true acoustic latency (see
-the deferred mic-loopback section below), so a constant, device-specific offset here is expected,
-not alarming. Worth confirming this reads similarly on a second device before treating the ~47ms
-figure as anything more than "this is what Nothing A024 specifically reports."
+1. **"One-shot schedule vs. the repeated-refinement polling loop"** - hypothesized that beat 0's
+   one-shot `scheduleBeat` call underperformed because, unlike steady-state beats, it never got
+   re-checked/refined as the deadline approached. Redesigned `start()` to feed beat 0 through the
+   *exact same* `startAudioScheduling`/`refreshPredictedSchedule` loop via a synthetic
+   `lastBeatNanos` (row 2 above). **Measured result: no difference** (~36ms excess either way).
+   Reason, traced afterward: the synthetic anchor is fixed, so every poll of the loop recomputes
+   the identical target - "repeated refinement" only does anything when the *predicted value itself*
+   changes between polls (real bpm/tempo drift), which a one-time synthetic anchor never does.
+   Kept the redesign anyway (row 3/4) since routing every beat through one mechanism is still better
+   architecture than a bespoke parallel formula, even without a measured win.
+2. **"Cold-dispatch tax on the scheduling coroutine itself"** - reasoning by analogy to
+   `StreamingClickEngine`'s own fix (a real, expensive `AudioTrack` rebuild-per-session, closed by
+   keeping it warm): if `startAudioScheduling`'s coroutine was also being torn down and relaunched
+   every session, maybe *that* relaunch cost was the residual. Made it idempotent and stopped
+   cancelling it in `stop()` (row 3). **Measured result: a regression** (~43ms excess, worse than
+   ~36ms, with a wider spread - one session at 187ms vs. the prior row's tightest cluster at
+   76-77ms). Traced why: this coroutine, unlike the `AudioTrack`/writer, owns no expensive resource
+   to protect - keeping it "warm" just means it's asleep inside its own `AUDIO_LOOKAHEAD_IDLE_POLL_MS`
+   (25ms) `delay()` while gated off between sessions, and a `delay()` already in flight can't be
+   woken early just because `start()` flips `isPlaying` true - it only notices on its *next* wake, up
+   to 25ms later. A fresh relaunch has no such in-flight sleep to wait out: its first iteration runs
+   immediately, already seeing the new state. **Reverted** (row 4) - this was the wrong lifecycle for
+   this specific coroutine, the opposite lesson from `StreamingClickEngine`'s, not a smaller version
+   of the same fix. `startAudioScheduling`'s own kdoc now documents this explicitly so the mistake
+   isn't repeated.
+3. **Where that leaves the ~31-36ms floor**: still open. It survives across three independent
+   on-device measurements (one-shot, loop-routed-with-relaunch, loop-routed-with-warm-keep-reverted)
+   and both attempted mitigations left it essentially unchanged - which is itself informative: this
+   residual isn't being caused by anything this round touched (one-shot vs. loop, warm vs. cold
+   coroutine). The more likely remaining cause, not yet tested: see the independent finding below,
+   and the proposed next step after it.
+
+**An independent finding, and what it now points to**: steady-state beats on this device carry a
+consistent ~47ms baseline `|error|` in *this benchmark's own measurement*, not just beat 0, stable
+across all four runs above regardless of what changed. The working theory is still that this
+reflects `StreamingClickEngine`'s real buffer-ahead depth (`leadMarginNanos()`) showing up in the
+measurement rather than genuine placement imprecision - but that theory has a testable, unverified
+half: `leadMarginNanos()` is *computed* from `AudioTrack.getMinBufferSize()`, not measured from
+actual device behavior. If the real HAL/output pipeline holds more lead than that computed buffer
+size implies, the scheduling loop would systematically under-estimate how early it needs to call
+`scheduleBeat`, and *every* beat - steady-state included - would land a constant amount late, which
+is exactly the shape of the ~47ms baseline. If that's right, it's also very plausibly why beat 0
+specifically compounds worse: its very first scheduling decision has no prior beat's measured error
+to lean on, while by beat 3-8 nothing about steady-state's *placement* has actually improved either
+- they're just past the point where the benchmark starts averaging, not past the point where the
+bias stops applying.
+
+**Proposed next step (not implemented this round, given its size and risk - a candidate for the
+next round, not a blind addition to this one)**: make the lead margin self-calibrating instead of a
+static buffer-size estimate. `mixListenerForTesting`'s mechanism already computes, for every beat
+actually mixed, the exact delta between intended and actual placement - in production (not just the
+test), a rolling measurement of that same delta could feed back into `leadMarginNanos`'s effective
+value, closing the loop between "how far ahead we think we need to schedule" and "how far ahead we
+actually needed to." This is a materially bigger change than anything tried this round (it would
+affect every beat's placement, not just beat 0's), and needs its own care against overshoot - firing
+a click *early* is a more noticeable defect than firing it slightly late, so a feedback controller
+here needs a deliberately asymmetric/conservative correction, not a naive average. Proposing it here
+rather than building it blind, per this round's own lesson (mitigation #2 above) that a plausible-
+sounding analogy to a previous fix isn't the same thing as a measured one.
 
 | Date | Device | Count-in cap | Beat 0 \|error\| (mean / max, ms) | Steady-state \|error\| (mean / max, ms) | Notes |
 |---|---|---|---|---|---|
