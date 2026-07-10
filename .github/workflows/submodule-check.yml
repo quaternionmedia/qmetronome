@@ -1,0 +1,34 @@
+name: Submodule refs
+
+# Verifies every submodule's pinned commit actually exists on that
+# submodule's own remote - deliberately triggers on every push (any branch
+# or tag, not just main/PR the way ci.yml does) and every PR, since a stale
+# pointer can be introduced on any branch and the actual breakage only
+# surfaces later, when a tag is pushed and a release workflow's
+# `actions/checkout` tries to fetch it. That failure mode broke the v0.0.28
+# Alpha Release build (a cryptic "not our ref" error deep inside submodule
+# fetching) - see scripts/check-submodule-refs.sh's own comment for the
+# incident this exists to catch early, with a clear, actionable message
+# instead.
+#
+# Checks out *without* submodules on purpose - the whole point is to verify
+# reachability before attempting the submodule fetch that would otherwise
+# fail first and mask this workflow's own, clearer error.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check-submodule-refs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Verify submodule commits are pushed to their own remotes
+        run: bash scripts/check-submodule-refs.sh
