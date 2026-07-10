@@ -1,5 +1,6 @@
 package media.quaternion.qmetronome.engine
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -55,6 +56,10 @@ class StreamingClickEngine {
         AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC).takeIf { it > 0 } ?: 44_100
     }
 
+    // Set once, best-effort, from configureFromDevice() - see that function's own kdoc for why
+    // this exists and what happens when it's never called (falls back to getMinBufferSize()).
+    @Volatile private var lowLatencyBufferFrames: Int? = null
+
     private val specs = mutableMapOf<ClickSound, ClickSpec>().apply {
         ClickSound.entries.forEach { put(it, ClickSpec.defaultFor(it)) }
     }
@@ -87,6 +92,10 @@ class StreamingClickEngine {
     private var pendingSound: ClickSound? = null
     private var pendingTargetNanos = 0L
     private var consumedTotalBeats = -1L
+
+    // Not reset by resetSchedule() or stop() - see LeadMarginCalibrator's own kdoc for why this
+    // models the physical device, not a single play/stop session.
+    private val leadMarginCalibrator = LeadMarginCalibrator()
 
     private data class PendingBeat(val totalBeats: Long, val sound: ClickSound?, val targetNanos: Long)
 
@@ -165,6 +174,16 @@ class StreamingClickEngine {
         if (bufferFrames <= 0) return 0L
         return (bufferFrames.toDouble() / sampleRateHz * 1_000_000_000.0).toLong()
     }
+
+    /**
+     * [leadMarginNanos] corrected by [leadMarginCalibrator]'s running measurement of this device's
+     * *actual* placement error - see that class's own kdoc for why the raw buffer-derived estimate
+     * alone isn't reliable, and `docs/timing-accuracy-benchmark.md` for the measured before/after.
+     * Callers should use this instead of [leadMarginNanos] directly for any scheduling decision;
+     * [leadMarginNanos] itself stays as the uncorrected raw estimate, still meaningful on its own
+     * (e.g. for tests asserting against the buffer's raw configured size).
+     */
+    fun calibratedLeadMarginNanos(): Long = leadMarginNanos() + leadMarginCalibrator.correctionNanos()
 
     /**
      * Builds and starts the continuous stream, and launches its writer coroutine on [scope] (a
@@ -263,7 +282,9 @@ class StreamingClickEngine {
         if (offsetInChunk >= chunk.size) return // not due yet
         pending.sound?.let { mixInto(chunk, offsetInChunk.toInt(), it) }
         synchronized(scheduleLock) { consumedTotalBeats = pending.totalBeats }
-        mixListenerForTesting?.invoke(pending.totalBeats, pending.targetNanos, nanoTimeForFrame(chunkStartFrame + offsetInChunk))
+        val actualNanos = nanoTimeForFrame(chunkStartFrame + offsetInChunk)
+        leadMarginCalibrator.recordPlacementError(actualNanos - pending.targetNanos)
+        mixListenerForTesting?.invoke(pending.totalBeats, pending.targetNanos, actualNanos)
     }
 
     private fun mixInto(chunk: ShortArray, startFrame: Int, sound: ClickSound) {
@@ -314,13 +335,49 @@ class StreamingClickEngine {
         bufferFrames = 0
     }
 
+    /**
+     * Queries the device's real low-latency output burst size ([AudioManager]'s
+     * `PROPERTY_OUTPUT_FRAMES_PER_BUFFER`) so [buildTrack] can size its buffer close to what
+     * Android's *fast* mixer path actually expects, instead of [AudioTrack.getMinBufferSize] -
+     * which has no `PERFORMANCE_MODE_LOW_LATENCY` parameter and reports a minimum sized for the
+     * ordinary (non-fast) mixer path, a real, measured problem for this engine specifically: on
+     * the device this was diagnosed against, `getMinBufferSize()` returned a buffer worth ~120ms
+     * (thousands of frames) - two orders of magnitude larger than a real low-latency burst
+     * (typically a few hundred frames, a handful of ms) - and a temporary diagnostic in
+     * [mixPendingBeatIfDue] confirmed the writer's own `AudioTrack.write()` calls were, in
+     * practice, blocking for ~40-45ms per call rather than this class's intended
+     * [CHUNK_DURATION_MS] (5ms), consistent with AudioFlinger routing a track requesting *that*
+     * large a buffer through its ordinary mixer (a documented ~20-40ms period) rather than the
+     * fast mixer (a documented 2-3ms period, SCHED_FIFO) - see `docs/timing-accuracy-
+     * benchmark.md`'s research notes for the sources. A smaller, burst-sized buffer is exactly
+     * what Android's own low-latency guidance (and the Oboe library, which automates this same
+     * choice) recommends requesting instead.
+     *
+     * Best-effort and safe to skip: if the property is missing or unparseable (older/unusual
+     * devices), [buildTrack] falls back to its original [AudioTrack.getMinBufferSize]-based sizing
+     * unchanged - this never blocks the streaming path from working, only tries to make it faster.
+     * Call once, before the first [start] - typically from `MetronomeEngine.attach`.
+     */
+    fun configureFromDevice(context: Context) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val framesPerBurst = audioManager
+            .getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)
+            ?.toIntOrNull()
+            ?.takeIf { it > 0 }
+            ?: return
+        // Twice the burst size (double buffering) - the same sizing Oboe itself automates for a
+        // low-latency stream, per its own buffer-terminology guidance.
+        lowLatencyBufferFrames = framesPerBurst * 2
+    }
+
     private fun buildTrack(): AudioTrack {
-        val bufferBytes = AudioTrack.getMinBufferSize(
+        val bytesPerFrame = 2 // 16-bit mono => 2 bytes/frame - see leadMarginNanos()
+        val bufferBytes = (lowLatencyBufferFrames?.let { it * bytesPerFrame } ?: AudioTrack.getMinBufferSize(
             sampleRateHz,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
-        ).coerceAtLeast(chunkFrames() * 2)
-        bufferFrames = bufferBytes / 2 // 16-bit mono => 2 bytes/frame - see leadMarginNanos()
+        )).coerceAtLeast(chunkFrames() * 2)
+        bufferFrames = bufferBytes / bytesPerFrame
         return AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()

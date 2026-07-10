@@ -708,23 +708,27 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       confirm the first beat still lands promptly - guards against the writer having
       silently died while idle with nothing to catch it (the one scenario that still
       forces a real rebuild - see `StreamingClickEngine.start()`'s liveness check).
-- [ ] **v0.0.29 first-beat count-in (Gap B follow-up) - measured, not yet meeting target**:
-      reported that the warm-keep fix above wasn't sufficient on its own - beat 0
-      structurally has no lead-scheduling window the way every later beat does, traced and
-      confirmed in `docs/timing-accuracy-benchmark.md`. Fixed with a small, user-tunable,
-      bounded pause (Settings → Audio timing offset → "First beat count-in," default 100ms
-      cap) that gives beat 0's audio the same genuine lead every other beat gets, at the
-      cost of a brief delay before the very first press's flash/click.
-      `FirstBeatTimingBenchmarkTest` has now actually been run (Nothing A024, SDK 36,
-      2026-07-09 - see that doc's results table, four dated runs): beat 0's excess error
-      over this device's own steady-state baseline dropped from ~128ms (count-in off) to
-      ~31-36ms (shipped default) - a real, ~75% measured reduction - but still short of
-      the doc's ≤10ms target. Two follow-up hypotheses for the residual were tried and
-      measured the same day: routing beat 0 through the exact same polling loop
-      steady-state beats use (no measured difference - kept anyway for the cleaner
-      architecture) and keeping that loop's own coroutine warm across sessions (a
-      measured *regression*, root-caused to an idle-poll wake-latency tax, reverted same
-      day). The ~31-36ms floor survived both attempts unchanged; the doc's own next
-      proposed step is a self-calibrating lead margin, not yet built. Remaining manual
-      check: confirm the count-in's pause is barely perceptible at the default cap, and
-      that cap=0 still restores the exact old instant-but-unled behavior for comparison.
+- [ ] **v0.0.29 first-beat count-in (Gap B follow-up) - target met**: reported that the
+      warm-keep fix above wasn't sufficient on its own - beat 0 structurally has no
+      lead-scheduling window the way every later beat does, traced and confirmed in
+      `docs/timing-accuracy-benchmark.md`. Fixed with a small, user-tunable, bounded pause
+      (Settings → Audio timing offset → "First beat count-in," default 100ms cap) that
+      gives beat 0's audio the same genuine lead every other beat gets, at the cost of a
+      brief delay before the very first press's flash/click. Two follow-up hypotheses for
+      the initial ~31-36ms residual (routing beat 0 through the same polling loop
+      steady-state beats use; keeping that loop's own coroutine warm across sessions) were
+      tried and measured the same day - one a no-op, one a measured regression, reverted.
+      A round of research into how other systems solve this (Web Audio's lookahead
+      scheduler, Android's AAudio/Oboe guidance, professional metronome apps - full
+      citations in `docs/timing-accuracy-benchmark.md`) led to the actual fix: a
+      self-calibrating lead margin (`LeadMarginCalibrator`) surfaced, via a temporary
+      diagnostic, that `AudioTrack.getMinBufferSize()` was sizing this engine's buffer at
+      ~120ms on the test device - two orders of magnitude larger than a real low-latency
+      burst, and large enough to silently route it off AudioFlinger's fast mixer path
+      despite `PERFORMANCE_MODE_LOW_LATENCY` being set. Sizing the buffer from
+      `AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER` instead (`StreamingClickEngine.
+      configureFromDevice`) dropped steady-state placement error ~3.6x (47ms → 13ms) and
+      beat 0's excess to **~2ms** (Nothing A024, SDK 36, 2026-07-09) - inside the doc's
+      ≤10ms target, close to its ≤5ms stretch goal. Remaining manual check: confirm the
+      count-in's pause is barely perceptible at the default cap, and that cap=0 still
+      restores the exact old instant-but-unled behavior for comparison.

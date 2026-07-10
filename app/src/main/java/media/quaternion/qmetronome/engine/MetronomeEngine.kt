@@ -287,6 +287,7 @@ object MetronomeEngine {
         if (settings != null) return
         val store = MetronomeSettings(context.applicationContext)
         settings = store
+        streamingClickEngine.configureFromDevice(context.applicationContext)
         _visualizer.value = VisualizerRegistry.byId(store.visualizerId)
         val restoredQueue = store.queue
         val restoredIndex = store.queueIndex.coerceIn(0, restoredQueue.size - 1)
@@ -894,7 +895,10 @@ object MetronomeEngine {
      * uses (via a synthetic [lastBeatNanos] - see [start]'s own kdoc for why that, rather than a
      * one-shot [StreamingClickEngine.scheduleBeat] push, is what actually closes the gap on real
      * hardware). Bounded by three things, the smallest wins: the actual lead+offset this session needs
-     * ([StreamingClickEngine.leadMarginNanos] plus the configured [audioOffsetMs]'s own magnitude),
+     * ([StreamingClickEngine.calibratedLeadMarginNanos] plus the configured [audioOffsetMs]'s own
+     * magnitude - the *calibrated* margin, not the raw buffer estimate, since research and this
+     * project's own measurement agree the raw estimate alone under-reports real hardware lead - see
+     * `docs/timing-accuracy-benchmark.md`),
      * [firstBeatCountInCapMs] (the user's own tolerance for a pause before playback visibly
      * starts), and [MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION] of the current beat interval (so the
      * pause never reads as disproportionate to the tempo itself, the same guard
@@ -914,7 +918,7 @@ object MetronomeEngine {
         if (offsetMs >= 0f) return 0L
         val capNanos = _firstBeatCountInCapMs.value * 1_000_000.0
         if (capNanos <= 0.0) return 0L
-        val idealNanos = streamingClickEngine.leadMarginNanos() + (-offsetMs * 1_000_000.0).toLong()
+        val idealNanos = streamingClickEngine.calibratedLeadMarginNanos() + (-offsetMs * 1_000_000.0).toLong()
         val intervalNanos = 60_000_000_000.0 / _state.value.bpm
         return minOf(
             idealNanos.toDouble(),
@@ -1311,7 +1315,7 @@ object MetronomeEngine {
                 val intervalNanos = 60_000_000_000.0 / _state.value.bpm
                 val leadMarginNanos = if (usingStreamingClickEngine) {
                     minOf(
-                        streamingClickEngine.leadMarginNanos().toDouble(),
+                        streamingClickEngine.calibratedLeadMarginNanos().toDouble(),
                         MAX_STREAMING_LEAD_MARGIN_NANOS.toDouble(),
                         intervalNanos * MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION,
                     )

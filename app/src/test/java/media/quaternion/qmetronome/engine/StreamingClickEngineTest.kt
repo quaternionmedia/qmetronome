@@ -11,6 +11,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
@@ -94,6 +95,26 @@ class StreamingClickEngineTest {
             "expected a non-negative lead margin once running, got ${engine.leadMarginNanos()}",
             engine.leadMarginNanos() >= 0L,
         )
+    }
+
+    @Test
+    fun `configureFromDevice does not throw, before or after start, and start still succeeds after it`() {
+        // Robolectric's AudioManager shadow may not report a real PROPERTY_OUTPUT_FRAMES_PER_BUFFER
+        // value - this only guards that the best-effort query path (see its own kdoc) never
+        // crashes and never blocks the engine from starting, on a device where it can't answer.
+        engine.configureFromDevice(RuntimeEnvironment.getApplication())
+        assertTrue(engine.start(scope))
+        engine.configureFromDevice(RuntimeEnvironment.getApplication())
+    }
+
+    @Test
+    fun `calibratedLeadMarginNanos equals leadMarginNanos before any beat has been mixed`() {
+        // No placement error has been observed yet (see LeadMarginCalibratorTest for the
+        // correction math itself) - the calibrated value should just be the raw estimate, both
+        // before and after start().
+        assertEquals(engine.leadMarginNanos(), engine.calibratedLeadMarginNanos())
+        engine.start(scope)
+        assertEquals(engine.leadMarginNanos(), engine.calibratedLeadMarginNanos())
     }
 
     @Test
