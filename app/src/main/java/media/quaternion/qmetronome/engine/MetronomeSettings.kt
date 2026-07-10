@@ -3,13 +3,31 @@ package media.quaternion.qmetronome.engine
 import android.content.Context
 
 /** Default [MetronomeSettings.visualOffsetMs] - shared with [MetronomeEngine]'s in-memory default
- * so a fresh install and a not-yet-attached engine agree on the same starting value. */
-const val DEFAULT_VISUAL_OFFSET_MS = -50f
+ * so a fresh install and a not-yet-attached engine agree on the same starting value.
+ *
+ * **Intentionally `0f`, not a guessed pre-roll.** Earlier defaulted to `-50ms`, a hand-guessed
+ * compensation for "typical" human reaction/perception plus display lag - never measured against
+ * this device's actual Glyph Matrix render/transmit latency, and no two devices' real latency is
+ * guaranteed to match a single hardcoded guess. A guessed offset that's *wrong* for a given unit is
+ * strictly worse than no offset at all: it moves the perceived beat somewhere the user didn't ask
+ * for, in a direction they'd have to discover and undo. True zero is the honest, predictable
+ * starting point - still fully adjustable via Settings for whatever a given performer's own
+ * hardware/perception actually needs, exactly as before. */
+const val DEFAULT_VISUAL_OFFSET_MS = 0f
 
-/** Default [MetronomeSettings.audioOffsetMs] - a smaller lead than [DEFAULT_VISUAL_OFFSET_MS],
- * since a phone's audio output pipeline typically has less latency than the Glyph Matrix's own
- * render/transmit path. See [MetronomeEngine.audioOffsetMs] for how it's actually applied. */
-const val DEFAULT_AUDIO_OFFSET_MS = -30f
+/** Default [MetronomeSettings.audioOffsetMs] - see [MetronomeEngine.audioOffsetMs] for how it's
+ * actually applied.
+ *
+ * **Intentionally `0f`, not a guessed pre-roll** - the same reasoning as [DEFAULT_VISUAL_OFFSET_MS]
+ * (previously `-30ms`, a smaller hand-guessed lead than the visual offset's, never measured per-
+ * device). Unlike the visual offset, this one has a real structural dependency worth knowing about:
+ * `MetronomeEngine.startAudioScheduling`'s predictive lookahead loop used to gate on this value
+ * being *negative*, conflating "the user wants perceptual pre-roll" with "the streaming engine
+ * needs some lead time to place any click precisely at all" - the latter is true regardless of
+ * this value's sign. That gate was widened to include exactly zero specifically so this default
+ * change doesn't also silently disable lead-scheduling for every beat - see that function's own
+ * kdoc and `docs/timing-accuracy-benchmark.md` for the measured before/after. */
+const val DEFAULT_AUDIO_OFFSET_MS = 0f
 
 /** Default [MetronomeSettings.firstBeatCountInCapMs] - matches [MetronomeEngine]'s own
  * `MAX_STREAMING_LEAD_MARGIN_NANOS` (100ms) rather than introducing a second magic number: this
@@ -55,9 +73,8 @@ class MetronomeSettings(context: Context) {
 
     /** How many milliseconds to shift the visual phase ahead of (negative) or behind (positive)
      * the beat timestamp - lets performers compensate for display latency by feel or measurement.
-     * Defaults to [DEFAULT_VISUAL_OFFSET_MS] (ahead), not 0 - a human pressing/perceiving a beat
-     * and the system rendering/transmitting it both add a little late-arriving lag, so the visual
-     * needs to fire a bit early out of the box to land "on time" by feel. Still fully adjustable
+     * Defaults to [DEFAULT_VISUAL_OFFSET_MS] (`0`) - see that constant's own kdoc for why a
+     * guessed non-zero default was deliberately removed rather than kept. Still fully adjustable
      * via Settings for whatever a given performer's hardware/perception actually needs. */
     var visualOffsetMs: Float
         get() = prefs.getFloat(KEY_VISUAL_OFFSET_MS, DEFAULT_VISUAL_OFFSET_MS)
@@ -66,8 +83,8 @@ class MetronomeSettings(context: Context) {
     /** Same idea as [visualOffsetMs], but for the audible click - see
      * [MetronomeEngine.audioOffsetMs] for why a discrete one-shot trigger needs genuine lookahead
      * scheduling to fire early, rather than just a shifted decay curve. Defaults to
-     * [DEFAULT_AUDIO_OFFSET_MS], not 0, for the same "land on time by feel" reasoning as the
-     * visual offset. */
+     * [DEFAULT_AUDIO_OFFSET_MS] (`0`) - see that constant's own kdoc for why, and for the
+     * lookahead-scheduling gating fix that had to come with it. */
     var audioOffsetMs: Float
         get() = prefs.getFloat(KEY_AUDIO_OFFSET_MS, DEFAULT_AUDIO_OFFSET_MS)
         set(value) = prefs.edit().putFloat(KEY_AUDIO_OFFSET_MS, value).apply()

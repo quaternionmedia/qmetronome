@@ -149,8 +149,9 @@ object MetronomeEngine {
     private val _visualOffsetMs = MutableStateFlow(DEFAULT_VISUAL_OFFSET_MS)
     val visualOffsetMs: StateFlow<Float> = _visualOffsetMs.asStateFlow()
 
-    /** See [setAudioOffsetMs] for how this is actually scheduled - a negative value needs genuine
-     * lookahead (see [startAudioScheduling]), unlike [visualOffsetMs]'s continuous phase-shift. */
+    /** See [setAudioOffsetMs] for how this is actually scheduled - a non-positive value (negative
+     * or exactly zero) gets genuine lookahead (see [startAudioScheduling]), unlike
+     * [visualOffsetMs]'s continuous phase-shift. */
     private val _audioOffsetMs = MutableStateFlow(DEFAULT_AUDIO_OFFSET_MS)
     val audioOffsetMs: StateFlow<Float> = _audioOffsetMs.asStateFlow()
 
@@ -666,10 +667,10 @@ object MetronomeEngine {
         settings?.visualOffsetMs = clamped
     }
 
-    /** A negative value leads the click ahead of the true beat via genuine lookahead scheduling
-     * (see [startAudioScheduling]); zero/positive delays it, scheduled off the beat's own real
-     * timestamp (see [scheduleReactiveAudio]) rather than a naive relative `delay()` that could
-     * drift under scheduling pressure. */
+    /** A non-positive value (negative, or exactly zero) leads the click via genuine lookahead
+     * scheduling (see [startAudioScheduling]); a positive value delays it, scheduled off the
+     * beat's own real timestamp (see [scheduleReactiveAudio]) rather than a naive relative
+     * `delay()` that could drift under scheduling pressure. */
     fun setAudioOffsetMs(ms: Float) {
         val clamped = ms.coerceIn(-500f, 500f)
         _audioOffsetMs.value = clamped
@@ -905,8 +906,10 @@ object MetronomeEngine {
      * [startAudioScheduling] already applies to its own margin). Zero whenever there's nothing to
      * lead in the first place: no local "pressed play" instant to count in from
      * ([primeVisualFlash] false - a MIDI-driven start), the streaming engine isn't the active audio
-     * path this session, the click is off, the configured offset isn't actually a lead (`>= 0`),
-     * or the user's own cap is 0.
+     * path this session, the click is off, the configured offset is a deliberate *lag* (`> 0`,
+     * strictly - a zero offset still wants the buffer's own lead margin, see
+     * [startAudioScheduling]'s own kdoc for why zero moved to this side of the boundary as of this
+     * round), or the user's own cap is 0.
      *
      * Exposed (not private) so this is directly unit-testable without driving a real beat loop -
      * the same "pure decision logic, testable in isolation" precedent
@@ -915,7 +918,7 @@ object MetronomeEngine {
     fun beatZeroCountInNanos(primeVisualFlash: Boolean): Long {
         if (!primeVisualFlash || !usingStreamingClickEngine || !_clickEnabled.value || usingMidiClock) return 0L
         val offsetMs = _audioOffsetMs.value
-        if (offsetMs >= 0f) return 0L
+        if (offsetMs > 0f) return 0L
         val capNanos = _firstBeatCountInCapMs.value * 1_000_000.0
         if (capNanos <= 0.0) return 0L
         val idealNanos = streamingClickEngine.calibratedLeadMarginNanos() + (-offsetMs * 1_000_000.0).toLong()
@@ -1182,16 +1185,16 @@ object MetronomeEngine {
 
     /** [ClickPlayer]-fallback-only: fires (or schedules) [sound] for a beat whose real timestamp
      * ([beatTimestampNanos]) has already arrived - the reactive path used whenever the audio
-     * scheduling loop didn't already fire this beat early, which covers zero/positive
-     * [audioOffsetMs] as well as any beat the lookahead behavior is disabled for (click off,
-     * non-negative offset, or following an external MIDI clock - see [startAudioScheduling]). Not
-     * called at all when [usingStreamingClickEngine] is true - [onBeat] pushes straight to
-     * [StreamingClickEngine.scheduleBeat] instead, since sample-accurate placement no longer needs
-     * this function's careful "schedule off the absolute timestamp, not a naive relative delay"
-     * trick to avoid compounding latency. A negative offset reaching here (MIDI-follow mode, where
-     * lookahead is intentionally skipped) simply computes a target already in the past and fires
-     * immediately - documented no-op behavior, not a silent pretense of leading a clock this engine
-     * doesn't control. */
+     * scheduling loop didn't already fire this beat early, which covers positive [audioOffsetMs]
+     * as well as any beat the lookahead behavior is disabled for (click off, or following an
+     * external MIDI clock - see [startAudioScheduling]; a non-positive offset is normally caught by
+     * that loop first). Not called at all when [usingStreamingClickEngine] is true - [onBeat]
+     * pushes straight to [StreamingClickEngine.scheduleBeat] instead, since sample-accurate
+     * placement no longer needs this function's careful "schedule off the absolute timestamp, not
+     * a naive relative delay" trick to avoid compounding latency. A negative offset reaching here
+     * (MIDI-follow mode, where lookahead is intentionally skipped) simply computes a target already
+     * in the past and fires immediately - documented no-op behavior, not a silent pretense of
+     * leading a clock this engine doesn't control. */
     private fun scheduleReactiveAudio(sound: ClickSound, beatTimestampNanos: Long) {
         val fireAtNanos = beatTimestampNanos + (_audioOffsetMs.value * 1_000_000.0).toLong()
         val now = System.nanoTime()
@@ -1232,12 +1235,29 @@ object MetronomeEngine {
     }
 
     /**
-     * Keeps the audio-trigger path fed for beats not yet reached by [onBeat] - gated exactly as
-     * before this round: only while playing, [clickEnabled] is on, [audioOffsetMs] is negative,
-     * and timing isn't coming from an external MIDI clock (a followed clock is already reactive
-     * with nothing of its own to predict - [scheduleReactiveAudio] fires immediately there instead,
-     * a documented no-op rather than a silent pretense of leading a clock this engine doesn't
-     * control). What "feeding" means depends on [usingStreamingClickEngine]:
+     * Keeps the audio-trigger path fed for beats not yet reached by [onBeat] - gated on: only
+     * while playing, [clickEnabled] is on, [audioOffsetMs] is *not positive* (negative or exactly
+     * zero - see below for why zero belongs here now), and timing isn't coming from an external
+     * MIDI clock (a followed clock is already reactive with nothing of its own to predict -
+     * [scheduleReactiveAudio] fires immediately there instead, a documented no-op rather than a
+     * silent pretense of leading a clock this engine doesn't control). A *positive* offset (a
+     * deliberate lag, not a lead) stays reactive-only, unchanged - predictively resolving ahead of
+     * [onBeat]'s own beat-counter update would fire [clickListenerForTesting] before `totalBeats`
+     * advances, breaking the "click trails the real beat" contract a positive offset specifically
+     * promises (see the reactive-delay test in `MetronomeEngineTest.kt`).
+     *
+     * **Why zero belongs on the "lead-scheduling" side, not the "reactive" side, as of this
+     * round**: this condition used to be a strict `< 0f`, on the reasoning that a non-negative
+     * offset means "no pre-roll wanted, so nothing to lead." That conflated two different things -
+     * the user's own *perceptual* pre-roll preference ([audioOffsetMs] itself) with the streaming
+     * engine's *structural* need for some lead time to place any click precisely at all (see
+     * [StreamingClickEngine.mixPendingBeatIfDue]'s clamp-to-earliest-available behavior - a target
+     * that arrives without enough notice lands late by roughly the buffer's own margin regardless
+     * of what the configured offset is). Went unnoticed while the shipped default was negative
+     * (`-30ms`, always satisfying the old `< 0f` check); became a real, measured regression the
+     * moment [DEFAULT_AUDIO_OFFSET_MS] changed to `0f` (see `docs/timing-accuracy-benchmark.md`)
+     * - a fresh install would have silently lost lead-scheduling for *every* beat, not just beat 0.
+     * What "feeding" means depends on [usingStreamingClickEngine]:
      *  - **streaming**: refines the streaming engine's pending schedule for the *upcoming* beat
      *    ([refreshPredictedSchedule]), gated the same "only once we're within the offset's own lead
      *    window" way as the fallback path below - plus [StreamingClickEngine.leadMarginNanos]'s
@@ -1293,7 +1313,7 @@ object MetronomeEngine {
                     usingStreamingClickEngine = false
                 }
                 val offsetMs = _audioOffsetMs.value
-                val gated = _state.value.isPlaying && _clickEnabled.value && offsetMs < 0f && !usingMidiClock
+                val gated = _state.value.isPlaying && _clickEnabled.value && offsetMs <= 0f && !usingMidiClock
                 if (!gated) {
                     delay(AUDIO_LOOKAHEAD_IDLE_POLL_MS)
                     continue

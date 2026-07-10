@@ -101,3 +101,62 @@ there's now one continuously-running stream doing the mixing, per-channel routin
 *within* the streaming writer (multiple output tracks, or a multi-channel `AudioMixerAttributes`
 setup, each still fed by the same sample-clocked placement logic) rather than per-`ClickSound`
 `AudioTrack` pools being individually routed the way `ClickPlayer`'s design would have implied.
+
+## Open item: native AAudio/Oboe migration, for sub-millisecond placement
+
+**Status: estimated, not started - a real scope increase, not a bug fix.** This project has no
+NDK/C++ toolchain today; taking this on adds one. Written after `docs/timing-accuracy-benchmark.md`'s
+own investigation closed the ≤10ms first-beat target (~2ms excess, measured) via a Java-side buffer-
+sizing fix, but left Tier 1 (sub-ms steady-state placement precision) unreached - the research behind
+that investigation (Web Audio's lookahead pattern, Android's own AAudio/Oboe guidance, commercial
+metronome apps' reliance on native engines - full citations in that doc) is consistent that closing
+the rest requires a genuine native audio callback, which no Java-only API can request.
+
+**Why**: `Process.THREAD_PRIORITY_URGENT_AUDIO` (already used throughout via `newTimingDispatcher`)
+is a nice-value boost under the ordinary CFS scheduler - real, but not the SCHED_FIFO real-time
+class AudioFlinger's own fast mixer thread gets. Only an AAudio (API 26+) or Oboe callback, run with
+`PERFORMANCE_MODE_LOW_LATENCY` + `SHARING_MODE_EXCLUSIVE`/MMAP, is scheduled on that class.
+
+**Impact, and its limit**: reaching sub-ms placement precision - matching what apps like PolyNome
+claim - needs this. It does **not** obviously fix "still noticeable" complaints on its own: the
+current benchmark measures the engine's internal target-vs-actual-mixed-frame precision, not true
+acoustic latency (speaker/DAC/room - still deferred, see `docs/timing-accuracy-benchmark.md`), and
+not whether a perceived delay is actually the count-in's own deliberate pause (tunable today via
+Settings, not a precision defect). **Rail 0, before spending any of the estimate below**: cheaply
+disambiguate which of those three a fresh complaint actually is (toggle the count-in cap toward
+zero; if the feeling is unchanged, it isn't the count-in) before assuming this migration is the
+lever that fixes it.
+
+**Rough estimate** (solo, focused, assuming no major surprises - JNI debugging usually has a long
+tail): 0.5-1 day NDK/CMake/Oboe scaffolding (Oboe is a Maven Central dependency now, `com.google.
+oboe:oboe`, not something to vendor from source) + 3-5 days porting `StreamingClickEngine`'s full
+contract to a native callback + JNI bridge + 1-2 days test-strategy rework + 1-2 days full
+regression pass + open-ended real-device tuning. **~1.5-2.5 weeks total**, not a session-scale task.
+
+**Rails, for whoever picks this up**:
+
+1. **`ClickPlayer`'s discrete-retrigger fallback must survive this unchanged.** "No click at all" is
+   still worse than "the old, already-shipped mechanism" - the exact reasoning
+   `StreamingClickEngine`'s own kdoc already states for the *existing* Java implementation. A native
+   engine that fails to warm up/construct needs the identical graceful fallback, not a crash.
+2. **Keep the JNI surface minimal - lifecycle + a lock-free schedule handoff, nothing else.**
+   Business logic (`resolveBeatAudio`, mute probability, bar-queue interaction) stays in Kotlin,
+   exactly as `StreamingClickEngine`'s own kdoc already separates "when a beat is due" (Kotlin) from
+   "placing an already-decided click" (the engine). Don't let the migration blur that line by moving
+   decision logic across the JNI boundary along with the placement mechanism.
+3. **Don't lose Robolectric-testable coverage for anything that doesn't have to cross the JNI
+   boundary.** `LeadMarginCalibratorTest`, `beatZeroCountInNanos`'s tests, etc. stay pure-Kotlin,
+   pure-logic, JVM-testable - only the actual placement mechanism moves to native, mirroring
+   `StreamingClickEngine`'s own current split.
+4. **Multi-ABI build/test cost is real - budget for it up front, don't discover it late.** At minimum
+   arm64-v8a (real devices) and x86_64 (emulator/CI) need to build and pass the on-device benchmark;
+   don't assume single-ABI local testing generalizes.
+5. **Re-run `FirstBeatTimingBenchmarkTest` before and after, on the same device(s), and treat the
+   comparison as the actual acceptance test** - not a subjective "feels better." Extend it to cover
+   the new Tier 1 (steady-state placement) target directly if the current ~13ms measurement doesn't
+   already make the improvement obvious.
+6. **This raises the contribution bar - name that cost instead of discovering it by omission**,
+   matching this project's own governance precedent (`governance/qm/perspectives/`'s onramp
+   retrospective, §2.5) for naming adoption costs explicitly rather than letting them surface as
+   friction for the next contributor. C++/NDK becomes a real prerequisite for touching the audio
+   engine; update `CONTRIBUTING.md`'s test-coverage section accordingly when this lands.

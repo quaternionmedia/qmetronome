@@ -140,12 +140,29 @@ class MetronomeEngineTest {
         assertEquals(0L, MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true))
         MetronomeEngine.setClickEnabled(true)
 
-        MetronomeEngine.setAudioOffsetMs(0f)
+        // A positive offset is a deliberate *lag*, not a lead - genuinely nothing to count in for.
+        MetronomeEngine.setAudioOffsetMs(10f)
         assertEquals(0L, MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true))
         MetronomeEngine.setAudioOffsetMs(-30f)
 
         MetronomeEngine.setFirstBeatCountInCapMs(0f)
         assertEquals(0L, MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true))
+    }
+
+    @Test
+    fun `beatZeroCountInNanos still counts in at exactly zero offset (the shipped default)`() {
+        // Zero used to be lumped in with "nothing to lead" (offsetMs >= 0), but it still needs the
+        // streaming engine's own buffer-derived lead margin - see beatZeroCountInNanos's own kdoc
+        // for why zero moved to the "lead" side of the boundary. Regression coverage for that fix,
+        // since DEFAULT_AUDIO_OFFSET_MS is 0f now.
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(60f)
+        MetronomeEngine.setAudioOffsetMs(0f)
+        MetronomeEngine.setFirstBeatCountInCapMs(100f)
+        MetronomeEngine.start()
+
+        val countInNanos = MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true)
+        assertTrue("expected a non-zero count-in at offset=0, got $countInNanos", countInNanos > 0L)
     }
 
     @Test
@@ -441,12 +458,12 @@ class MetronomeEngineTest {
     }
 
     @Test
-    fun `each beat's click fires exactly once even with a negative (lookahead) audio offset`() {
+    fun `each beat's click fires exactly once with the shipped (lookahead-eligible) audio offset`() {
         val events = java.util.Collections.synchronizedList(mutableListOf<Long>())
         MetronomeEngine.setClickListenerForTesting { _, _ -> events.add(System.nanoTime()) }
         MetronomeEngine.setClickEnabled(true)
         MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat - several beats in a short sleep
-        MetronomeEngine.setAudioOffsetMs(DEFAULT_AUDIO_OFFSET_MS) // the shipped default lead
+        MetronomeEngine.setAudioOffsetMs(DEFAULT_AUDIO_OFFSET_MS) // the shipped default (0f) - still uses genuine lookahead, see startAudioScheduling's kdoc
 
         MetronomeEngine.start()
         Thread.sleep(700) // roughly 4-5 beats at 150ms/beat
@@ -478,7 +495,7 @@ class MetronomeEngineTest {
         MetronomeEngine.setClickListenerForTesting { _, _ -> clickTimestampsNanos.add(System.nanoTime()) }
         MetronomeEngine.setClickEnabled(true)
         MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 400 BPM, 150ms/beat
-        MetronomeEngine.setAudioOffsetMs(DEFAULT_AUDIO_OFFSET_MS) // the shipped default lead
+        MetronomeEngine.setAudioOffsetMs(DEFAULT_AUDIO_OFFSET_MS) // the shipped default (0f) - still uses genuine lookahead, see startAudioScheduling's kdoc
 
         MetronomeEngine.start()
         Thread.sleep(1500) // roughly 10 beats at 150ms/beat

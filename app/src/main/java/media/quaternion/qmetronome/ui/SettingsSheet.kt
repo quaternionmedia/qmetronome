@@ -739,9 +739,10 @@ private fun VisualOffsetDetails(bpm: Float) {
         )
         Text(
             text = "Shifts visuals earlier (negative) or later (positive) relative to the beat timestamp. " +
-                "Defaults to ${DEFAULT_VISUAL_OFFSET_MS.roundToInt()} ms to compensate for typical human " +
-                "reaction/perception plus system display lag - if the flash still feels late, drag further " +
-                "left; double-tap the value above to reset to that default.",
+                "Defaults to ${DEFAULT_VISUAL_OFFSET_MS.roundToInt()} ms - true zero, not a guessed " +
+                "compensation, since no single hardcoded number matches every device's actual display lag. " +
+                "If the flash feels early or late, drag to taste; double-tap the value above to reset to " +
+                "that default.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.secondary,
         )
@@ -784,11 +785,13 @@ private fun AudioOffsetDetails(bpm: Float) {
         )
         Text(
             text = "Shifts the audible click earlier (negative) or later (positive) relative to the beat " +
-                "timestamp. A negative value uses genuine lookahead scheduling to actually pre-trigger the " +
-                "click - unlike the visual offset's phase-shifted decay curve, there's no equivalent trick " +
-                "for a one-shot sound. Defaults to ${DEFAULT_AUDIO_OFFSET_MS.roundToInt()} ms; double-tap " +
-                "the value above to reset to that default. Only ever delays (never leads) while following " +
-                "an external MIDI clock, since there's nothing of your own to predict there.",
+                "timestamp. Zero or negative values use genuine lookahead scheduling to place the click " +
+                "precisely - unlike the visual offset's phase-shifted decay curve, there's no equivalent " +
+                "trick for a one-shot sound, so even zero benefits from a bit of a head start. Defaults to " +
+                "${DEFAULT_AUDIO_OFFSET_MS.roundToInt()} ms - true zero, not a guessed compensation, since " +
+                "no single hardcoded number matches every device's actual audio latency. Double-tap the " +
+                "value above to reset to that default. Only ever delays (never leads) while following an " +
+                "external MIDI clock, since there's nothing of your own to predict there.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.secondary,
         )

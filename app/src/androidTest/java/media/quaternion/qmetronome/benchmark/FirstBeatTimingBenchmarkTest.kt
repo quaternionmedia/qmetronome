@@ -4,6 +4,7 @@ import android.os.Build
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import media.quaternion.qmetronome.engine.DEFAULT_AUDIO_OFFSET_MS
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import org.junit.After
 import org.junit.Before
@@ -73,7 +74,10 @@ class FirstBeatTimingBenchmarkTest {
         val samples = Collections.synchronizedList(mutableListOf<Sample>())
         MetronomeEngine.setClickEnabled(true)
         MetronomeEngine.setBpm(BPM)
-        MetronomeEngine.setAudioOffsetMs(-30f)
+        // The real shipped default (see DEFAULT_AUDIO_OFFSET_MS's own kdoc - true zero, not a
+        // guessed pre-roll) rather than a hardcoded lead value, so this benchmark measures what a
+        // fresh install actually behaves like, not a hand-picked scenario.
+        MetronomeEngine.setAudioOffsetMs(DEFAULT_AUDIO_OFFSET_MS)
         MetronomeEngine.setFirstBeatCountInCapMs(countInCapMs)
 
         repeat(SESSION_COUNT) { session ->

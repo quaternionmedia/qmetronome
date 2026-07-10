@@ -732,3 +732,21 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       ≤10ms target, close to its ≤5ms stretch goal. Remaining manual check: confirm the
       count-in's pause is barely perceptible at the default cap, and that cap=0 still
       restores the exact old instant-but-unled behavior for comparison.
+- [ ] **v0.0.28 audio/visual offset defaults changed to 0ms - intentional, documented**:
+      `DEFAULT_VISUAL_OFFSET_MS` (was `-50f`) and `DEFAULT_AUDIO_OFFSET_MS` (was `-30f`) are
+      now true zero, not a hand-guessed per-device pre-roll that was never actually
+      calibrated against a given unit's real display/audio latency - see both constants'
+      own kdoc in `MetronomeSettings.kt` for the reasoning, still fully adjustable via
+      Settings. This exposed a real, previously-latent bug rather than being a simple
+      value swap: `MetronomeEngine.startAudioScheduling`'s predictive lookahead loop, and
+      `beatZeroCountInNanos`, both used to gate on the offset being *strictly negative*,
+      conflating "the user wants perceptual pre-roll" with "the streaming engine
+      structurally needs some lead time to place any click precisely" - true regardless of
+      the offset's sign. Went unnoticed while the shipped default was negative (always
+      satisfying the old check); would have silently disabled lead-scheduling for *every*
+      beat, not just beat 0, the moment the default became exactly `0`. Fixed alongside the
+      default change (`< 0f` → `<= 0f` in the scheduling gate, `>= 0f` → `> 0f` in
+      `beatZeroCountInNanos`) - positive (deliberate-lag) offsets are unaffected. Manual
+      check: confirm a fresh install (offset=0, default count-in cap) still lands the first
+      beat and steady-state clicks with the same precision as the ~2ms/~13ms measured above
+      - this should be identical, since 0 now takes the same code path negative offsets do.
