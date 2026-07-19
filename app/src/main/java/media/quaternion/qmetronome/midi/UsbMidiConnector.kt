@@ -183,6 +183,7 @@ object UsbMidiConnector {
             }
             disconnectSending()
             MidiClockSender.addDestination(inputPort)
+            MidiActionSender.addDestination(inputPort)
             sendingPort = inputPort
             sendingDevice = device
             sendingDeviceInfo = deviceInfo
@@ -193,7 +194,10 @@ object UsbMidiConnector {
 
     fun disconnectSending() {
         sendingDeviceInfo?.let { persistDesiredState(it, sending = false) }
-        sendingPort?.let { MidiClockSender.removeDestination(it) }
+        sendingPort?.let {
+            MidiClockSender.removeDestination(it)
+            MidiActionSender.removeDestination(it)
+        }
         sendingPort = null
         closeQuietly(sendingDevice)
         sendingDevice = null

@@ -1,5 +1,6 @@
 package media.quaternion.qmetronome.engine
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -14,7 +15,13 @@ import kotlinx.coroutines.launch
 /**
  * Sample-clocked, continuously-running click engine - the real-time rewrite `ClickPlayer`'s
  * discrete `MODE_STATIC` retrigger model can't reach. Owns one `AudioTrack` in `MODE_STREAM`,
- * built once and played continuously for as long as the metronome is running; a dedicated writer
+ * built on the first [start] call and then kept running (mixing silence between beats, or
+ * between metronome sessions entirely) rather than being torn down and rebuilt on every
+ * `MetronomeEngine.stop()`/`start()` toggle - see [resetSchedule] for the lightweight per-session
+ * reset `MetronomeEngine` uses instead of a real [stop] between sessions, and that function's own
+ * kdoc for why: rebuilding on every play press meant re-paying [AudioTrack.getTimestamp]'s warm-up
+ * wait (gating [ready], and with it every mixed beat) on every single press, not once per app
+ * session - the dominant cause of a reported lag on a session's first beat. A dedicated writer
  * thread mixes each click's waveform into the stream at an exact sample-frame offset, computed
  * from `AudioTrack`'s own hardware-sampled frame<->nanoTime mapping ([AudioTrack.getTimestamp])
  * rather than from a coroutine waking up at approximately the right wall-clock moment. The
@@ -49,6 +56,10 @@ class StreamingClickEngine {
         AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC).takeIf { it > 0 } ?: 44_100
     }
 
+    // Set once, best-effort, from configureFromDevice() - see that function's own kdoc for why
+    // this exists and what happens when it's never called (falls back to getMinBufferSize()).
+    @Volatile private var lowLatencyBufferFrames: Int? = null
+
     private val specs = mutableMapOf<ClickSound, ClickSpec>().apply {
         ClickSound.entries.forEach { put(it, ClickSpec.defaultFor(it)) }
     }
@@ -82,7 +93,24 @@ class StreamingClickEngine {
     private var pendingTargetNanos = 0L
     private var consumedTotalBeats = -1L
 
+    // Not reset by resetSchedule() or stop() - see LeadMarginCalibrator's own kdoc for why this
+    // models the physical device, not a single play/stop session.
+    private val leadMarginCalibrator = LeadMarginCalibrator()
+
     private data class PendingBeat(val totalBeats: Long, val sound: ClickSound?, val targetNanos: Long)
+
+    /** For on-device benchmarking only (see `FirstBeatTimingBenchmarkTest` in `androidTest`) - lets
+     * a test observe, for every beat actually mixed into the stream, its intended target nanoTime
+     * against the real nanoTime (via the same [frameForNanoTime]/[nanoTimeForFrame] calibration,
+     * running against real `AudioTrack`/HAL behavior - not Robolectric's shadow, which doesn't
+     * model this) it actually landed at. The delta between the two *is* this engine's real
+     * placement error, without needing a microphone/acoustic loopback to observe it - the mixing
+     * decision itself already carries everything a test needs. */
+    @Volatile private var mixListenerForTesting: ((totalBeats: Long, targetNanos: Long, actualNanos: Long) -> Unit)? = null
+
+    fun setMixListenerForTesting(listener: ((totalBeats: Long, targetNanos: Long, actualNanos: Long) -> Unit)?) {
+        mixListenerForTesting = listener
+    }
 
     fun setSpec(sound: ClickSound, spec: ClickSpec) {
         specs[sound] = spec
@@ -105,6 +133,21 @@ class StreamingClickEngine {
             pendingTotalBeats = totalBeats
             pendingSound = sound
             pendingTargetNanos = targetNanos
+        }
+    }
+
+    /**
+     * Clears whatever's pending/consumed so far, without touching the `AudioTrack`/writer -
+     * `MetronomeEngine.stop()`'s counterpart to a full [stop] now that this engine stays warm
+     * across play/stop cycles (see that function's own kdoc for why). Cancels anything
+     * scheduled-but-not-yet-mixed (no stale click after the user presses stop) and resets the
+     * high-water mark so the *next* session's beat 0 isn't silently born already "consumed" by a
+     * previous session's totalBeats count.
+     */
+    fun resetSchedule() {
+        synchronized(scheduleLock) {
+            pendingTotalBeats = -1L
+            consumedTotalBeats = -1L
         }
     }
 
@@ -133,15 +176,38 @@ class StreamingClickEngine {
     }
 
     /**
+     * [leadMarginNanos] corrected by [leadMarginCalibrator]'s running measurement of this device's
+     * *actual* placement error - see that class's own kdoc for why the raw buffer-derived estimate
+     * alone isn't reliable, and `docs/timing-accuracy-benchmark.md` for the measured before/after.
+     * Callers should use this instead of [leadMarginNanos] directly for any scheduling decision;
+     * [leadMarginNanos] itself stays as the uncorrected raw estimate, still meaningful on its own
+     * (e.g. for tests asserting against the buffer's raw configured size).
+     */
+    fun calibratedLeadMarginNanos(): Long = leadMarginNanos() + leadMarginCalibrator.correctionNanos()
+
+    /**
      * Builds and starts the continuous stream, and launches its writer coroutine on [scope] (a
      * dedicated, elevated-priority single-thread dispatcher - see `newTimingDispatcher` - distinct
      * from every other role's scope, since the writer's `AudioTrack.write()` calls block for real
      * and must never share a thread with anything else that has its own timing requirements).
      * Returns false (having cleaned up after itself) if `MODE_STREAM` construction or the initial
      * `play()` call fails, telling the caller to use the [ClickPlayer] fallback instead.
+     *
+     * Safe to call repeatedly - `MetronomeEngine` now calls this on every `start()` (not just the
+     * first one) so it stays the single source of truth for whether the streaming path is usable
+     * this session, but a real rebuild only happens the first time, or after a genuine failure.
+     * The liveness check below is what makes that safe: `track != null` alone isn't proof the
+     * writer is still running - if it died mid-session (a real `write()` failure below `break`s
+     * the loop without nulling `track`), trusting the stale reference would silently leave the
+     * engine reporting "already running" forever while nothing is ever mixed in again. Noticing
+     * that and falling through to a real rebuild is what keeps that scenario recoverable instead
+     * of permanently silent.
      */
     fun start(scope: CoroutineScope): Boolean {
-        if (track != null) return true
+        if (track != null) {
+            if (writerJob?.isActive == true) return true
+            stop() // writer died after warm-up; stale track, do a genuine rebuild below
+        }
         val builtTrack = try {
             buildTrack()
         } catch (e: Exception) {
@@ -151,10 +217,7 @@ class StreamingClickEngine {
         framesWritten = 0L
         ready = false
         warmupDeadlineNanos = System.nanoTime() + WARMUP_TIMEOUT_NANOS
-        synchronized(scheduleLock) {
-            pendingTotalBeats = -1L
-            consumedTotalBeats = -1L
-        }
+        resetSchedule()
         try {
             builtTrack.play()
         } catch (e: Exception) {
@@ -219,6 +282,9 @@ class StreamingClickEngine {
         if (offsetInChunk >= chunk.size) return // not due yet
         pending.sound?.let { mixInto(chunk, offsetInChunk.toInt(), it) }
         synchronized(scheduleLock) { consumedTotalBeats = pending.totalBeats }
+        val actualNanos = nanoTimeForFrame(chunkStartFrame + offsetInChunk)
+        leadMarginCalibrator.recordPlacementError(actualNanos - pending.targetNanos)
+        mixListenerForTesting?.invoke(pending.totalBeats, pending.targetNanos, actualNanos)
     }
 
     private fun mixInto(chunk: ShortArray, startFrame: Int, sound: ClickSound) {
@@ -243,6 +309,14 @@ class StreamingClickEngine {
         return referenceFramePosition + deltaFrames.toLong()
     }
 
+    /** The inverse of [frameForNanoTime] - for [mixListenerForTesting] only, to report back which
+     * real nanoTime a given frame (where a beat actually got mixed) corresponds to. */
+    private fun nanoTimeForFrame(frame: Long): Long {
+        val deltaFrames = frame - referenceFramePosition
+        val deltaNanos = deltaFrames.toDouble() * 1_000_000_000.0 / sampleRateHz
+        return referenceNanos + deltaNanos.toLong()
+    }
+
     private fun chunkFrames(): Int = (sampleRateHz * CHUNK_DURATION_MS / 1000).toInt().coerceAtLeast(1)
 
     fun stop() {
@@ -261,13 +335,49 @@ class StreamingClickEngine {
         bufferFrames = 0
     }
 
+    /**
+     * Queries the device's real low-latency output burst size ([AudioManager]'s
+     * `PROPERTY_OUTPUT_FRAMES_PER_BUFFER`) so [buildTrack] can size its buffer close to what
+     * Android's *fast* mixer path actually expects, instead of [AudioTrack.getMinBufferSize] -
+     * which has no `PERFORMANCE_MODE_LOW_LATENCY` parameter and reports a minimum sized for the
+     * ordinary (non-fast) mixer path, a real, measured problem for this engine specifically: on
+     * the device this was diagnosed against, `getMinBufferSize()` returned a buffer worth ~120ms
+     * (thousands of frames) - two orders of magnitude larger than a real low-latency burst
+     * (typically a few hundred frames, a handful of ms) - and a temporary diagnostic in
+     * [mixPendingBeatIfDue] confirmed the writer's own `AudioTrack.write()` calls were, in
+     * practice, blocking for ~40-45ms per call rather than this class's intended
+     * [CHUNK_DURATION_MS] (5ms), consistent with AudioFlinger routing a track requesting *that*
+     * large a buffer through its ordinary mixer (a documented ~20-40ms period) rather than the
+     * fast mixer (a documented 2-3ms period, SCHED_FIFO) - see `docs/timing-accuracy-
+     * benchmark.md`'s research notes for the sources. A smaller, burst-sized buffer is exactly
+     * what Android's own low-latency guidance (and the Oboe library, which automates this same
+     * choice) recommends requesting instead.
+     *
+     * Best-effort and safe to skip: if the property is missing or unparseable (older/unusual
+     * devices), [buildTrack] falls back to its original [AudioTrack.getMinBufferSize]-based sizing
+     * unchanged - this never blocks the streaming path from working, only tries to make it faster.
+     * Call once, before the first [start] - typically from `MetronomeEngine.attach`.
+     */
+    fun configureFromDevice(context: Context) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val framesPerBurst = audioManager
+            .getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)
+            ?.toIntOrNull()
+            ?.takeIf { it > 0 }
+            ?: return
+        // Twice the burst size (double buffering) - the same sizing Oboe itself automates for a
+        // low-latency stream, per its own buffer-terminology guidance.
+        lowLatencyBufferFrames = framesPerBurst * 2
+    }
+
     private fun buildTrack(): AudioTrack {
-        val bufferBytes = AudioTrack.getMinBufferSize(
+        val bytesPerFrame = 2 // 16-bit mono => 2 bytes/frame - see leadMarginNanos()
+        val bufferBytes = (lowLatencyBufferFrames?.let { it * bytesPerFrame } ?: AudioTrack.getMinBufferSize(
             sampleRateHz,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
-        ).coerceAtLeast(chunkFrames() * 2)
-        bufferFrames = bufferBytes / 2 // 16-bit mono => 2 bytes/frame - see leadMarginNanos()
+        )).coerceAtLeast(chunkFrames() * bytesPerFrame)
+        bufferFrames = bufferBytes / bytesPerFrame
         return AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()

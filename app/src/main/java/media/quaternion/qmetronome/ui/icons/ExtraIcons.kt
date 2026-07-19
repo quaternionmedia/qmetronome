@@ -16,7 +16,8 @@ import kotlin.math.sin
  * doesn't include - `material-icons-extended` has all of them too, but as an ~87MB dependency
  * (confirmed via the Gradle cache) whose ~2000+ generated icon classes all get fully dexed in a
  * debug build (no R8 shrinking), which was the dominant cause of this app's oversized alpha APK
- * for a total of 8 icons actually used. Built from simple geometry (rectangles, triangles, and
+ * for what was originally a handful of icons actually used, now 15 and still growing incrementally
+ * rather than reconsidering the tradeoff. Built from simple geometry (rectangles, triangles, and
  * trig-computed circles/stars) rather than hand-copied bezier path data - safer to get exactly
  * right than transcribing curve coordinates from memory, and consistent with this app's own
  * [media.quaternion.qmetronome.visualizers.GlyphCanvas]-style "simple primitives" drawing
@@ -208,6 +209,32 @@ object ExtraIcons {
         }
     }
 
+    /** Three stacked horizontal bars - the "add a phrase" affordance in `BeatsPerBarControls`
+     * (`MainScreen.kt`). Deliberately distinct from [Add][androidx.compose.material.icons.Icons.Filled.Add]
+     * (already used right next to it for "add a bar") since the two mean different things at
+     * different scopes - this reads as "phrases," not another generic plus. */
+    val Phrases: ImageVector by lazy {
+        icon("Phrases") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(4f, 4f)
+                lineTo(20f, 4f)
+                lineTo(20f, 7f)
+                lineTo(4f, 7f)
+                close()
+                moveTo(4f, 10.5f)
+                lineTo(20f, 10.5f)
+                lineTo(20f, 13.5f)
+                lineTo(4f, 13.5f)
+                close()
+                moveTo(4f, 17f)
+                lineTo(20f, 17f)
+                lineTo(20f, 20f)
+                lineTo(4f, 20f)
+                close()
+            }
+        }
+    }
+
     /** A fingertip dot with a ripple ring around it - not Google's hand-and-finger glyph, a
      * simpler original "tap point" design (see the file kdoc). */
     val TouchApp: ImageVector by lazy {
@@ -221,6 +248,88 @@ object ExtraIcons {
                 strokeLineWidth = 1.6f,
             ) {
                 circle(cx = 12f, cy = 10.5f, r = 6.5f)
+            }
+        }
+    }
+
+    /** A small upward triangle, evoking a physical metronome's body - the BPM unit-symbol mark
+     * (see [MetronomeEngine.unitSymbolsEnabled][media.quaternion.qmetronome.engine.MetronomeEngine.unitSymbolsEnabled]).
+     * This and the four icons below it are deliberately tiny/subtle - a label, not a control. */
+    val UnitBpm: ImageVector by lazy {
+        icon("UnitBpm") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(12f, 4f)
+                lineTo(19f, 20f)
+                lineTo(5f, 20f)
+                close()
+            }
+        }
+    }
+
+    /** A ">" accent mark - the same notation musicians write above an accented note - the
+     * beat-type unit-symbol mark. */
+    val UnitBeatType: ImageVector by lazy {
+        icon("UnitBeatType") {
+            path(
+                fill = null,
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2.2f,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(6f, 5f)
+                lineTo(18f, 12f)
+                lineTo(6f, 19f)
+            }
+        }
+    }
+
+    /** A lightning bolt - the main screen's manual MIDI Trigger button (see `TransportRow` in
+     * `MainScreen.kt`), a universally-recognized "fire this now" symbol rather than a text label,
+     * matching the icon-first look of the rest of the transport row. Straight-edged, built from
+     * plain [lineTo]s rather than the curved official Material glyph (see the file kdoc). */
+    val Trigger: ImageVector by lazy {
+        icon("Trigger") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(13f, 2f)
+                lineTo(7f, 13f)
+                lineTo(11f, 13f)
+                lineTo(9f, 22f)
+                lineTo(17f, 10f)
+                lineTo(13f, 10f)
+                close()
+            }
+        }
+    }
+
+    /** A single vertical barline, the same mark that ends a measure in real notation - the bar
+     * unit-symbol mark. */
+    val UnitBar: ImageVector by lazy {
+        icon("UnitBar") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(11f, 4f)
+                lineTo(13f, 4f)
+                lineTo(13f, 20f)
+                lineTo(11f, 20f)
+                close()
+            }
+        }
+    }
+
+    /** A double vertical barline, the same mark musicians use to close a song-form section - the
+     * phrase unit-symbol mark. */
+    val UnitPhrase: ImageVector by lazy {
+        icon("UnitPhrase") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(8f, 4f)
+                lineTo(10f, 4f)
+                lineTo(10f, 20f)
+                lineTo(8f, 20f)
+                close()
+                moveTo(14f, 4f)
+                lineTo(16f, 4f)
+                lineTo(16f, 20f)
+                lineTo(14f, 20f)
+                close()
             }
         }
     }

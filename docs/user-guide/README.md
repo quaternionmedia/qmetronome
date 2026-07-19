@@ -6,7 +6,7 @@ Every gesture qMetronome has, one topic at a time - a screenshot of the real app
 
 *Generated from `TutorialTopics.all` - do not edit by hand; regenerate via `./gradlew generateUserGuide`.*
 
-**Jump to:** [Tempo](#tempo) · [Time Signature](#time-signature) · [Bar Queue](#bar-queue) · [Settings & Layout](#settings--layout) · [MIDI Clock](#midi-clock) · [Glyph Matrix](#glyph-matrix)
+**Jump to:** [Tempo](#tempo) · [Time Signature](#time-signature) · [Bar Queue](#bar-queue) · [Settings & Layout](#settings--layout) · [MIDI](#midi) · [Glyph Matrix](#glyph-matrix)
 
 ## Tempo
 
@@ -20,21 +20,29 @@ Every gesture qMetronome has, one topic at a time - a screenshot of the real app
 ## Time Signature
 
 - [Drag time signature numbers](time-signature-drag-scrub.md) - The beats-per-bar and note-value numbers scrub the same way the BPM number does - drag left or right for continuous adjustment, long-press to type an exact value.
+- [Mark a beat as accented](marking-beat-accents.md) - Long-press the beats-per-bar number to open time signature entry, then tap any beat's chip to cycle it through Accent, Strong Accent, Custom, and back to unmarked. These are the same beat types the audible click and MIDI Actions can each be tuned per-beat for.
 
 ## Bar Queue
 
 - [Build a queue of bars](bar-queue-management.md) - Add a bar to line up a sequence of differently-metered bars - each one remembers its own beats-per-bar, note value, and tempo. Tap a bar to jump to it; long-press to remove it.
 - [Choose how the queue advances](bar-queue-mode-cycling.md) - Tap the queue mode icon to cycle between Loop (wraps back to the first bar), Once (stops advancing at the last bar), and Manual (only moves when you tap a bar directly).
+- [Group bars into phrases](phrase-queue-management.md) - Below the bar queue, a small icon adds a phrase - a song-form section ("Verse", "Chorus") with its own full bar queue. Invisible until you add a second phrase; tap a phrase to jump to it, long-press to remove it.
+- [Choose how phrases advance](phrase-queue-mode-cycling.md) - Once a second phrase exists, tap the phrase mode icon to cycle Loop, Once, and Manual - the same three modes the bar queue uses, one level up, governing how playback flows from one phrase into the next.
 
 ## Settings & Layout
 
 - [Jump straight to BPM/BPH/BPS](settings-jump-to-unit.md) - In Settings, tap a unit chip to jump the live tempo straight into that range - a quick shortcut instead of dragging or typing an exact value.
 - [Compact landscape layout](compact-landscape-layout.md) - In Settings -> Layout, enable Compact landscape layout so rotating the phone puts the preview and controls side-by-side instead of overflowing.
 - [Symbol-only controls](symbol-only-controls.md) - In Settings -> Layout, enable Symbol-only controls to drop text labels from the main screen's tempo/transport controls in favor of icons and dots.
+- [Unit symbols](unit-symbols.md) - In Settings -> Layout, Unit symbols (on by default) shows a small mark next to BPM, beat type, bar, and phrase controls, naming what each one is at a glance. Turn off for a cleaner, symbol-free look.
 
-## MIDI Clock
+## MIDI
 
 - [Mechanical vs Organic outgoing clock](settings-clock-feel.md) - Mechanical actively corrects the outgoing MIDI clock for the truest, most locked-in beat. Organic lets a followed clock's own natural timing variance through unfiltered. Only affects clock sent to other apps/gear, not this app's own click or flash.
+- [Send MIDI notes or CC per beat type](midi-actions.md) - In Settings -> MIDI Actions, turn on beat actions and pick Note or CC for any beat type (Bar, Beat, Accent, Strong Accent, Custom) - sent over the same virtual/USB connections "Send clock" already reaches, independent of whether the audible click is on.
+- [Give one beat its own MIDI action](beat-overrides.md) - In Settings -> Beat Overrides, browse to any phrase and bar (dot pickers, same as the main screen's own queues), step to any beat within it, and assign that exact beat its own MIDI action, overriding its type's default for that beat only.
+- [Give a phrase its own MIDI action](phrase-actions.md) - In Settings -> Phrase Actions, pick any phrase and assign it its own MIDI action, fired once whenever you jump to that phrase - tapping its dot on the main screen, or arriving there automatically as the queue advances.
+- [Manually trigger a beat's MIDI action](trigger-button.md) - Once MIDI Actions is turned on, latch HOLD (long-press or double-tap it) and TAP switches from tap-tempo to a lightning-bolt Trigger button - tap it to fire whatever's actually configured for the engine's live current beat position, for one-shot testing or hand-triggering gear/lights on cue, without starting playback or leaving the latch.
 
 ## Glyph Matrix
 

@@ -1,5 +1,6 @@
 package media.quaternion.qmetronome.engine
 
+import media.quaternion.qmetronome.midi.MidiActionSender
 import media.quaternion.qmetronome.midi.MidiClockSource
 import media.quaternion.qmetronome.visualizers.GlyphVisualizer
 import media.quaternion.qmetronome.visualizers.VisualizerRegistry
@@ -58,6 +59,142 @@ class MetronomeEngineTest {
         MetronomeEngine.start()
         MetronomeEngine.start()
         assertTrue(MetronomeEngine.state.value.isPlaying)
+    }
+
+    @Test
+    fun `a count-in cap of zero keeps the first beat exactly as instant as before`() {
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(60f)
+        MetronomeEngine.setAudioOffsetMs(-30f)
+        MetronomeEngine.setFirstBeatCountInCapMs(0f)
+
+        MetronomeEngine.start()
+
+        assertTrue(MetronomeEngine.state.value.isPlaying)
+        assertEquals(0, MetronomeEngine.state.value.beatIndex)
+        assertEquals(0f, MetronomeEngine.state.value.phase, 0.01f)
+        assertTrue("beat 0's priming flash should already be primed, no delay", MetronomeEngine.state.value.isAccent)
+    }
+
+    @Test
+    fun `a non-zero count-in cap flips isPlaying immediately but delays the first tick`() {
+        // 40 BPM (1500ms/beat) so MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION's 25%-of-interval cap
+        // (375ms) doesn't itself clip the deliberately-large 300ms count-in cap below - this test
+        // is specifically about the *cap* being honored, not about the interval-fraction guard.
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(40f)
+        MetronomeEngine.setAudioOffsetMs(-30f)
+        MetronomeEngine.setFirstBeatCountInCapMs(300f)
+
+        MetronomeEngine.start()
+        val countInNanos = MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true)
+        assertTrue("isPlaying should flip immediately regardless of any count-in", MetronomeEngine.state.value.isPlaying)
+        assertEquals(
+            "no real tick yet - still mid count-in (countInNanos=$countInNanos)",
+            0L,
+            MetronomeEngine.state.value.totalBeats,
+        )
+
+        Thread.sleep(50) // well inside any count-in up to the 300ms cap
+        assertEquals("still mid count-in, no tick yet", 0L, MetronomeEngine.state.value.totalBeats)
+
+        Thread.sleep(1500) // generous margin past the largest possible count-in (300ms cap)
+        assertTrue(
+            "expected the first real tick once the count-in elapsed (countInNanos=$countInNanos), " +
+                "totalBeats=${MetronomeEngine.state.value.totalBeats}",
+            MetronomeEngine.state.value.totalBeats >= 1,
+        )
+    }
+
+    @Test
+    fun `stop during an active count-in cancels it rather than resuming playback later`() {
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(40f)
+        MetronomeEngine.setAudioOffsetMs(-30f)
+        MetronomeEngine.setFirstBeatCountInCapMs(300f)
+
+        MetronomeEngine.start()
+        Thread.sleep(50) // well inside the count-in window
+        MetronomeEngine.stop()
+
+        assertFalse(MetronomeEngine.state.value.isPlaying)
+        Thread.sleep(500) // comfortably past when the cancelled count-in would have fired
+        assertFalse("stop() during the count-in must not let it resume playback later", MetronomeEngine.state.value.isPlaying)
+        assertEquals(0L, MetronomeEngine.state.value.totalBeats)
+    }
+
+    @Test
+    fun `beatZeroCountInNanos returns zero whenever there is nothing to lead`() {
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(60f)
+        MetronomeEngine.setAudioOffsetMs(-30f)
+        MetronomeEngine.setFirstBeatCountInCapMs(100f)
+        MetronomeEngine.start() // establishes usingStreamingClickEngine for the direct calls below
+
+        assertEquals(
+            "no local 'pressed play' instant to lead from on a MIDI-driven start",
+            0L,
+            MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = false),
+        )
+
+        MetronomeEngine.setClickEnabled(false)
+        assertEquals(0L, MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true))
+        MetronomeEngine.setClickEnabled(true)
+
+        // A positive offset is a deliberate *lag*, not a lead - genuinely nothing to count in for.
+        MetronomeEngine.setAudioOffsetMs(10f)
+        assertEquals(0L, MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true))
+        MetronomeEngine.setAudioOffsetMs(-30f)
+
+        MetronomeEngine.setFirstBeatCountInCapMs(0f)
+        assertEquals(0L, MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true))
+    }
+
+    @Test
+    fun `beatZeroCountInNanos still counts in at exactly zero offset (the shipped default)`() {
+        // Zero used to be lumped in with "nothing to lead" (offsetMs >= 0), but it still needs the
+        // streaming engine's own buffer-derived lead margin - see beatZeroCountInNanos's own kdoc
+        // for why zero moved to the "lead" side of the boundary. Regression coverage for that fix,
+        // since DEFAULT_AUDIO_OFFSET_MS is 0f now.
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(60f)
+        MetronomeEngine.setAudioOffsetMs(0f)
+        MetronomeEngine.setFirstBeatCountInCapMs(100f)
+        MetronomeEngine.start()
+
+        val countInNanos = MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true)
+        assertTrue("expected a non-zero count-in at offset=0, got $countInNanos", countInNanos > 0L)
+    }
+
+    @Test
+    fun `beatZeroCountInNanos never exceeds the user's own cap`() {
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(60f)
+        MetronomeEngine.setAudioOffsetMs(-200f) // a large lead that would otherwise dominate
+        MetronomeEngine.start()
+
+        MetronomeEngine.setFirstBeatCountInCapMs(5f) // 5ms - deliberately smaller than the offset alone
+        val countInNanos = MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true)
+        assertTrue(
+            "expected the count-in to be bounded by the user's 5ms cap, got ${countInNanos}ns",
+            countInNanos <= 5_000_000L,
+        )
+    }
+
+    @Test
+    fun `beatZeroCountInNanos never exceeds a quarter of the current beat interval`() {
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 400 BPM, 150ms/beat - 25% is 37.5ms
+        MetronomeEngine.setAudioOffsetMs(-30f)
+        MetronomeEngine.setFirstBeatCountInCapMs(500f) // deliberately huge, so the interval fraction binds instead
+        MetronomeEngine.start()
+
+        val countInNanos = MetronomeEngine.beatZeroCountInNanos(primeVisualFlash = true)
+        val intervalNanos = 60_000_000_000.0 / MetronomeEngine.MAX_BPM
+        assertTrue(
+            "expected the count-in to be bounded by 25% of the beat interval (~${intervalNanos * 0.25}ns), got ${countInNanos}ns",
+            countInNanos <= (intervalNanos * 0.25).toLong(),
+        )
     }
 
     @Test
@@ -285,6 +422,48 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `resetting the queue while latched updates the displayed staged bpm, not just the real one`() {
+        MetronomeEngine.setBpm(140f)
+        MetronomeEngine.toggleLatch() // latch captures the pre-reset bpm (140) as staged
+
+        MetronomeEngine.resetQueueToDefault()
+
+        // The real engine bpm is reset immediately (goToQueueBar always applies immediately -
+        // it's "which bar am I on", not a staged setting)...
+        assertEquals(TimeSignature.DEFAULT.bpm, MetronomeEngine.state.value.bpm, 0.01f)
+        // ...and the staged value - what BpmControls actually displays via `stagedBpm ?: beat.bpm`
+        // - must track it, or the screen would keep showing the stale pre-reset 140 while latched.
+        assertEquals(TimeSignature.DEFAULT.bpm, requireNotNull(MetronomeEngine.stagedBpm.value), 0.01f)
+
+        // Unlatching must not resurrect the stale 140 that was staged before the reset.
+        MetronomeEngine.toggleLatch()
+        assertEquals(TimeSignature.DEFAULT.bpm, MetronomeEngine.state.value.bpm, 0.01f)
+    }
+
+    @Test
+    fun `removing a bar while latched updates the displayed staged bpm and beats-per-bar too`() {
+        MetronomeEngine.setBeatsPerBar(3)
+        MetronomeEngine.setBpm(90f) // bar 0
+        MetronomeEngine.addBarToQueue() // bar 1, active
+        MetronomeEngine.setBeatsPerBar(5)
+        MetronomeEngine.setBpm(150f)
+
+        MetronomeEngine.toggleLatch() // latches bar 1's values (150 bpm, 5 beats) as staged
+
+        MetronomeEngine.removeCurrentBarFromQueue() // falls back to bar 0 (90 bpm, 3 beats)
+
+        assertEquals(90f, MetronomeEngine.state.value.bpm, 0.01f)
+        assertEquals(3, MetronomeEngine.state.value.beatsPerBar)
+        assertEquals(90f, requireNotNull(MetronomeEngine.stagedBpm.value), 0.01f)
+        assertEquals(3, MetronomeEngine.stagedBeatsPerBar.value)
+
+        // Unlatching must not reapply the stale, now-removed bar's staged 150bpm/5-beat values.
+        MetronomeEngine.toggleLatch()
+        assertEquals(90f, MetronomeEngine.state.value.bpm, 0.01f)
+        assertEquals(3, MetronomeEngine.state.value.beatsPerBar)
+    }
+
+    @Test
     fun `a negative audio offset fires the click before the engine's own beat counter advances (genuine lookahead)`() {
         val events = java.util.Collections.synchronizedList(mutableListOf<Pair<ClickSound, Long>>())
         MetronomeEngine.setClickListenerForTesting { sound, _ -> events.add(sound to MetronomeEngine.state.value.totalBeats) }
@@ -322,12 +501,12 @@ class MetronomeEngineTest {
     }
 
     @Test
-    fun `each beat's click fires exactly once even with a negative (lookahead) audio offset`() {
+    fun `each beat's click fires exactly once with the shipped (lookahead-eligible) audio offset`() {
         val events = java.util.Collections.synchronizedList(mutableListOf<Long>())
         MetronomeEngine.setClickListenerForTesting { _, _ -> events.add(System.nanoTime()) }
         MetronomeEngine.setClickEnabled(true)
         MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat - several beats in a short sleep
-        MetronomeEngine.setAudioOffsetMs(DEFAULT_AUDIO_OFFSET_MS) // the shipped default lead
+        MetronomeEngine.setAudioOffsetMs(DEFAULT_AUDIO_OFFSET_MS) // the shipped default (0f) - still uses genuine lookahead, see startAudioScheduling's kdoc
 
         MetronomeEngine.start()
         Thread.sleep(700) // roughly 4-5 beats at 150ms/beat
@@ -359,7 +538,7 @@ class MetronomeEngineTest {
         MetronomeEngine.setClickListenerForTesting { _, _ -> clickTimestampsNanos.add(System.nanoTime()) }
         MetronomeEngine.setClickEnabled(true)
         MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 400 BPM, 150ms/beat
-        MetronomeEngine.setAudioOffsetMs(DEFAULT_AUDIO_OFFSET_MS) // the shipped default lead
+        MetronomeEngine.setAudioOffsetMs(DEFAULT_AUDIO_OFFSET_MS) // the shipped default (0f) - still uses genuine lookahead, see startAudioScheduling's kdoc
 
         MetronomeEngine.start()
         Thread.sleep(1500) // roughly 10 beats at 150ms/beat
@@ -385,6 +564,34 @@ class MetronomeEngineTest {
                 kotlin.math.abs(interval - expectedIntervalMs) < JITTER_TOLERANCE_MS,
             )
         }
+    }
+
+    @Test
+    fun `a second play session still clicks on every beat - regression test for stale consumedTotalBeats after keep-warm`() {
+        // Regression test for a bug introduced (and caught, before shipping) while fixing the
+        // reported first-beat lag/catch-up: StreamingClickEngine now stays warm across stop()/
+        // start() instead of being torn down and rebuilt (see StreamingClickEngine.resetSchedule's
+        // kdoc) - MetronomeEngine.stop() must actually reset its consumed/pending high-water marks,
+        // or a second session's low totalBeats values would already read as "consumed" from the
+        // first session's much higher count, silently dropping every one of its early clicks.
+        val events = java.util.Collections.synchronizedList(mutableListOf<Long>())
+        MetronomeEngine.setClickListenerForTesting { _, _ -> events.add(System.nanoTime()) }
+        MetronomeEngine.setClickEnabled(true)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat - several beats in a short sleep
+
+        MetronomeEngine.start()
+        Thread.sleep(700) // several beats' worth, well past totalBeats == 0
+        assertTrue("expected the first session to have clicked", events.isNotEmpty())
+        MetronomeEngine.stop()
+
+        events.clear()
+        MetronomeEngine.start()
+        Thread.sleep(300) // comfortably past beat 0 of the *second* session
+
+        assertTrue(
+            "expected the second session to click too, not silently drop its early beats - got $events",
+            events.isNotEmpty(),
+        )
     }
 
     @Test
@@ -699,6 +906,17 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `setPhraseIndicatorEnabled defaults to true and round-trips`() {
+        assertTrue(MetronomeEngine.phraseIndicatorEnabled.value)
+
+        MetronomeEngine.setPhraseIndicatorEnabled(false)
+        assertFalse(MetronomeEngine.phraseIndicatorEnabled.value)
+
+        MetronomeEngine.setPhraseIndicatorEnabled(true)
+        assertTrue(MetronomeEngine.phraseIndicatorEnabled.value)
+    }
+
+    @Test
     fun `setVisualizerEnabled defaults to true and round-trips independently of the queue overlay`() {
         assertTrue(MetronomeEngine.visualizerEnabled.value)
 
@@ -723,6 +941,43 @@ class MetronomeEngineTest {
         assertTrue(
             "the overlay should still be visibly drawing onto the blank base frame",
             MetronomeEngine.frame.value.any { it > 0 },
+        )
+    }
+
+    @Test
+    fun `the queue overlay's row thickness reflects the queue's own bpm range, not a fixed absolute one`() {
+        // Three bars, not two: with only two, whichever is smaller is trivially the queue's own
+        // "min" and whichever is larger is trivially its "max" *regardless of their actual gap*,
+        // so relative scaling alone can't distinguish "far apart" from "close together" pairs -
+        // a third, *middle* bar is what actually exposes whether scaling is relative to the
+        // queue's own span or clipped to a fixed one.
+        //
+        // Visualizer disabled so the base frame is guaranteed blank - isolates the overlay's own
+        // row-thickness contribution from any bpm-dependent visualizer pattern content, the same
+        // isolation the test above uses.
+        MetronomeEngine.setVisualizerEnabled(false)
+        MetronomeEngine.setExtendedBpmRangeEnabled(true)
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.setBpm(500f) // bar 0 - already above the old fixed MAX_BPM=400 boundary
+        MetronomeEngine.addBarToQueue()
+        MetronomeEngine.setBpm(2750f) // bar 1 (middle) - exactly halfway between bars 0 and 2
+        MetronomeEngine.addBarToQueue()
+        MetronomeEngine.setBpm(5000f) // bar 2 - also above 400, like bars 0 and 1
+        val middleAtHalfwayFrame = MetronomeEngine.frame.value.copyOf()
+
+        // Same three bars, but the middle one now sits near the top of the range instead of
+        // exactly halfway. Under the old fixed [1, 400] clipping, every bar here is already
+        // above 400 in both cases, so both frames would render an identical uniform row split
+        // (every bar clipped to the same maximum weight) - only relative-to-queue scaling makes
+        // the middle bar's own row visibly thicken as its tempo moves toward the top of the span.
+        MetronomeEngine.goToQueueBar(1)
+        MetronomeEngine.setBpm(4900f)
+        val middleNearTopFrame = MetronomeEngine.frame.value.copyOf()
+
+        assertFalse(
+            "moving the middle bar's tempo within the queue's own extended-range span should " +
+                "visibly change its row's thickness relative to its neighbors",
+            middleAtHalfwayFrame.contentEquals(middleNearTopFrame),
         )
     }
 
@@ -924,6 +1179,135 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `beatTypeFor reads BAR for beat 0 regardless of any accent pattern`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.setAccentPattern(listOf(BeatAccent.CUSTOM, BeatAccent.NONE, BeatAccent.NONE, BeatAccent.NONE))
+
+        assertEquals(ClickSound.BAR, MetronomeEngine.beatTypeFor(0))
+    }
+
+    @Test
+    fun `beatTypeFor maps each BeatAccent tier to its matching ClickSound`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.setAccentPattern(
+            listOf(BeatAccent.NONE, BeatAccent.ACCENT, BeatAccent.STRONG_ACCENT, BeatAccent.CUSTOM),
+        )
+
+        assertEquals(ClickSound.ACCENT, MetronomeEngine.beatTypeFor(1))
+        assertEquals(ClickSound.STRONG_ACCENT, MetronomeEngine.beatTypeFor(2))
+        assertEquals(ClickSound.CUSTOM, MetronomeEngine.beatTypeFor(3))
+    }
+
+    @Test
+    fun `beatTypeFor reads REGULAR for a non-zero beat with no custom accent pattern`() {
+        MetronomeEngine.setBeatsPerBar(4)
+
+        assertEquals(ClickSound.REGULAR, MetronomeEngine.beatTypeFor(1))
+        assertEquals(ClickSound.REGULAR, MetronomeEngine.beatTypeFor(3))
+    }
+
+    @Test
+    fun `setAccentPattern always writes into whichever bar is currently active`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.addBarToQueue() // second entry, active
+
+        MetronomeEngine.setAccentPattern(listOf(BeatAccent.NONE, BeatAccent.ACCENT, BeatAccent.NONE, BeatAccent.NONE))
+
+        val queue = MetronomeEngine.timeSignatureQueue.value
+        assertEquals(null, queue[0].accentPattern)
+        assertEquals(BeatAccent.ACCENT, queue[1].accentPattern?.get(1))
+    }
+
+    @Test
+    fun `setMidiOverride writes into the explicit phrase-bar-beat location passed in, not whichever bar is active`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.addBarToQueue() // second entry, active
+        val override = MidiBeatAction(type = MidiActionType.NOTE, number = 72)
+
+        MetronomeEngine.setMidiOverride(phraseIndex = 0, barIndex = 1, beatIndex = 1, action = override)
+
+        val queue = MetronomeEngine.timeSignatureQueue.value
+        assertEquals(null, queue[0].midiOverrides)
+        assertEquals(override, queue[1].midiOverrides?.get(1))
+    }
+
+    @Test
+    fun `setMidiOverride with a null action clears an existing override`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.setMidiOverride(0, 0, 1, MidiBeatAction(type = MidiActionType.NOTE, number = 72))
+
+        MetronomeEngine.setMidiOverride(0, 0, 1, null)
+
+        assertEquals(null, MetronomeEngine.timeSignature.value.midiOverrides)
+    }
+
+    @Test
+    fun `setMidiOverride on a non-active bar doesn't touch the active bar's own overrides`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.addBarToQueue() // bar 1, active
+        MetronomeEngine.goToQueueBar(0) // back to bar 0; bar 1 stays the non-active one
+
+        MetronomeEngine.setMidiOverride(phraseIndex = 0, barIndex = 1, beatIndex = 2, action = MidiBeatAction(type = MidiActionType.CC, number = 10))
+
+        assertEquals(null, MetronomeEngine.timeSignature.value.midiOverrides)
+        assertEquals(null, MetronomeEngine.timeSignatureQueue.value[0].midiOverrides)
+        assertEquals(MidiActionType.CC, MetronomeEngine.phrases.value[0].bars[1].midiOverrideAt(2)?.type)
+    }
+
+    @Test
+    fun `setMidiOverride on a non-active phrase doesn't disturb the active phrase's scratch state`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.addPhrase() // phrase 1, active
+        MetronomeEngine.setBeatsPerBar(3)
+
+        MetronomeEngine.setMidiOverride(phraseIndex = 0, barIndex = 0, beatIndex = 1, action = MidiBeatAction(type = MidiActionType.NOTE, number = 40))
+
+        // Phrase 1 (active) scratch state is untouched - still 3 beats, no overrides.
+        assertEquals(3, MetronomeEngine.timeSignature.value.beatCount)
+        assertEquals(null, MetronomeEngine.timeSignature.value.midiOverrides)
+        // Phrase 0 (non-active) got the override, in its own data, not the scratch mirror.
+        assertEquals(MidiActionType.NOTE, MetronomeEngine.phrases.value[0].bars[0].midiOverrideAt(1)?.type)
+    }
+
+    @Test
+    fun `setMidiOverride on the active phrase-bar refreshes the scratch state immediately`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        val override = MidiBeatAction(type = MidiActionType.NOTE, number = 55)
+
+        MetronomeEngine.setMidiOverride(phraseIndex = 0, barIndex = 0, beatIndex = 2, action = override)
+
+        // The active bar's own scratch mirror (what the live UI actually reads) sees it too.
+        assertEquals(override, MetronomeEngine.timeSignature.value.midiOverrideAt(2))
+        assertEquals(override, MetronomeEngine.timeSignatureQueue.value[0].midiOverrideAt(2))
+    }
+
+    @Test
+    fun `resolveMidiActionForBeat falls back to the beat type's own configured default when no override exists`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        val typeDefault = MidiBeatAction(type = MidiActionType.CC, number = 20)
+        MidiActionSender.setAction(ClickSound.REGULAR, typeDefault)
+
+        assertEquals(typeDefault, MetronomeEngine.resolveMidiActionForBeat(1))
+    }
+
+    @Test
+    fun `resolveMidiActionForBeat prefers a beat's own override over its type's configured default`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MidiActionSender.setAction(ClickSound.REGULAR, MidiBeatAction(type = MidiActionType.CC, number = 20))
+        val override = MidiBeatAction(type = MidiActionType.NOTE, number = 72, value = 110, durationMs = 15)
+        MetronomeEngine.setMidiOverride(0, 0, 1, override)
+
+        assertEquals(override, MetronomeEngine.resolveMidiActionForBeat(1))
+    }
+
+    @Test
+    fun `resolveMidiActionForBeat is NONE when neither an override nor a type default is configured`() {
+        MetronomeEngine.setBeatsPerBar(4)
+
+        assertEquals(MidiBeatAction(), MetronomeEngine.resolveMidiActionForBeat(1))
+    }
+
+    @Test
     fun `a multi-bar queue in LOOP mode actually advances during real playback`() {
         MetronomeEngine.setBeatsPerBar(1) // one beat per bar, so every beat is a bar boundary
         MetronomeEngine.addBarToQueue()
@@ -943,6 +1327,188 @@ class MetronomeEngineTest {
             MetronomeEngine.state.value.totalBeats >= 1,
         )
         assertEquals(1, MetronomeEngine.queueIndex.value)
+    }
+
+    @Test
+    fun `addPhrase appends a fresh default phrase - not a copy of the active one - and jumps to it`() {
+        MetronomeEngine.setBeatsPerBar(5)
+
+        MetronomeEngine.addPhrase()
+
+        val phrases = MetronomeEngine.phrases.value
+        assertEquals(2, phrases.size)
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value)
+        assertEquals(4, phrases[1].bars[0].beatCount) // fresh default, not a copy of phrase 0's 5
+        assertEquals(5, phrases[0].bars[0].beatCount) // the phrase left behind is untouched
+    }
+
+    @Test
+    fun `goToPhrase loads the target phrase's own bars and always resets to its first bar`() {
+        MetronomeEngine.setBeatsPerBar(3)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.setBeatsPerBar(7)
+        MetronomeEngine.addBarToQueue() // phrase 1 (active) now has 2 bars; queueIndex == 1
+
+        MetronomeEngine.goToPhrase(0)
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value)
+        assertEquals(3, MetronomeEngine.state.value.beatsPerBar)
+        assertEquals(0, MetronomeEngine.queueIndex.value)
+
+        MetronomeEngine.goToPhrase(1)
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value)
+        // Always resets to bar 0 of the target phrase, even though phrase 1 was left on bar 1 - no
+        // "remember where I left off" memory.
+        assertEquals(0, MetronomeEngine.queueIndex.value)
+        assertEquals(7, MetronomeEngine.state.value.beatsPerBar)
+    }
+
+    @Test
+    fun `removePhrase keeps the same phrase active, adjusting the index for the shift`() {
+        MetronomeEngine.addPhrase() // phrase 1
+        MetronomeEngine.addPhrase() // phrase 2, active
+
+        MetronomeEngine.removePhrase(0)
+
+        assertEquals(2, MetronomeEngine.phrases.value.size)
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value) // shifted down from 2
+    }
+
+    @Test
+    fun `removePhrase is a no-op when only one phrase remains`() {
+        MetronomeEngine.removePhrase(0)
+        assertEquals(1, MetronomeEngine.phrases.value.size)
+    }
+
+    @Test
+    fun `resetPhrasesToDefault collapses back to a single default phrase in LOOP mode`() {
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.setPhraseQueueMode(MetronomeEngine.QueueMode.MANUAL)
+
+        MetronomeEngine.resetPhrasesToDefault()
+
+        assertEquals(1, MetronomeEngine.phrases.value.size)
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value)
+        assertEquals(MetronomeEngine.QueueMode.LOOP, MetronomeEngine.phraseQueueMode.value)
+    }
+
+    @Test
+    fun `nextPhrase and previousPhrase clamp rather than wrap`() {
+        MetronomeEngine.addPhrase()
+
+        MetronomeEngine.nextPhrase()
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value) // clamped, not wrapped past the last phrase
+
+        MetronomeEngine.previousPhrase()
+        MetronomeEngine.previousPhrase()
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value) // clamped at 0, not negative
+    }
+
+    @Test
+    fun `setPhraseQueueMode round-trips`() {
+        MetronomeEngine.setPhraseQueueMode(MetronomeEngine.QueueMode.ONCE)
+        assertEquals(MetronomeEngine.QueueMode.ONCE, MetronomeEngine.phraseQueueMode.value)
+    }
+
+    @Test
+    fun `start resets to bar 0 of whichever phrase is currently active, not phrase 0`() {
+        MetronomeEngine.addPhrase() // phrase 1, active
+        MetronomeEngine.setBeatsPerBar(6)
+        MetronomeEngine.addBarToQueue() // phrase 1 now has 2 bars; queueIndex == 1
+
+        MetronomeEngine.start()
+
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value)
+        assertEquals(0, MetronomeEngine.queueIndex.value)
+        assertEquals(6, MetronomeEngine.state.value.beatsPerBar)
+    }
+
+    @Test
+    fun `a 1-bar ONCE phrase cascades to the next phrase on every bar boundary`() {
+        // The phrase-boundary cascade trigger is deliberately "bar-level next is null AND this phrase's
+        // own mode is ONCE" with NO extra "more than one bar" guard - a 1-bar ONCE phrase is the
+        // simplest, most natural phrase shape (a whole section that's just one bar) and must cascade
+        // every single bar, not sit inert. See advanceQueueAtBarBoundary's own kdoc.
+        MetronomeEngine.setBeatsPerBar(1) // one beat per bar - every beat is a bar boundary
+        MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.ONCE)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.setPhraseQueueMode(MetronomeEngine.QueueMode.LOOP)
+        MetronomeEngine.goToPhrase(0)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat, keeps this quick
+
+        MetronomeEngine.start()
+        Thread.sleep(230) // past the first bar boundary (~150ms)
+
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value)
+    }
+
+    @Test
+    fun `a 1-bar LOOP phrase never cascades to another phrase`() {
+        MetronomeEngine.setBeatsPerBar(1)
+        MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.LOOP)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.goToPhrase(0)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM)
+
+        MetronomeEngine.start()
+        Thread.sleep(400) // several bar boundaries' worth
+
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value)
+    }
+
+    @Test
+    fun `a 1-bar MANUAL phrase never cascades to another phrase`() {
+        MetronomeEngine.setBeatsPerBar(1)
+        MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.MANUAL)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.goToPhrase(0)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM)
+
+        MetronomeEngine.start()
+        Thread.sleep(400)
+
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value)
+    }
+
+    @Test
+    fun `a multi-bar LOOP phrase never cascades to another phrase - it has no 'finished' state`() {
+        MetronomeEngine.setBeatsPerBar(1)
+        // Fast tempo set before duplicating the bar - see the ONCE-phrase test's own comment for why
+        // setting it only on bar 0 afterward would leave bar 1 stalled at the slow 120bpm default.
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM)
+        MetronomeEngine.addBarToQueue() // phrase 0 now has 2 bars, both fast, LOOP mode (default)
+        MetronomeEngine.goToQueueBar(0)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.goToPhrase(0)
+
+        MetronomeEngine.start()
+        Thread.sleep(500) // several bar boundaries - should just loop within phrase 0's own 2 bars
+
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value)
+    }
+
+    @Test
+    fun `a multi-bar ONCE phrase cascades to the next phrase once it reaches its last bar`() {
+        MetronomeEngine.setBeatsPerBar(1)
+        // Set the fast tempo *before* duplicating the bar, so both of phrase 0's bars inherit it -
+        // addBarToQueue() copies whichever bar is active *at that moment*, and a bar's bpm is its
+        // own (see TimeSignature's own bpm field) - setting it only on bar 0 afterward would leave
+        // bar 1 at the slow 120 bpm default, stalling the clock once the phrase advances to it.
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat
+        MetronomeEngine.addBarToQueue() // phrase 0: 2 bars, both at MAX_BPM
+        MetronomeEngine.goToQueueBar(0)
+        MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.ONCE)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.setPhraseQueueMode(MetronomeEngine.QueueMode.LOOP)
+        MetronomeEngine.goToPhrase(0)
+
+        MetronomeEngine.start()
+        // beat 0 (t=0, no advance - start() guard), beat 1 (~150ms, bar 0->1 within phrase 0), beat 2
+        // (~300ms, phrase 0's bar 1 is both last-in-phrase and ONCE -> cascades to phrase 1). Land
+        // comfortably past that third boundary.
+        Thread.sleep(450)
+
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value)
     }
 
     @Test

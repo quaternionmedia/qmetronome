@@ -1,38 +1,40 @@
 package media.quaternion.qmetronome.engine
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class TimeSignatureTest {
 
     @Test
-    fun `with no custom accent pattern, only beat 0 is accented`() {
+    fun `with no custom accent pattern, every beat reads as unaccented`() {
         val timeSignature = TimeSignature(beatCount = 4)
 
-        assertTrue(timeSignature.isAccented(0))
-        assertFalse(timeSignature.isAccented(1))
-        assertFalse(timeSignature.isAccented(2))
-        assertFalse(timeSignature.isAccented(3))
+        assertEquals(BeatAccent.NONE, timeSignature.accentAt(0))
+        assertEquals(BeatAccent.NONE, timeSignature.accentAt(1))
+        assertEquals(BeatAccent.NONE, timeSignature.accentAt(2))
+        assertEquals(BeatAccent.NONE, timeSignature.accentAt(3))
     }
 
     @Test
-    fun `a custom accent pattern overrides the beat-0-only default`() {
-        val timeSignature = TimeSignature(beatCount = 4, accentPattern = listOf(true, false, true, false))
+    fun `a custom accent pattern is read back per beat`() {
+        val timeSignature = TimeSignature(
+            beatCount = 4,
+            accentPattern = listOf(BeatAccent.NONE, BeatAccent.ACCENT, BeatAccent.STRONG_ACCENT, BeatAccent.CUSTOM),
+        )
 
-        assertTrue(timeSignature.isAccented(0))
-        assertFalse(timeSignature.isAccented(1))
-        assertTrue(timeSignature.isAccented(2))
-        assertFalse(timeSignature.isAccented(3))
+        assertEquals(BeatAccent.NONE, timeSignature.accentAt(0))
+        assertEquals(BeatAccent.ACCENT, timeSignature.accentAt(1))
+        assertEquals(BeatAccent.STRONG_ACCENT, timeSignature.accentAt(2))
+        assertEquals(BeatAccent.CUSTOM, timeSignature.accentAt(3))
     }
 
     @Test
-    fun `a beat index outside a custom pattern's range falls back to the beat-0-only default`() {
-        val timeSignature = TimeSignature(beatCount = 4, accentPattern = listOf(true, false))
+    fun `a beat index outside a custom pattern's range falls back to NONE`() {
+        val timeSignature = TimeSignature(beatCount = 4, accentPattern = listOf(BeatAccent.ACCENT))
 
-        assertFalse(timeSignature.isAccented(2))
-        assertFalse(timeSignature.isAccented(3))
+        assertEquals(BeatAccent.NONE, timeSignature.accentAt(2))
+        assertEquals(BeatAccent.NONE, timeSignature.accentAt(3))
     }
 
     @Test
@@ -40,7 +42,7 @@ class TimeSignatureTest {
         assertEquals(4, TimeSignature.DEFAULT.beatCount)
         assertEquals(4, TimeSignature.DEFAULT.unitNoteValue)
         assertEquals(120f, TimeSignature.DEFAULT.bpm, 0.01f)
-        assertTrue(TimeSignature.DEFAULT.isAccented(0))
+        assertEquals(BeatAccent.NONE, TimeSignature.DEFAULT.accentAt(0))
     }
 
     @Test
@@ -50,5 +52,24 @@ class TimeSignatureTest {
         assertEquals(7, timeSignature.beatCount)
         assertEquals(8, timeSignature.unitNoteValue)
         assertEquals(90f, timeSignature.bpm, 0.01f)
+    }
+
+    @Test
+    fun `with no midi overrides, every beat reads as null - no override`() {
+        val timeSignature = TimeSignature(beatCount = 4)
+
+        assertNull(timeSignature.midiOverrideAt(0))
+        assertNull(timeSignature.midiOverrideAt(2))
+    }
+
+    @Test
+    fun `a beat's own midi override is read back by index, others stay null`() {
+        val override = MidiBeatAction(type = MidiActionType.NOTE, channel = 9, number = 72, value = 110, durationMs = 15)
+        val timeSignature = TimeSignature(beatCount = 4, midiOverrides = mapOf(2 to override))
+
+        assertEquals(override, timeSignature.midiOverrideAt(2))
+        assertNull(timeSignature.midiOverrideAt(0))
+        assertNull(timeSignature.midiOverrideAt(1))
+        assertNull(timeSignature.midiOverrideAt(3))
     }
 }

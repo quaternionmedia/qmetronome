@@ -130,4 +130,23 @@ class MainScreenFormattingTest {
             assertTrue("default $default for $unit is outside its own range $range", default in range)
         }
     }
+
+    @Test
+    fun `proportionFraction returns 1 when min and max are equal - no variation reads as full, not minimal`() {
+        assertEquals(1f, proportionFraction(4f, 4f, 4f), 0.001f)
+        assertEquals(1f, proportionFraction(0f, 4f, 4f), 0.001f)
+    }
+
+    @Test
+    fun `proportionFraction is 0 at the minimum and 1 at the maximum`() {
+        assertEquals(0f, proportionFraction(3f, 3f, 9f), 0.001f)
+        assertEquals(1f, proportionFraction(9f, 3f, 9f), 0.001f)
+        assertEquals(0.5f, proportionFraction(6f, 3f, 9f), 0.001f)
+    }
+
+    @Test
+    fun `proportionFraction clamps values outside the observed min-max range`() {
+        assertEquals(0f, proportionFraction(-5f, 3f, 9f), 0.001f)
+        assertEquals(1f, proportionFraction(50f, 3f, 9f), 0.001f)
+    }
 }

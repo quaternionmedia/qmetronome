@@ -2,6 +2,7 @@ package media.quaternion.qmetronome.engine
 
 import android.content.Context
 import android.util.Log
+import media.quaternion.qmetronome.midi.MidiActionSender
 import media.quaternion.qmetronome.midi.MidiClockSource
 import media.quaternion.qmetronome.visualizers.GlyphVisualizer
 import media.quaternion.qmetronome.visualizers.QueueOverlay
@@ -117,9 +118,10 @@ object MetronomeEngine {
     private val streamingClickEngine = StreamingClickEngine()
 
     /** Whether [streamingClickEngine] is the active audio-trigger path for the current session -
-     * decided once per [start] call by whether it initialized successfully, and flipped back to
-     * false mid-session if [StreamingClickEngine.hasFailedWarmup] ever reports true (see
-     * [startAudioScheduling]). False means every click for this session falls back to
+     * re-checked on every [start] call (cheap after the first successful one - see
+     * [StreamingClickEngine.start]'s own kdoc for why repeat calls don't rebuild anything), and
+     * flipped back to false mid-session if [StreamingClickEngine.hasFailedWarmup] ever reports
+     * true (see [startAudioScheduling]). False means every click for this session falls back to
      * [clickPlayer]'s discrete-retrigger path - see [onBeat] and [fireLookaheadAudioIfNeeded]. */
     @Volatile private var usingStreamingClickEngine = false
 
@@ -148,10 +150,15 @@ object MetronomeEngine {
     private val _visualOffsetMs = MutableStateFlow(DEFAULT_VISUAL_OFFSET_MS)
     val visualOffsetMs: StateFlow<Float> = _visualOffsetMs.asStateFlow()
 
-    /** See [setAudioOffsetMs] for how this is actually scheduled - a negative value needs genuine
-     * lookahead (see [startAudioScheduling]), unlike [visualOffsetMs]'s continuous phase-shift. */
+    /** See [setAudioOffsetMs] for how this is actually scheduled - a non-positive value (negative
+     * or exactly zero) gets genuine lookahead (see [startAudioScheduling]), unlike
+     * [visualOffsetMs]'s continuous phase-shift. */
     private val _audioOffsetMs = MutableStateFlow(DEFAULT_AUDIO_OFFSET_MS)
     val audioOffsetMs: StateFlow<Float> = _audioOffsetMs.asStateFlow()
+
+    /** See [beatZeroCountInNanos] for how this is actually used. */
+    private val _firstBeatCountInCapMs = MutableStateFlow(DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS)
+    val firstBeatCountInCapMs: StateFlow<Float> = _firstBeatCountInCapMs.asStateFlow()
 
     private val _compactLandscape = MutableStateFlow(false)
     val compactLandscape: StateFlow<Boolean> = _compactLandscape.asStateFlow()
@@ -162,6 +169,16 @@ object MetronomeEngine {
      * what each one swaps to. Off by default, matching every other display toggle in this app. */
     private val _symbolicControlsEnabled = MutableStateFlow(false)
     val symbolicControlsEnabled: StateFlow<Boolean> = _symbolicControlsEnabled.asStateFlow()
+
+    /** When on, a small secondary-colored unit-symbol mark (bpm/beat-type/bar/phrase - not
+     * beats-per-bar, which dropped its own mark: three dots at this size read as a stray
+     * dash/ellipsis rather than "three dots", the opposite of the intended "name it at a glance")
+     * is shown next to each control's own value - purely a subtle label, not a second set of
+     * controls. Separate from [symbolicControlsEnabled] (an unrelated toggle: text vs. icon-only
+     * transport controls) - conflating the two would confuse both. On by default, unlike most
+     * display toggles here, since the symbols are small/secondary enough not to need opt-in. */
+    private val _unitSymbolsEnabled = MutableStateFlow(true)
+    val unitSymbolsEnabled: StateFlow<Boolean> = _unitSymbolsEnabled.asStateFlow()
 
     /** See [MetronomeSettings.persistentModeEnabled] - watched by `QMetronomeApp` to start/stop
      * `PersistentPlaybackService`, and by `MetronomeGlyphService` to decide whether a Glyph Toy
@@ -184,10 +201,32 @@ object MetronomeEngine {
     private val _queueMode = MutableStateFlow(QueueMode.LOOP)
     val queueMode: StateFlow<QueueMode> = _queueMode.asStateFlow()
 
+    /** The phrase queue - song-form sections, each carrying its own full bar queue (see [Phrase]).
+     * A single entry (today's default) behaves exactly like there being no phrase concept at all:
+     * [timeSignatureQueue]/[queueIndex]/[queueMode] always mirror `phrases[activePhraseIndex]` (kept in
+     * sync by every function that touches either "side" - see `syncActivePhraseMemory`/[goToPhrase]),
+     * so every existing bar-queue call site keeps working unmodified for that common case. */
+    private val _phrases = MutableStateFlow(listOf(Phrase()))
+    val phrases: StateFlow<List<Phrase>> = _phrases.asStateFlow()
+
+    private val _activePhraseIndex = MutableStateFlow(0)
+    val activePhraseIndex: StateFlow<Int> = _activePhraseIndex.asStateFlow()
+
+    /** Governs how *phrases* advance into each other, the same [QueueMode] concept as [queueMode]
+     * reused one level up - see `advanceQueueAtBarBoundary`'s phrase-boundary cascade. */
+    private val _phraseQueueMode = MutableStateFlow(QueueMode.LOOP)
+    val phraseQueueMode: StateFlow<QueueMode> = _phraseQueueMode.asStateFlow()
+
     /** Whether [QueueOverlay]'s ambient per-bar/per-beat background is drawn into the Glyph
      * frame at all - on by default, but purely cosmetic, so it's fully optional. */
     private val _queueOverlayEnabled = MutableStateFlow(true)
     val queueOverlayEnabled: StateFlow<Boolean> = _queueOverlayEnabled.asStateFlow()
+
+    /** Whether [QueueOverlay]'s radial per-phrase dots are drawn - independent of
+     * [queueOverlayEnabled] (which governs the per-bar rows), so a performer can run either, both,
+     * or neither. On by default, matching [queueOverlayEnabled]'s own default; purely cosmetic. */
+    private val _phraseIndicatorEnabled = MutableStateFlow(true)
+    val phraseIndicatorEnabled: StateFlow<Boolean> = _phraseIndicatorEnabled.asStateFlow()
 
     /** Whether the selected [GlyphVisualizer] itself renders at all - independent of
      * [queueOverlayEnabled], so a performer can run either, both, or neither. Disabled, the base
@@ -242,6 +281,12 @@ object MetronomeEngine {
     private var renderJob: Job? = null
     private var audioSchedulingJob: Job? = null
     private var persistBpmJob: Job? = null
+
+    /** The pending "wait out beat 0's count-in, then actually start ticking" coroutine - see
+     * [start]/[beatZeroCountInNanos]. Null whenever no count-in is in flight (no delay configured,
+     * or ticking has already begun). Tracked so a second [start] call (or [stop]) during the
+     * window cancels it rather than leaving two overlapping starts racing. */
+    private var countInJob: Job? = null
     private var lastTapNanos = 0L
     private val tapIntervalsMs = mutableListOf<Long>()
 
@@ -276,18 +321,28 @@ object MetronomeEngine {
         if (settings != null) return
         val store = MetronomeSettings(context.applicationContext)
         settings = store
+        streamingClickEngine.configureFromDevice(context.applicationContext)
         _visualizer.value = VisualizerRegistry.byId(store.visualizerId)
-        val restoredQueue = store.queue
-        val restoredIndex = store.queueIndex.coerceIn(0, restoredQueue.size - 1)
-        val restoredSpec = restoredQueue[restoredIndex]
-        _timeSignatureQueue.value = restoredQueue
+        val restoredPhrases = store.phrases
+        val restoredPhraseIndex = store.activePhraseIndex.coerceIn(0, restoredPhrases.size - 1)
+        val activePhrase = restoredPhrases[restoredPhraseIndex]
+        val restoredIndex = store.queueIndex.coerceIn(0, activePhrase.bars.size - 1)
+        val restoredSpec = activePhrase.bars[restoredIndex]
+        _phrases.value = restoredPhrases
+        _activePhraseIndex.value = restoredPhraseIndex
+        _phraseQueueMode.value = store.phraseQueueMode
+        _timeSignatureQueue.value = activePhrase.bars
         _queueIndex.value = restoredIndex
-        _queueMode.value = store.queueMode
+        _queueMode.value = activePhrase.barQueueMode
         _timeSignature.value = restoredSpec
         _state.value = BeatPhase.IDLE.copy(bpm = restoredSpec.bpm, beatsPerBar = restoredSpec.beatCount)
         // The active bar's own visualizer choice (if it's ever pinned one) wins over the plain
         // last-used global visualizer restored above.
         restoredSpec.visualizerId?.let { _visualizer.value = VisualizerRegistry.byId(it) }
+        // Locks in a legacy-queue migration (see MetronomeSettings.phrases' kdoc) so future opens
+        // read the canonical phrases format directly rather than re-deriving it every time.
+        store.phrases = restoredPhrases
+        store.activePhraseIndex = restoredPhraseIndex
         _clickEnabled.value = store.clickEnabled
         val restoredSpecs = ClickSound.entries.associateWith { store.clickSpec(it) }
         restoredSpecs.forEach { (sound, spec) ->
@@ -297,8 +352,10 @@ object MetronomeEngine {
         _clickSpecs.value = restoredSpecs
         _visualOffsetMs.value = store.visualOffsetMs
         _audioOffsetMs.value = store.audioOffsetMs
+        _firstBeatCountInCapMs.value = store.firstBeatCountInCapMs
         _compactLandscape.value = store.compactLandscape
         _symbolicControlsEnabled.value = store.symbolicControlsEnabled
+        _unitSymbolsEnabled.value = store.unitSymbolsEnabled
         _persistentModeEnabled.value = store.persistentModeEnabled
         _hasShownBpmHint.value = store.hasShownBpmHint
         _muteProbability.value = store.muteProbability
@@ -306,6 +363,7 @@ object MetronomeEngine {
         _progressiveMuteRampBars.value = store.progressiveMuteRampBars
         _extendedBpmRangeEnabled.value = store.extendedBpmRangeEnabled
         _queueOverlayEnabled.value = store.queueOverlayEnabled
+        _phraseIndicatorEnabled.value = store.phraseIndicatorEnabled
         _visualizerEnabled.value = store.visualizerEnabled
 
         MidiClockSource.onExternalActivity = { if (!usingMidiClock) useMidiClock() }
@@ -348,6 +406,38 @@ object MetronomeEngine {
     }
 
     /**
+     * Writes whatever [timeSignatureQueue]/[queueMode] currently hold - the active phrase's own
+     * "scratch" bar-queue state, mutated in place by every existing bar-level function exactly as
+     * it always was - back into [_phrases] at [_activePhraseIndex]. Called at the end of every function
+     * that mutates the active phrase's own bars/mode, so [phrases] (the source of truth for anything
+     * about a phrase *other* than the currently-active one, and what's actually persisted) never
+     * drifts out of sync with the scratch state. See [goToPhrase] for the reverse direction: loading
+     * a *different* phrase's own bars/mode into that same scratch state. Kept separate from
+     * [persistPhrases] so [setBpmImmediate]'s debounced disk write can update this in-memory state
+     * immediately while still batching the disk write itself.
+     */
+    private fun syncActivePhraseMemory() {
+        _phrases.update { phrases ->
+            val index = _activePhraseIndex.value.coerceIn(0, phrases.lastIndex)
+            phrases.toMutableList().apply {
+                this[index] = this[index].copy(bars = _timeSignatureQueue.value, barQueueMode = _queueMode.value)
+            }
+        }
+    }
+
+    private fun persistPhrases() {
+        settings?.phrases = _phrases.value
+        settings?.activePhraseIndex = _activePhraseIndex.value
+    }
+
+    /** [syncActivePhraseMemory] plus an immediate [persistPhrases] - the common case for every bar-level
+     * mutator except [setBpmImmediate], which debounces the disk write instead. */
+    private fun syncActivePhraseMemoryAndPersist() {
+        syncActivePhraseMemory()
+        persistPhrases()
+    }
+
+    /**
      * The press-and-hold step buttons and the drag-to-scrub gesture can both call this many
      * times a second - the engine state update stays instant, but the SharedPreferences write
      * is debounced rather than firing on every single call, otherwise a few seconds of dragging
@@ -383,11 +473,12 @@ object MetronomeEngine {
             if (index !in queue.indices) return@update queue
             queue.toMutableList().apply { this[index] = this[index].copy(bpm = clamped) }
         }
+        syncActivePhraseMemory()
         persistBpmJob?.cancel()
         persistBpmJob = persistScope.launch {
             delay(BPM_PERSIST_DEBOUNCE_MS)
             settings?.bpm = clamped
-            settings?.queue = _timeSignatureQueue.value
+            persistPhrases()
         }
         // The queue overlay's dot height reflects bpm, and this is the one function every
         // bpm-committing path (direct edits, goToQueueBar switching bars, the denominator
@@ -418,7 +509,7 @@ object MetronomeEngine {
             queue.toMutableList().apply { this[index] = this[index].copy(beatCount = clamped) }
         }
         settings?.beatsPerBar = clamped
-        settings?.queue = _timeSignatureQueue.value
+        syncActivePhraseMemoryAndPersist()
         // The queue overlay's dot width reflects beat count - see setBpmImmediate's matching call.
         emitIdleFrame()
     }
@@ -447,7 +538,56 @@ object MetronomeEngine {
             if (index !in queue.indices) return@update queue
             queue.toMutableList().apply { this[index] = this[index].copy(unitNoteValue = clamped) }
         }
-        settings?.queue = _timeSignatureQueue.value
+        syncActivePhraseMemoryAndPersist()
+    }
+
+    /** The accent tier authored for each non-downbeat position in the active bar - see
+     * [TimeSignature.accentPattern]/[BeatAccent]. Always writes into whichever bar is currently
+     * active in the queue, the same "always edits the active bar" pattern [setBeatsPerBar]/
+     * [setUnitNoteValue] already follow. */
+    fun setAccentPattern(pattern: List<BeatAccent>) {
+        _timeSignature.value = _timeSignature.value.copy(accentPattern = pattern)
+        _timeSignatureQueue.update { queue ->
+            val index = _queueIndex.value
+            if (index !in queue.indices) return@update queue
+            queue.toMutableList().apply { this[index] = this[index].copy(accentPattern = pattern) }
+        }
+        syncActivePhraseMemoryAndPersist()
+    }
+
+    /**
+     * Sets or clears (via `action = null`) a single beat's own MIDI override at an *explicit*
+     * (phrase, bar, beat) location - see [TimeSignature.midiOverrides]/[resolveMidiActionForBeat].
+     * Unlike [setAccentPattern] (which always edits whichever bar the engine currently has active),
+     * this targets exactly the triple passed in, so an edit always lands on precisely the beat
+     * selected in the UI - never silently "whichever bar happens to be active" - the same explicit-
+     * index shape [setPhraseAction] already uses one level up. A no-op if either index is out of
+     * range. Mutates [_phrases] directly (this is authoring a specific bar's own data, not the
+     * "live active bar" scratch surface [setAccentPattern]/[setBpmImmediate] maintain), then also
+     * refreshes [_timeSignature]/[_timeSignatureQueue] when [phraseIndex]/[barIndex] happen to
+     * *be* the currently active phrase/bar, so anything reading those flows (the main screen, the
+     * engine's own beat-resolution path) sees the change immediately rather than only after the
+     * next navigation event reloads them from [_phrases].
+     */
+    fun setMidiOverride(phraseIndex: Int, barIndex: Int, beatIndex: Int, action: MidiBeatAction?) {
+        val phrases = _phrases.value
+        if (phraseIndex !in phrases.indices) return
+        val phrase = phrases[phraseIndex]
+        if (barIndex !in phrase.bars.indices) return
+        val bar = phrase.bars[barIndex]
+        val updatedOverrides = (bar.midiOverrides ?: emptyMap()).toMutableMap()
+        if (action == null) updatedOverrides.remove(beatIndex) else updatedOverrides[beatIndex] = action
+        val updatedBar = bar.copy(midiOverrides = updatedOverrides.ifEmpty { null })
+        val updatedBars = phrase.bars.toMutableList().apply { this[barIndex] = updatedBar }
+        val updatedPhrases = phrases.toMutableList().apply { this[phraseIndex] = phrase.copy(bars = updatedBars) }
+        _phrases.value = updatedPhrases
+        settings?.phrases = updatedPhrases
+        if (phraseIndex == _activePhraseIndex.value) {
+            _timeSignatureQueue.value = updatedBars
+            if (barIndex == _queueIndex.value) {
+                _timeSignature.value = updatedBar
+            }
+        }
     }
 
     /**
@@ -478,6 +618,17 @@ object MetronomeEngine {
         val spec = queue[clampedIndex]
         _timeSignature.value = spec
         _state.update { it.copy(beatsPerBar = spec.beatCount) }
+        // While HOLD is staging (Momentary or Latched), a staged value represents "what would
+        // apply to the bar I'm currently looking at" - re-snapshot both from the newly active
+        // bar here, the same initial capture beginHold()/toggleLatch() do when staging first
+        // begins. Without this, a bar change that lands here - direct navigation, or a
+        // reset/remove that jumps elsewhere - leaves the old bar's stale staged number both
+        // masking the real value on screen (see BpmControls' `stagedBpm ?: beat.bpm`) *and*
+        // primed to silently reapply itself and revert this change on the next flushStagedChanges().
+        if (_holdMode.value != HoldMode.Off) {
+            _stagedBeatsPerBar.value = spec.beatCount
+            _stagedBpm.value = spec.bpm
+        }
         // Switch the visualizer *before* setBpmImmediate() below, which is what actually refreshes
         // the idle-frame preview while stopped - switching after would mean that refresh still
         // rendered with the outgoing visualizer.
@@ -501,7 +652,7 @@ object MetronomeEngine {
         val queue = _timeSignatureQueue.value
         val newBar = queue.getOrElse(_queueIndex.value) { TimeSignature.DEFAULT }
         _timeSignatureQueue.value = queue + newBar
-        settings?.queue = _timeSignatureQueue.value
+        syncActivePhraseMemoryAndPersist()
         goToQueueBar(queue.size)
     }
 
@@ -517,7 +668,7 @@ object MetronomeEngine {
         if (queue.size <= 1 || index !in queue.indices) return
         val updated = queue.toMutableList().apply { removeAt(index) }
         _timeSignatureQueue.value = updated
-        settings?.queue = updated
+        syncActivePhraseMemoryAndPersist()
         val activeIndex = _queueIndex.value
         val newActiveIndex = if (index < activeIndex) activeIndex - 1 else activeIndex
         goToQueueBar(newActiveIndex.coerceAtMost(updated.size - 1))
@@ -531,20 +682,25 @@ object MetronomeEngine {
      * performer wants a clean slate rather than removing bars one by one. */
     fun resetQueueToDefault() {
         _timeSignatureQueue.value = listOf(TimeSignature.DEFAULT)
-        settings?.queue = _timeSignatureQueue.value
         _queueMode.value = QueueMode.LOOP
-        settings?.queueMode = QueueMode.LOOP
         goToQueueBar(0)
+        syncActivePhraseMemoryAndPersist()
     }
 
     fun setQueueMode(mode: QueueMode) {
         _queueMode.value = mode
-        settings?.queueMode = mode
+        syncActivePhraseMemoryAndPersist()
     }
 
     fun setQueueOverlayEnabled(enabled: Boolean) {
         _queueOverlayEnabled.value = enabled
         settings?.queueOverlayEnabled = enabled
+        emitIdleFrame()
+    }
+
+    fun setPhraseIndicatorEnabled(enabled: Boolean) {
+        _phraseIndicatorEnabled.value = enabled
+        settings?.phraseIndicatorEnabled = enabled
         emitIdleFrame()
     }
 
@@ -558,8 +714,11 @@ object MetronomeEngine {
      * Pure decision logic for [advanceQueueAtBarBoundary] - returns the index to advance to, or
      * null if nothing should change ([QueueMode.MANUAL], a single-entry queue, or [QueueMode.ONCE]
      * having already reached the last bar - it stays there rather than stopping playback
-     * outright, since the performer decides when to actually stop). Exposed (not private) so the
-     * decision is directly unit-testable without driving a real beat loop.
+     * outright, since the performer decides when to actually stop). Applied twice by
+     * [advanceQueueAtBarBoundary]: once for bars within the active phrase, once - identically - for
+     * phrases within [phrases], since "advance to the next slot, wrap/stop/hold depending on mode" is
+     * the same decision at both levels. Exposed (not private) so the decision is directly
+     * unit-testable without driving a real beat loop.
      */
     fun nextQueueIndexAfterBar(currentIndex: Int, queueSize: Int, mode: QueueMode): Int? {
         if (queueSize <= 1) return null
@@ -572,11 +731,128 @@ object MetronomeEngine {
         }
     }
 
-    /** Called at each bar boundary (see [onBeat]) once the *previous* bar has fully played out. */
+    /**
+     * Called at each bar boundary (see [onBeat]) once the *previous* bar has fully played out.
+     * First tries to advance within the active phrase's own bars, exactly as before phrases existed. If
+     * there's nothing further to advance to there *and* the phrase's own mode is [QueueMode.ONCE]
+     * (i.e. this phrase just legitimately finished - not "MANUAL never advances" and not "a single
+     * bar is inert either way", both of which also return null from [nextQueueIndexAfterBar] but
+     * shouldn't hand off to another phrase), falls through to a phrase-level transition via the
+     * identical [nextQueueIndexAfterBar] applied one level up. Deliberately no extra "more than
+     * one bar" guard on that fall-through: a one-bar ONCE-mode phrase is the simplest, most natural
+     * phrase shape (a whole section that's just one bar), and it must cascade on every single bar,
+     * not be silently inert the way a bar-less guard would make it.
+     */
     private fun advanceQueueAtBarBoundary() {
         val queue = _timeSignatureQueue.value
-        val next = nextQueueIndexAfterBar(_queueIndex.value, queue.size, _queueMode.value) ?: return
-        goToQueueBar(next)
+        val barNext = nextQueueIndexAfterBar(_queueIndex.value, queue.size, _queueMode.value)
+        if (barNext != null) {
+            goToQueueBar(barNext)
+            return
+        }
+        if (_queueMode.value != QueueMode.ONCE) return
+        val phrases = _phrases.value
+        val phraseNext = nextQueueIndexAfterBar(_activePhraseIndex.value, phrases.size, _phraseQueueMode.value) ?: return
+        goToPhrase(phraseNext)
+    }
+
+    /** Jumps directly to a phrase (clamped to a valid index), loading its own bars/mode into the
+     * active bar-queue "scratch" state ([timeSignatureQueue]/[queueMode] - see
+     * `syncActivePhraseMemory`'s kdoc for why that state, not [phrases] directly, is what every existing
+     * bar-level function actually reads/writes) and landing on that phrase's first bar. Always resets
+     * to bar 0 of the target phrase rather than remembering where a previous visit left off -
+     * simplest and least surprising for song-form playback, where entering a section should start
+     * at its own beat 1, whether you got there manually or via [advanceQueueAtBarBoundary]'s
+     * automatic cascade. Fires the target [Phrase.action] every time this resolves to a phrase,
+     * including a direct tap re-entering the already-active one - "fires whenever a phrase is
+     * confirmed/entered" is the simpler mental model over "only on a genuine transition", and
+     * matches [MidiBeatAction]'s own NONE-by-default silence for anyone who hasn't configured one.
+     */
+    fun goToPhrase(index: Int) {
+        val phrases = _phrases.value
+        if (phrases.isEmpty()) return
+        val clampedIndex = index.coerceIn(0, phrases.size - 1)
+        _activePhraseIndex.value = clampedIndex
+        settings?.activePhraseIndex = clampedIndex
+        val phrase = phrases[clampedIndex]
+        _timeSignatureQueue.value = phrase.bars
+        _queueMode.value = phrase.barQueueMode
+        MidiActionSender.fire(phrase.action, System.nanoTime())
+        goToQueueBar(0)
+    }
+
+    /** Manual navigation - one phrase at a time, clamped rather than wrapping (wrapping is
+     * [phraseQueueMode]'s [QueueMode.LOOP] job at a phrase boundary) - the phrase-level counterpart to
+     * [nextQueueBar]/[previousQueueBar]. */
+    fun nextPhrase() = goToPhrase(_activePhraseIndex.value + 1)
+    fun previousPhrase() = goToPhrase(_activePhraseIndex.value - 1)
+
+    /** Appends a new phrase - a single default bar, [QueueMode.LOOP] - after the current last phrase and
+     * jumps to it. Unlike [addBarToQueue] (which copies the active bar, since neighboring bars
+     * within a phrase are often variations of each other), a new phrase deliberately starts fresh rather
+     * than copying the active phrase's own bars - a new song-form section is a different thing, not a
+     * variation of the one you were just on. This is also the single always-visible entry point
+     * that makes every other phrase-management control appear in the first place (see
+     * `BeatsPerBarControls`'s "+phrase" affordance) - before this is ever called, [phrases] holds exactly
+     * one entry and nothing about phrases is visible on screen.
+     */
+    fun addPhrase() {
+        val phrases = _phrases.value
+        _phrases.value = phrases + Phrase()
+        settings?.phrases = _phrases.value
+        goToPhrase(phrases.size)
+    }
+
+    /**
+     * Removes a specific phrase - a no-op if it's the only one left (phrases, like bars, can never be
+     * empty) or [index] is out of range. Mirrors [removeBarFromQueue]'s behavior one level up:
+     * removing a phrase *other* than the active one keeps the same one active (adjusting for the
+     * shift); removing the active phrase itself lands on whichever phrase now occupies its old slot,
+     * clamped to the new last phrase if it was the end.
+     */
+    fun removePhrase(index: Int) {
+        val phrases = _phrases.value
+        if (phrases.size <= 1 || index !in phrases.indices) return
+        val updated = phrases.toMutableList().apply { removeAt(index) }
+        _phrases.value = updated
+        settings?.phrases = updated
+        val activeIndex = _activePhraseIndex.value
+        val newActiveIndex = if (index < activeIndex) activeIndex - 1 else activeIndex
+        goToPhrase(newActiveIndex.coerceAtMost(updated.size - 1))
+    }
+
+    /** Removes the currently-active phrase - see [removePhrase]. */
+    fun removeCurrentPhrase() = removePhrase(_activePhraseIndex.value)
+
+    /** Collapses back to a single default phrase and [QueueMode.LOOP] phrase mode - the phrase-level
+     * counterpart to [resetQueueToDefault], for starting a multi-phrase set over from scratch. Once
+     * this runs, [phrases] is back to a single entry and the phrase-management strip disappears again -
+     * symmetric with how [addPhrase] is what first made it appear. */
+    fun resetPhrasesToDefault() {
+        _phrases.value = listOf(Phrase())
+        settings?.phrases = _phrases.value
+        _phraseQueueMode.value = QueueMode.LOOP
+        settings?.phraseQueueMode = QueueMode.LOOP
+        goToPhrase(0)
+    }
+
+    fun setPhraseQueueMode(mode: QueueMode) {
+        _phraseQueueMode.value = mode
+        settings?.phraseQueueMode = mode
+    }
+
+    /** Sets a specific phrase's own [Phrase.action] - fired once via [MidiActionSender.fire]
+     * every time [goToPhrase] resolves to that phrase (see its own kdoc). Unlike [setMidiOverride]/
+     * [setAccentPattern], this doesn't need to sync into the "scratch" bar-queue state
+     * ([timeSignatureQueue]/[queueMode]) - [Phrase.action] is only ever read directly off
+     * [phrases] itself, at the moment [goToPhrase] navigates to it, not part of the live
+     * single-bar editing surface those other setters maintain. */
+    fun setPhraseAction(index: Int, action: MidiBeatAction) {
+        val phrases = _phrases.value
+        if (index !in phrases.indices) return
+        val updated = phrases.toMutableList().apply { this[index] = this[index].copy(action = action) }
+        _phrases.value = updated
+        settings?.phrases = updated
     }
 
     /** Finger down on HOLD: starts staging BPM/beats-per-bar changes. No-op if already staging
@@ -653,14 +929,22 @@ object MetronomeEngine {
         settings?.visualOffsetMs = clamped
     }
 
-    /** A negative value leads the click ahead of the true beat via genuine lookahead scheduling
-     * (see [startAudioScheduling]); zero/positive delays it, scheduled off the beat's own real
-     * timestamp (see [scheduleReactiveAudio]) rather than a naive relative `delay()` that could
-     * drift under scheduling pressure. */
+    /** A non-positive value (negative, or exactly zero) leads the click via genuine lookahead
+     * scheduling (see [startAudioScheduling]); a positive value delays it, scheduled off the
+     * beat's own real timestamp (see [scheduleReactiveAudio]) rather than a naive relative
+     * `delay()` that could drift under scheduling pressure. */
     fun setAudioOffsetMs(ms: Float) {
         val clamped = ms.coerceIn(-500f, 500f)
         _audioOffsetMs.value = clamped
         settings?.audioOffsetMs = clamped
+    }
+
+    /** See [beatZeroCountInNanos] for how this cap is actually used - 0 opts back out to today's
+     * instant-but-unled first beat. */
+    fun setFirstBeatCountInCapMs(ms: Float) {
+        val clamped = ms.coerceIn(0f, 500f)
+        _firstBeatCountInCapMs.value = clamped
+        settings?.firstBeatCountInCapMs = clamped
     }
 
     fun setCompactLandscape(enabled: Boolean) {
@@ -671,6 +955,11 @@ object MetronomeEngine {
     fun setSymbolicControlsEnabled(enabled: Boolean) {
         _symbolicControlsEnabled.value = enabled
         settings?.symbolicControlsEnabled = enabled
+    }
+
+    fun setUnitSymbolsEnabled(enabled: Boolean) {
+        _unitSymbolsEnabled.value = enabled
+        settings?.unitSymbolsEnabled = enabled
     }
 
     fun setPersistentModeEnabled(enabled: Boolean) {
@@ -727,6 +1016,13 @@ object MetronomeEngine {
         clickListenerForTesting = listener
     }
 
+    /** For on-device benchmarking only - thin pass-through to
+     * [StreamingClickEngine.setMixListenerForTesting], since [streamingClickEngine] itself isn't
+     * visible outside this class. */
+    fun setStreamingMixListenerForTesting(listener: ((totalBeats: Long, targetNanos: Long, actualNanos: Long) -> Unit)?) {
+        streamingClickEngine.setMixListenerForTesting(listener)
+    }
+
     /** The mute chance actually in effect [barsElapsed] bars into playback - the configured
      * target immediately, or ramped up linearly from 0 over [progressiveMuteRampBars] bars
      * when progressive start is on. Exposed (not private) so it's directly unit-testable without
@@ -753,7 +1049,7 @@ object MetronomeEngine {
             if (index !in queue.indices) return@update queue
             queue.toMutableList().apply { this[index] = this[index].copy(visualizerId = visualizer.id) }
         }
-        settings?.queue = _timeSignatureQueue.value
+        syncActivePhraseMemoryAndPersist()
         emitIdleFrame()
     }
 
@@ -783,6 +1079,26 @@ object MetronomeEngine {
      * be one. Passing `false` skips the priming and leaves [lastBeatNanos] stale, so the render
      * loop reads a saturated, fully-decayed/resting frame until the real tick-driven [onBeat] call
      * supplies the one correct flash.
+     *
+     * Actually beginning to tick ([beginTicking]) is itself deferred by [beatZeroCountInNanos] when
+     * that's non-zero - see that function's kdoc for why beat 0's *audio* specifically needs a
+     * real, if brief, head start to land as precisely as every later beat, and
+     * [firstBeatCountInCapMs] for the user-facing dial on how much of a pause that's worth.
+     * [_state]'s `isPlaying` flips true immediately either way (so the transport button responds
+     * the instant it's pressed), independent of whether the flash/first tick themselves wait.
+     *
+     * That deferred window feeds beat 0 through the *exact same* predictive-scheduling loop
+     * ([startAudioScheduling]/[refreshPredictedSchedule]) every later beat already uses, via a
+     * synthetic [lastBeatNanos] that makes "beat 0 is due" land precisely [beatZeroCountInNanos]
+     * nanoseconds from now - not a bespoke one-shot [StreamingClickEngine.scheduleBeat] call. An
+     * earlier version of this fix used a one-shot call and measurably under-performed this: on
+     * real hardware, steady-state beats (already going through the polling loop) carry their own
+     * consistent baseline placement error - real, device-specific buffer/HAL behavior this
+     * benchmark doesn't otherwise correct for - and a hand-rolled parallel computation reproduced
+     * that same baseline *plus* its own extra error on top, rather than matching it. Reusing the
+     * identical mechanism (same arithmetic, same repeated refinement right up to the deadline)
+     * means beat 0 inherits the same baseline as every other beat instead of a second, larger one -
+     * see `docs/timing-accuracy-benchmark.md`'s results table for the measured before/after.
      */
     fun start(primeVisualFlash: Boolean = true) {
         if (_state.value.isPlaying && renderJob?.isActive == true) return
@@ -791,16 +1107,94 @@ object MetronomeEngine {
         barsElapsedSincePlay = 0
         synchronized(audioResolutionLock) { resolvedBeatAudioCache.clear() }
         goToQueueBar(0)
+        usingStreamingClickEngine = streamingClickEngine.start(audioWriterScope)
+        // A no-op after the first successful session (see StreamingClickEngine.start's own
+        // kdoc) - stop() below no longer tears the engine down, so this just re-confirms it's
+        // still alive rather than paying warm-up again on every play press.
+        streamingClickEngine.resetSchedule()
+
+        countInJob?.cancel()
+        val countInNanos = beatZeroCountInNanos(primeVisualFlash)
+        if (countInNanos <= 0L) {
+            beginTicking(primeVisualFlash)
+            return
+        }
+        _state.update { it.copy(isPlaying = true) }
+        val intervalNanos = (60_000_000_000.0 / _state.value.bpm).toLong()
+        lastBeatNanos = System.nanoTime() + countInNanos - intervalNanos
+        startAudioScheduling()
+        countInJob = clockScope.launch {
+            delay(countInNanos / 1_000_000)
+            beginTicking(primeVisualFlash = true)
+        }
+    }
+
+    /** The actual "make it tick" half of [start] - [primeVisualFlash]'s flash/[lastBeatNanos]
+     * reset, then handing off to [clock]/[startRenderLoop]/[startAudioScheduling]. Split out so
+     * [start] can defer calling this by [beatZeroCountInNanos] without duplicating any of it. */
+    private fun beginTicking(primeVisualFlash: Boolean) {
+        countInJob = null
         if (primeVisualFlash) {
             lastBeatNanos = System.nanoTime()
             _state.update { it.copy(isPlaying = true, beatIndex = 0, phase = 0f, isAccent = true) }
         } else {
             _state.update { it.copy(isPlaying = true) }
         }
-        usingStreamingClickEngine = streamingClickEngine.start(audioWriterScope)
         clock.start(clockScope, _state.value.bpm, ::onBeat)
         startRenderLoop()
         startAudioScheduling()
+    }
+
+    /**
+     * How long [start] should hold beat 0 back, in nanoseconds - 0 for "don't, fire instantly"
+     * (today's behavior: the flash and the real first [onBeat] land within microseconds of each
+     * other, per [InternalClockSource]'s documented instant-first-tick behavior, but beat 0's
+     * *audio* has no equivalent lead: [onBeat] resolves and schedules it reactively, with none of
+     * the advance notice [startAudioScheduling]'s predictive loop gives beat 1 onward - a
+     * structural gap, not a bug in any one function, confirmed by tracing the frame math in
+     * [StreamingClickEngine.mixPendingBeatIfDue]: an already-past target there clamps to "the
+     * earliest available frame," which is *not* "now," it's already
+     * [StreamingClickEngine.leadMarginNanos] in the future, because the writer keeps its buffer
+     * that far ahead of real playback).
+     *
+     * The only way to give beat 0 genuine lead is to defer its own nominal instant - this
+     * function's return value - long enough that [start] can feed it through the *same*
+     * [startAudioScheduling]/[refreshPredictedSchedule] polling loop every later beat already
+     * uses (via a synthetic [lastBeatNanos] - see [start]'s own kdoc for why that, rather than a
+     * one-shot [StreamingClickEngine.scheduleBeat] push, is what actually closes the gap on real
+     * hardware). Bounded by three things, the smallest wins: the actual lead+offset this session needs
+     * ([StreamingClickEngine.calibratedLeadMarginNanos] plus the configured [audioOffsetMs]'s own
+     * magnitude - the *calibrated* margin, not the raw buffer estimate, since research and this
+     * project's own measurement agree the raw estimate alone under-reports real hardware lead - see
+     * `docs/timing-accuracy-benchmark.md`),
+     * [firstBeatCountInCapMs] (the user's own tolerance for a pause before playback visibly
+     * starts), and [MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION] of the current beat interval (so the
+     * pause never reads as disproportionate to the tempo itself, the same guard
+     * [startAudioScheduling] already applies to its own margin). Zero whenever there's nothing to
+     * lead in the first place: no local "pressed play" instant to count in from
+     * ([primeVisualFlash] false - a MIDI-driven start), the streaming engine isn't the active audio
+     * path this session, the click is off, the configured offset is a deliberate *lag* (`> 0`,
+     * strictly - a zero offset still wants the buffer's own lead margin, see
+     * [startAudioScheduling]'s own kdoc for why zero moved to this side of the boundary as of this
+     * round), or the user's own cap is 0.
+     *
+     * Exposed (not private) so this is directly unit-testable without driving a real beat loop -
+     * the same "pure decision logic, testable in isolation" precedent
+     * [rescaledBpmForUnitNoteValueChange]/[nextQueueIndexAfterBar] already establish.
+     */
+    fun beatZeroCountInNanos(primeVisualFlash: Boolean): Long {
+        if (!primeVisualFlash || !usingStreamingClickEngine || !_clickEnabled.value || usingMidiClock) return 0L
+        val offsetMs = _audioOffsetMs.value
+        if (offsetMs > 0f) return 0L
+        val capNanos = _firstBeatCountInCapMs.value * 1_000_000.0
+        if (capNanos <= 0.0) return 0L
+        val idealNanos = streamingClickEngine.calibratedLeadMarginNanos() + (-offsetMs * 1_000_000.0).toLong()
+        val intervalNanos = 60_000_000_000.0 / _state.value.bpm
+        return minOf(
+            idealNanos.toDouble(),
+            capNanos,
+            intervalNanos * MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION,
+        ).toLong().coerceAtLeast(0L)
     }
 
     /**
@@ -811,6 +1205,11 @@ object MetronomeEngine {
      */
     fun stop() {
         clock.stop()
+        // Cancels a pending beat-0 count-in (see start()/beatZeroCountInNanos) if stop() lands
+        // during that window - otherwise beginTicking() would still fire later and incorrectly
+        // resume playback after the user already pressed stop.
+        countInJob?.cancel()
+        countInJob = null
         // Flipped first, before cancelling anything - playClickSafely's own isPlaying check is
         // what actually stops an in-flight reactive delay (scheduleReactiveAudio's one-off
         // coroutine isn't tracked/cancelled the way renderJob/audioSchedulingJob are) or a
@@ -821,7 +1220,15 @@ object MetronomeEngine {
         renderJob = null
         audioSchedulingJob?.cancel()
         audioSchedulingJob = null
-        streamingClickEngine.stop()
+        // Not a real streamingClickEngine.stop() - the AudioTrack/writer stay warm (mixing
+        // silence) across sessions now, so the *next* start() doesn't have to re-pay
+        // AudioTrack.getTimestamp()'s warm-up wait. This just cancels anything scheduled-but-
+        // not-yet-mixed and resets the consumed/pending high-water marks so a future session's
+        // beat 0 isn't born already "consumed" by this session's totalBeats count - see
+        // StreamingClickEngine.resetSchedule's own kdoc. A genuine teardown only happens in
+        // release() or if the writer itself fails (see startAudioScheduling's hasFailedWarmup
+        // check).
+        streamingClickEngine.resetSchedule()
         synchronized(audioResolutionLock) { resolvedBeatAudioCache.clear() }
         pendingBeatsPerBarCommit?.let {
             applyBeatsPerBarImmediate(it)
@@ -869,8 +1276,13 @@ object MetronomeEngine {
         }
     }
 
+    /** Full teardown, including the streaming engine's `AudioTrack`/writer itself - [stop] alone
+     * deliberately leaves that warm (see its own kdoc), so this is the one place that actually
+     * releases it. Not called anywhere in production today (there's no process-lifecycle hook
+     * that would call it), but should stay correct regardless. */
     fun release() {
         stop()
+        streamingClickEngine.stop()
         clickPlayer.release()
     }
 
@@ -922,10 +1334,12 @@ object MetronomeEngine {
         _clickSpecs.value = ClickSound.entries.associateWith(ClickSpec::defaultFor)
         _visualOffsetMs.value = DEFAULT_VISUAL_OFFSET_MS
         _audioOffsetMs.value = DEFAULT_AUDIO_OFFSET_MS
+        _firstBeatCountInCapMs.value = DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS
         synchronized(audioResolutionLock) { resolvedBeatAudioCache.clear() }
         clickListenerForTesting = null
         _compactLandscape.value = false
         _symbolicControlsEnabled.value = false
+        _unitSymbolsEnabled.value = true
         _persistentModeEnabled.value = false
         _hasShownBpmHint.value = false
         _muteProbability.value = 0f
@@ -936,7 +1350,11 @@ object MetronomeEngine {
         _timeSignatureQueue.value = listOf(TimeSignature.DEFAULT)
         _queueIndex.value = 0
         _queueMode.value = QueueMode.LOOP
+        _phrases.value = listOf(Phrase())
+        _activePhraseIndex.value = 0
+        _phraseQueueMode.value = QueueMode.LOOP
         _queueOverlayEnabled.value = true
+        _phraseIndicatorEnabled.value = true
         _visualizerEnabled.value = true
         _holdMode.value = HoldMode.Off
         _stagedBpm.value = null
@@ -947,6 +1365,7 @@ object MetronomeEngine {
         lastTapNanos = 0L
         tapIntervalsMs.clear()
         MidiClockSource.resetForTesting()
+        MidiActionSender.resetForTesting()
     }
 
     private fun onBeat(timestampNanos: Long, measuredBpm: Float?) {
@@ -961,21 +1380,29 @@ object MetronomeEngine {
             // queue on bar 0, so this only fires once a bar has actually completed.
             if (totalBeats > 0) advanceQueueAtBarBoundary()
         }
-        val isAccent = _timeSignature.value.isAccented(beatIndex)
         val index = beatIndex
         val count = totalBeats
+        val beatType = beatTypeFor(index)
         _state.update {
             it.copy(
                 bpm = measuredBpm?.coerceIn(effectiveMinBpm(), effectiveMaxBpm()) ?: it.bpm,
                 beatIndex = index,
                 totalBeats = count,
-                isAccent = isAccent,
+                isAccent = beatType != ClickSound.REGULAR,
                 phase = 0f,
             )
         }
         if (usingMidiClock) {
             _clockStatus.value = ClockStatus.Midi(measuredBpm, MidiClockSource.activeSource?.name)
         }
+        // Independent of clickEnabled/mute-probability (see beatTypeFor's own kdoc) and of the
+        // audio-resolution branching below - MidiActionSender does its own enabled/action-type
+        // gating internally, and onBeat fires exactly once per real beat, so there's no cache or
+        // double-fire concern here the way resolveBeatAudio's caching exists to prevent. Resolves
+        // through resolveMidiActionForBeat (not the thinner fireForBeat(beatType, ...)) so a
+        // per-beat override (see TimeSignature.midiOverrides) wins over beatType's own type-level
+        // default, the same single resolution path the manual Trigger button also goes through.
+        MidiActionSender.fire(resolveMidiActionForBeat(index, knownSound = beatType), timestampNanos)
         // Advance the beat counters *before* resolving/dispatching this beat's audio, not after -
         // so a concurrent reader (the audio scheduling loop, running on its own dedicated thread -
         // see [startAudioScheduling]) never observes [totalBeats] still reading `count` while this
@@ -1028,27 +1455,54 @@ object MetronomeEngine {
     private fun resolveBeatAudio(totalBeatsForBeat: Long, beatIndexForBeat: Int): ResolvedBeatAudio {
         val probability = effectiveMuteProbability(barsElapsedSincePlay)
         val muted = probability > 0f && random.nextFloat() < probability
-        val sound = when {
-            !_clickEnabled.value || muted -> null
-            beatIndexForBeat == 0 -> ClickSound.BAR
-            _timeSignature.value.isAccented(beatIndexForBeat) -> ClickSound.ACCENT
-            else -> ClickSound.REGULAR
-        }
+        val sound = if (!_clickEnabled.value || muted) null else beatTypeFor(beatIndexForBeat)
         return ResolvedBeatAudio(totalBeatsForBeat, sound)
+    }
+
+    /** The [ClickSound] beat type at [beatIndexForBeat] in the *active* bar - see
+     * [TimeSignature.clickSoundAt], which this just delegates to for [_timeSignature]. Pure and
+     * independent of [_clickEnabled]/mute-probability - [resolveBeatAudio] layers that
+     * audio-specific gating on top for the audible click, while [onBeat] feeds this same, ungated
+     * value straight to [media.quaternion.qmetronome.midi.MidiActionSender] - MIDI beat-actions
+     * deliberately fire regardless of whether the audible click is muted/disabled, the same way the
+     * visual flash already does (see [effectiveMuteProbability]'s own kdoc: muting is scoped to
+     * "the audible click only"). Exposed (not private) so it's directly unit-testable without
+     * driving a real beat loop, the same precedent [rescaledBpmForUnitNoteValueChange]/
+     * [nextQueueIndexAfterBar] already establish. */
+    fun beatTypeFor(beatIndexForBeat: Int): ClickSound = _timeSignature.value.clickSoundAt(beatIndexForBeat)
+
+    /** The actually-configured [MidiBeatAction] for [beatIndexForBeat]: that beat's own override
+     * (see [TimeSignature.midiOverrideAt]) if one has been authored, else [beatTypeFor]'s resolved
+     * [ClickSound]'s own type-level default (see
+     * [media.quaternion.qmetronome.midi.MidiActionSender.actions]), else [MidiBeatAction]'s own
+     * NONE default if neither is configured. `onBeat` and the main screen's manual Trigger button
+     * both resolve through this single function, so beat-type MIDI config and per-beat overrides
+     * are one resolution path, not two independent ones a future
+     * reader has to reconcile. [knownSound] lets a caller that already computed [beatTypeFor] for
+     * this same beat (`onBeat` always has, for [BeatPhase.isAccent]) pass it straight in rather
+     * than this function silently recomputing it - one fewer [_timeSignature] read and enum
+     * `when` on `onBeat`'s own timing-critical clock thread. Passing nothing (the common case for
+     * the Trigger button, which doesn't already have one lying around) resolves it fresh, exactly
+     * as before this parameter existed. */
+    fun resolveMidiActionForBeat(beatIndexForBeat: Int, knownSound: ClickSound? = null): MidiBeatAction {
+        val sound = knownSound ?: beatTypeFor(beatIndexForBeat)
+        return _timeSignature.value.midiOverrideAt(beatIndexForBeat)
+            ?: MidiActionSender.actions.value[sound]
+            ?: MidiBeatAction()
     }
 
     /** [ClickPlayer]-fallback-only: fires (or schedules) [sound] for a beat whose real timestamp
      * ([beatTimestampNanos]) has already arrived - the reactive path used whenever the audio
-     * scheduling loop didn't already fire this beat early, which covers zero/positive
-     * [audioOffsetMs] as well as any beat the lookahead behavior is disabled for (click off,
-     * non-negative offset, or following an external MIDI clock - see [startAudioScheduling]). Not
-     * called at all when [usingStreamingClickEngine] is true - [onBeat] pushes straight to
-     * [StreamingClickEngine.scheduleBeat] instead, since sample-accurate placement no longer needs
-     * this function's careful "schedule off the absolute timestamp, not a naive relative delay"
-     * trick to avoid compounding latency. A negative offset reaching here (MIDI-follow mode, where
-     * lookahead is intentionally skipped) simply computes a target already in the past and fires
-     * immediately - documented no-op behavior, not a silent pretense of leading a clock this engine
-     * doesn't control. */
+     * scheduling loop didn't already fire this beat early, which covers positive [audioOffsetMs]
+     * as well as any beat the lookahead behavior is disabled for (click off, or following an
+     * external MIDI clock - see [startAudioScheduling]; a non-positive offset is normally caught by
+     * that loop first). Not called at all when [usingStreamingClickEngine] is true - [onBeat]
+     * pushes straight to [StreamingClickEngine.scheduleBeat] instead, since sample-accurate
+     * placement no longer needs this function's careful "schedule off the absolute timestamp, not
+     * a naive relative delay" trick to avoid compounding latency. A negative offset reaching here
+     * (MIDI-follow mode, where lookahead is intentionally skipped) simply computes a target already
+     * in the past and fires immediately - documented no-op behavior, not a silent pretense of
+     * leading a clock this engine doesn't control. */
     private fun scheduleReactiveAudio(sound: ClickSound, beatTimestampNanos: Long) {
         val fireAtNanos = beatTimestampNanos + (_audioOffsetMs.value * 1_000_000.0).toLong()
         val now = System.nanoTime()
@@ -1089,12 +1543,29 @@ object MetronomeEngine {
     }
 
     /**
-     * Keeps the audio-trigger path fed for beats not yet reached by [onBeat] - gated exactly as
-     * before this round: only while playing, [clickEnabled] is on, [audioOffsetMs] is negative,
-     * and timing isn't coming from an external MIDI clock (a followed clock is already reactive
-     * with nothing of its own to predict - [scheduleReactiveAudio] fires immediately there instead,
-     * a documented no-op rather than a silent pretense of leading a clock this engine doesn't
-     * control). What "feeding" means depends on [usingStreamingClickEngine]:
+     * Keeps the audio-trigger path fed for beats not yet reached by [onBeat] - gated on: only
+     * while playing, [clickEnabled] is on, [audioOffsetMs] is *not positive* (negative or exactly
+     * zero - see below for why zero belongs here now), and timing isn't coming from an external
+     * MIDI clock (a followed clock is already reactive with nothing of its own to predict -
+     * [scheduleReactiveAudio] fires immediately there instead, a documented no-op rather than a
+     * silent pretense of leading a clock this engine doesn't control). A *positive* offset (a
+     * deliberate lag, not a lead) stays reactive-only, unchanged - predictively resolving ahead of
+     * [onBeat]'s own beat-counter update would fire [clickListenerForTesting] before `totalBeats`
+     * advances, breaking the "click trails the real beat" contract a positive offset specifically
+     * promises (see the reactive-delay test in `MetronomeEngineTest.kt`).
+     *
+     * **Why zero belongs on the "lead-scheduling" side, not the "reactive" side, as of this
+     * round**: this condition used to be a strict `< 0f`, on the reasoning that a non-negative
+     * offset means "no pre-roll wanted, so nothing to lead." That conflated two different things -
+     * the user's own *perceptual* pre-roll preference ([audioOffsetMs] itself) with the streaming
+     * engine's *structural* need for some lead time to place any click precisely at all (see
+     * [StreamingClickEngine.mixPendingBeatIfDue]'s clamp-to-earliest-available behavior - a target
+     * that arrives without enough notice lands late by roughly the buffer's own margin regardless
+     * of what the configured offset is). Went unnoticed while the shipped default was negative
+     * (`-30ms`, always satisfying the old `< 0f` check); became a real, measured regression the
+     * moment [DEFAULT_AUDIO_OFFSET_MS] changed to `0f` (see `docs/timing-accuracy-benchmark.md`)
+     * - a fresh install would have silently lost lead-scheduling for *every* beat, not just beat 0.
+     * What "feeding" means depends on [usingStreamingClickEngine]:
      *  - **streaming**: refines the streaming engine's pending schedule for the *upcoming* beat
      *    ([refreshPredictedSchedule]), gated the same "only once we're within the offset's own lead
      *    window" way as the fallback path below - plus [StreamingClickEngine.leadMarginNanos]'s
@@ -1112,7 +1583,12 @@ object MetronomeEngine {
      *
      * Also polls [StreamingClickEngine.hasFailedWarmup] once per iteration regardless of gating -
      * the one place a mid-session fallback to [ClickPlayer] gets noticed and applied, since this
-     * loop already runs for as long as the engine is playing.
+     * loop already runs for as long as the engine is playing. Effectively a first-launch-only
+     * concern now that [StreamingClickEngine] stays warm across [stop]/[start] cycles instead of
+     * re-warming on every one: its internal readiness never resets to false again once a session
+     * has warmed up successfully, so a later session can only hit this path if the very first one
+     * already failed (or the writer itself dies - see [StreamingClickEngine.start]'s own liveness
+     * check for that recovery path, which happens on the *next* [start] instead).
      *
      * Polls in slices bounded by [AUDIO_LOOKAHEAD_POLL_NANOS] (matching
      * `MidiClockSender.RESYNC_POLL_NANOS`'s precedent) while gated, and every iteration delays a
@@ -1121,6 +1597,19 @@ object MetronomeEngine {
      * clears it, up to a full `|audioOffsetMs|` window later. Measured as the actual cause of
      * audible timing trouble at high BPM before this loop's first fix; still the reason every
      * branch here ends in a `delay()`.
+     *
+     * Cancels and relaunches on every call, deliberately - unlike [StreamingClickEngine]'s
+     * `AudioTrack`/writer (genuinely expensive to rebuild, hence kept warm across sessions), this
+     * coroutine owns no resource worth preserving, only control flow. Tried keeping it warm too
+     * (mirroring that fix), reasoning it would eliminate a same-shaped cold-dispatch tax - measured
+     * on real hardware instead to be a net *regression* (see `docs/timing-accuracy-benchmark.md`'s
+     * results table), because a warm-but-idle instance of this loop is asleep inside its own
+     * [AUDIO_LOOKAHEAD_IDLE_POLL_MS] `delay()` while gated off, and a `delay()` already in flight
+     * can't be woken early just because [start] flips `isPlaying` true - it only notices on its
+     * *next* wake, up to a full [AUDIO_LOOKAHEAD_IDLE_POLL_MS] later. A fresh relaunch has no such
+     * in-flight sleep to wait out: its first iteration runs immediately, already seeing the new
+     * state. Reverted for that reason - this is the opposite lifecycle from the writer, not a
+     * smaller version of the same fix.
      */
     private fun startAudioScheduling() {
         audioSchedulingJob?.cancel()
@@ -1132,7 +1621,7 @@ object MetronomeEngine {
                     usingStreamingClickEngine = false
                 }
                 val offsetMs = _audioOffsetMs.value
-                val gated = _state.value.isPlaying && _clickEnabled.value && offsetMs < 0f && !usingMidiClock
+                val gated = _state.value.isPlaying && _clickEnabled.value && offsetMs <= 0f && !usingMidiClock
                 if (!gated) {
                     delay(AUDIO_LOOKAHEAD_IDLE_POLL_MS)
                     continue
@@ -1154,7 +1643,7 @@ object MetronomeEngine {
                 val intervalNanos = 60_000_000_000.0 / _state.value.bpm
                 val leadMarginNanos = if (usingStreamingClickEngine) {
                     minOf(
-                        streamingClickEngine.leadMarginNanos().toDouble(),
+                        streamingClickEngine.calibratedLeadMarginNanos().toDouble(),
                         MAX_STREAMING_LEAD_MARGIN_NANOS.toDouble(),
                         intervalNanos * MAX_STREAMING_LEAD_MARGIN_BEAT_FRACTION,
                     )
@@ -1255,13 +1744,44 @@ object MetronomeEngine {
         }
     }
 
-    /** Bakes the ambient per-bar/per-beat background (see [QueueOverlay]) into an already-rendered
-     * frame - a no-op when there's nothing to indicate, so a single-entry queue (the common case)
-     * leaves every visualizer's own frame completely untouched. */
+    /** Bakes the ambient per-bar/per-beat background and/or the radial per-phrase indicator (see
+     * [QueueOverlay]) into an already-rendered frame - each independently a no-op when there's
+     * nothing to indicate or its own toggle is off, so the common case (single bar, single phrase)
+     * leaves every visualizer's own frame completely untouched. [_queueOverlayEnabled] and
+     * [_phraseIndicatorEnabled] are consumed here (not inside [QueueOverlay.apply] itself, which
+     * has no notion of either toggle) by feeding a size-0 [queue]/`phraseCount` when a toggle is
+     * off, reusing [QueueOverlay.apply]'s own per-section no-op guards rather than adding new
+     * ones - `emptyList()` specifically (not e.g. `queue.take(1)`), since it's a cached Kotlin
+     * singleton with no per-frame allocation, unlike building a new one-element list on this
+     * ~100fps render path every time a toggle happens to be off.
+     *
+     * [QueueOverlay.apply]'s `minBpm`/`maxBpm` are [queue]'s own observed bpm range, not the
+     * fixed [MIN_BPM]/[MAX_BPM] constants this used to pass - the same "scale relative to what's
+     * actually queued, not a boundary most bars never approach" fix `BarQueueDots`'s row height
+     * got in `MainScreen.kt` (see its own kdoc), for the same reason: any bar using the extended
+     * BPM range used to silently clip to the same min/max row thickness as every other
+     * extended-range bar, on this row's on-screen twin as well as the physical Glyph Matrix
+     * itself. [queue] (not the size-0 substitution above) is always non-empty - the bar queue can
+     * never be empty - so this is safe to compute unconditionally, even though it's only actually
+     * used when [showRows] is true. */
     private fun withQueueOverlay(rendered: IntArray, beatIndex: Int, phase: Float): IntArray {
         val queue = _timeSignatureQueue.value
-        if (queue.size <= 1 || !_queueOverlayEnabled.value) return rendered
-        return QueueOverlay.apply(rendered, matrixSize, queue, _queueIndex.value, beatIndex, phase, MIN_BPM, MAX_BPM)
+        val phrases = _phrases.value
+        val showRows = queue.size > 1 && _queueOverlayEnabled.value
+        val showPhraseIndicator = phrases.size > 1 && _phraseIndicatorEnabled.value
+        if (!showRows && !showPhraseIndicator) return rendered
+        return QueueOverlay.apply(
+            rendered,
+            matrixSize,
+            if (showRows) queue else emptyList(),
+            _queueIndex.value,
+            beatIndex,
+            phase,
+            minBpm = queue.minOf { it.bpm },
+            maxBpm = queue.maxOf { it.bpm },
+            phraseCount = if (showPhraseIndicator) phrases.size else 1,
+            activePhraseIndex = _activePhraseIndex.value,
+        )
     }
 
     private const val TAG = "MetronomeEngine"

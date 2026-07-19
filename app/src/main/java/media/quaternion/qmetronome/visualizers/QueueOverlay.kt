@@ -1,8 +1,10 @@
 package media.quaternion.qmetronome.visualizers
 
 import media.quaternion.qmetronome.engine.TimeSignature
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
  * An ambient "which bar, which beat" background baked directly into the Glyph Matrix frame,
@@ -23,8 +25,12 @@ import kotlin.math.roundToInt
  * beats across, the way a line of notation reads).
  *
  * A row's *thickness* - and therefore the size of every tick drawn in it - scales with that bar's
- * own tempo (faster reads thicker/bigger, matching the on-screen bar row's own tempo axis). This
- * is a deliberate, static property of the bar, not tied to the live beat animation - the earlier
+ * own tempo relative to [minBpm]/[maxBpm] (faster reads thicker/bigger, matching the on-screen bar
+ * row's own tempo axis) - the caller passes the *queue's own* observed bpm range, not a fixed
+ * absolute one, so a bar's row is always sized relative to what's actually queued next to it
+ * rather than silently clipping at some boundary most bars never approach (e.g. the extended BPM
+ * range's own 0.1-12000 span). This is a deliberate, static property of the bar, not tied to the
+ * live beat animation - the earlier
  * version only conveyed tempo through the active tick's transient brightness pulse, which decays
  * over a fixed fraction of *each beat's own duration* regardless of bpm: sampled at a fixed frame
  * rate, a fast bar's pulse is almost always caught already-decayed (it has so little of *this*
@@ -44,6 +50,17 @@ import kotlin.math.roundToInt
  * candidate pixel is individually checked against a conservative inner circle
  * ([USABLE_RADIUS_FRACTION] of the nominal radius) before being touched, since row/tick content
  * spans the whole matrix and there's no single safe baseline to round inward from.
+ *
+ * [phraseCount]/[activePhraseIndex] additionally draw a small radial dot per phrase around the
+ * matrix's outer rim (just outside the per-bar-row content's own [USABLE_RADIUS_FRACTION], still
+ * inside the SDK's circular mask) when there's more than one phrase - independent of the per-bar
+ * rows above: a single-bar active phrase (`queue.size <= 1`) still gets its radial dots drawn if
+ * multiple phrases exist, and a multi-bar phrase still gets its rows drawn even with only one
+ * phrase. Toggled independently by the caller (see
+ * [media.quaternion.qmetronome.engine.MetronomeEngine.phraseIndicatorEnabled]) the same way
+ * [media.quaternion.qmetronome.engine.MetronomeEngine.queueOverlayEnabled] already gates the
+ * per-bar rows - a caller with the toggle off simply passes `phraseCount = 1` regardless of the
+ * real count, reusing this function's own no-op guard rather than adding a second one.
  */
 object QueueOverlay {
 
@@ -56,52 +73,77 @@ object QueueOverlay {
         phase: Float,
         minBpm: Float,
         maxBpm: Float,
+        phraseCount: Int = 1,
+        activePhraseIndex: Int = 0,
     ): IntArray {
-        if (queue.size <= 1) return frame
+        if (queue.size <= 1 && phraseCount <= 1) return frame
 
         val canvas = GlyphCanvas(matrixSize, initial = frame)
         val center = canvas.center
         val usableRadius = matrixSize / 2f * USABLE_RADIUS_FRACTION
-        val startY = center - usableRadius
-        val totalHeight = usableRadius * 2f
-        val leftX = center - usableRadius
-        val rightX = center + usableRadius
 
-        // Row thickness is weighted, not a raw fraction, so even the slowest bar in the queue
-        // still gets a visibly non-zero row rather than shrinking toward nothing.
-        val weights = queue.map { bar ->
-            val tempoFraction = ((bar.bpm - minBpm) / (maxBpm - minBpm).coerceAtLeast(1f)).coerceIn(0f, 1f)
-            MIN_ROW_WEIGHT + (1f - MIN_ROW_WEIGHT) * tempoFraction
-        }
-        val totalWeight = weights.sum()
-        val clampedActive = activeIndex.coerceIn(0, queue.lastIndex)
+        if (queue.size > 1) {
+            val startY = center - usableRadius
+            val totalHeight = usableRadius * 2f
+            val leftX = center - usableRadius
+            val rightX = center + usableRadius
 
-        var cumulative = 0f
-        queue.forEachIndexed { slot, bar ->
-            val rowTop = startY + (cumulative / totalWeight) * totalHeight
-            cumulative += weights[slot]
-            val rowBottom = startY + (cumulative / totalWeight) * totalHeight
-            val rowHeight = rowBottom - rowTop
-            val inset = rowHeight * (1f - TICK_HEIGHT_FRACTION) / 2f
-            val topPx = (rowTop + inset).roundToInt()
-            val bottomPx = (rowBottom - inset).roundToInt().coerceAtLeast(topPx)
-            val tickHalfWidth = (matrixSize / 15).coerceIn(0, 1)
-            val isActiveBar = slot == clampedActive
+            // Row thickness is weighted, not a raw fraction, so even the slowest bar in the queue
+            // still gets a visibly non-zero row rather than shrinking toward nothing.
+            val weights = queue.map { bar ->
+                val tempoFraction = ((bar.bpm - minBpm) / (maxBpm - minBpm).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                MIN_ROW_WEIGHT + (1f - MIN_ROW_WEIGHT) * tempoFraction
+            }
+            val totalWeight = weights.sum()
+            val clampedActive = activeIndex.coerceIn(0, queue.lastIndex)
 
-            repeat(bar.beatCount) { beat ->
-                val tickX = (leftX + (beat + 0.5f) / bar.beatCount * (rightX - leftX)).roundToInt()
-                val brightness = if (isActiveBar && beat == beatIndex) {
-                    (BASE_TICK_BRIGHTNESS + (255 - BASE_TICK_BRIGHTNESS) * decayEase(phase)).roundToInt()
-                } else {
-                    BASE_TICK_BRIGHTNESS
-                }
-                for (y in topPx..bottomPx) {
-                    for (x in (tickX - tickHalfWidth)..(tickX + tickHalfWidth)) {
-                        if (hypot(x - center, y - center) <= usableRadius) {
-                            canvas.max(x, y, brightness)
+            var cumulative = 0f
+            queue.forEachIndexed { slot, bar ->
+                val rowTop = startY + (cumulative / totalWeight) * totalHeight
+                cumulative += weights[slot]
+                val rowBottom = startY + (cumulative / totalWeight) * totalHeight
+                val rowHeight = rowBottom - rowTop
+                val inset = rowHeight * (1f - TICK_HEIGHT_FRACTION) / 2f
+                val topPx = (rowTop + inset).roundToInt()
+                val bottomPx = (rowBottom - inset).roundToInt().coerceAtLeast(topPx)
+                val tickHalfWidth = (matrixSize / 15).coerceIn(0, 1)
+                val isActiveBar = slot == clampedActive
+
+                repeat(bar.beatCount) { beat ->
+                    val tickX = (leftX + (beat + 0.5f) / bar.beatCount * (rightX - leftX)).roundToInt()
+                    val brightness = if (isActiveBar && beat == beatIndex) {
+                        (BASE_TICK_BRIGHTNESS + (255 - BASE_TICK_BRIGHTNESS) * decayEase(phase)).roundToInt()
+                    } else {
+                        BASE_TICK_BRIGHTNESS
+                    }
+                    for (y in topPx..bottomPx) {
+                        for (x in (tickX - tickHalfWidth)..(tickX + tickHalfWidth)) {
+                            if (hypot(x - center, y - center) <= usableRadius) {
+                                canvas.max(x, y, brightness)
+                            }
                         }
                     }
                 }
+            }
+        }
+
+        if (phraseCount > 1) {
+            val dotRadius = (matrixSize / 30f).coerceAtLeast(1f)
+            // filledCircle anti-aliases half a pixel past its own radius (see GlyphCanvas), so the
+            // farthest a lit pixel can land from the matrix center is indicatorRadius + dotRadius +
+            // 0.5 - cap indicatorRadius so that stays at or inside matrixSize/2, the SDK's own
+            // circular mask (readme/requirements.md's phrase-indicator requirement), rather than
+            // trusting PHRASE_INDICATOR_RADIUS_FRACTION alone, which spills past it at small matrix
+            // sizes where dotRadius's 1px floor is proportionally larger.
+            val indicatorRadius = (matrixSize / 2f * PHRASE_INDICATOR_RADIUS_FRACTION)
+                .coerceAtMost(matrixSize / 2f - dotRadius - 0.5f)
+            val clampedActivePhrase = activePhraseIndex.coerceIn(0, phraseCount - 1)
+            repeat(phraseCount) { i ->
+                val angle = Math.toRadians(-90.0 + i * 360.0 / phraseCount)
+                val x = center + indicatorRadius * cos(angle).toFloat()
+                val y = center + indicatorRadius * sin(angle).toFloat()
+                val brightness = if (i == clampedActivePhrase) 255 else BASE_TICK_BRIGHTNESS
+                canvas.filledCircle(x, y, dotRadius, brightness)
             }
         }
 
@@ -109,6 +151,7 @@ object QueueOverlay {
     }
 
     private const val USABLE_RADIUS_FRACTION = 0.85f
+    private const val PHRASE_INDICATOR_RADIUS_FRACTION = 0.95f
     private const val MIN_ROW_WEIGHT = 0.4f
     private const val TICK_HEIGHT_FRACTION = 0.7f
     private const val BASE_TICK_BRIGHTNESS = 70

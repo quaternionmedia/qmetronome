@@ -52,6 +52,14 @@ docs/images/generated/videos/*
 !docs/images/generated/screenshots/preview-long-press-settings.png
 !docs/images/generated/screenshots/compact-landscape-layout.png
 !docs/images/generated/screenshots/symbol-only-controls.png
+!docs/images/generated/screenshots/marking-beat-accents.png
+!docs/images/generated/screenshots/midi-actions.png
+!docs/images/generated/screenshots/beat-overrides.png
+!docs/images/generated/screenshots/phrase-actions.png
+!docs/images/generated/screenshots/trigger-button.png
+!docs/images/generated/screenshots/phrase-queue-management.png
+!docs/images/generated/screenshots/phrase-queue-mode-cycling.png
+!docs/images/generated/screenshots/unit-symbols.png
 !docs/images/generated/videos/bpm-drag-scrub.gif
 !docs/images/generated/videos/bpm-drag-scrub-boundary.gif
 !docs/images/generated/videos/bpm-unit-entry-dialog.gif
@@ -69,3 +77,9 @@ docs/images/generated/videos/*
 !docs/images/generated/videos/compact-landscape-layout.gif
 !docs/images/generated/videos/symbol-only-controls.gif
 !docs/images/generated/videos/app-running.gif
+!docs/images/generated/videos/phrase-queue-management.gif
+!docs/images/generated/videos/phrase-queue-mode-cycling.gif
+!docs/images/generated/videos/unit-symbols.gif
+!docs/images/generated/videos/beat-overrides.gif
+!docs/images/generated/videos/phrase-actions.gif
+!docs/images/generated/videos/trigger-button.gif

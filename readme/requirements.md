@@ -13,3 +13,8 @@
 - **MIDI clock sync** (virtual in-app-to-app, or USB) degrades gracefully on devices without MIDI
   support (`android.software.midi` is declared optional in the manifest). USB MIDI additionally
   needs a device with USB host/OTG support.
+- **The Glyph Matrix (and its on-screen preview) must visually represent which phrase is active
+  whenever more than one phrase is queued** — a hard requirement, not optional polish, since the
+  physical Glyph hardware has no other on-device way to show phrase position short of opening the
+  app's own UI. Met by `QueueOverlay`'s radial per-phrase indicator (a small dot per phrase around
+  the matrix's outer rim); independently toggleable, on by default.

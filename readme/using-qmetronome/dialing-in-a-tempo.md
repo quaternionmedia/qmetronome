@@ -14,6 +14,13 @@ committing to a downbeat. The one exception is HOLD: latch it (below) and tappin
 than once both commits the tapped value *and* starts playback immediately, at the current time
 signature - a deliberate "count it in and go" gesture for starting a song cold.
 
+If MIDI Actions is also turned on (Settings → MIDI Actions), latching HOLD repurposes TAP
+differently: it swaps to a lightning-bolt icon and fires whatever MIDI action is configured for the
+current beat instead of tapping tempo, without starting playback or dropping the latch - tap it as
+many times as you like to test a MIDI setup, then a later tap on HOLD unlatches as usual. Reusing
+TAP this way, rather than adding a permanent fourth button next to TAP/PLAY/HOLD, keeps that row's
+three-button symmetry intact.
+
 Need more precision than your thumb can tap? Press and drag the BPM number left or right for
 continuous fine adjustment, or long-press it to type an exact value. That same long-press dialog
 is unit-aware: chips switch between BPM (1–400, or 0.1–12000 with Extended range on), BPH, and BPS

@@ -32,7 +32,7 @@ enum class TutorialCategory(val displayName: String) {
     TEMPO("Tempo"),
     TIME_SIGNATURE("Time Signature"),
     BAR_QUEUE("Bar Queue"),
-    MIDI("MIDI Clock"),
+    MIDI("MIDI"),
     GLYPH_TOY("Glyph Matrix"),
     SETTINGS("Settings & Layout"),
 }
@@ -127,6 +127,33 @@ object TutorialTopics {
             hasVideo = true,
         ),
         TutorialTopic(
+            id = "phrase-queue-management",
+            title = "Group bars into phrases",
+            description = "Below the bar queue, a small icon adds a phrase - a song-form section " +
+                "(\"Verse\", \"Chorus\") with its own full bar queue. Invisible until you add a " +
+                "second phrase; tap a phrase to jump to it, long-press to remove it.",
+            category = TutorialCategory.BAR_QUEUE,
+            hasVideo = true,
+        ),
+        TutorialTopic(
+            id = "phrase-queue-mode-cycling",
+            title = "Choose how phrases advance",
+            description = "Once a second phrase exists, tap the phrase mode icon to cycle Loop, " +
+                "Once, and Manual - the same three modes the bar queue uses, one level up, " +
+                "governing how playback flows from one phrase into the next.",
+            category = TutorialCategory.BAR_QUEUE,
+            hasVideo = true,
+        ),
+        TutorialTopic(
+            id = "marking-beat-accents",
+            title = "Mark a beat as accented",
+            description = "Long-press the beats-per-bar number to open time signature entry, " +
+                "then tap any beat's chip to cycle it through Accent, Strong Accent, Custom, and " +
+                "back to unmarked. These are the same beat types the audible click and MIDI " +
+                "Actions can each be tuned per-beat for.",
+            category = TutorialCategory.TIME_SIGNATURE,
+        ),
+        TutorialTopic(
             id = "settings-jump-to-unit",
             title = "Jump straight to BPM/BPH/BPS",
             description = "In Settings, tap a unit chip to jump the live tempo straight into that " +
@@ -141,6 +168,45 @@ object TutorialTopics {
                 "most locked-in beat. Organic lets a followed clock's own natural timing " +
                 "variance through unfiltered. Only affects clock sent to other apps/gear, not " +
                 "this app's own click or flash.",
+            category = TutorialCategory.MIDI,
+            hasVideo = true,
+        ),
+        TutorialTopic(
+            id = "midi-actions",
+            title = "Send MIDI notes or CC per beat type",
+            description = "In Settings -> MIDI Actions, turn on beat actions and pick Note or CC " +
+                "for any beat type (Bar, Beat, Accent, Strong Accent, Custom) - sent over the " +
+                "same virtual/USB connections \"Send clock\" already reaches, independent of " +
+                "whether the audible click is on.",
+            category = TutorialCategory.MIDI,
+        ),
+        TutorialTopic(
+            id = "beat-overrides",
+            title = "Give one beat its own MIDI action",
+            description = "In Settings -> Beat Overrides, browse to any phrase and bar (dot " +
+                "pickers, same as the main screen's own queues), step to any beat within it, and " +
+                "assign that exact beat its own MIDI action, overriding its type's default for " +
+                "that beat only.",
+            category = TutorialCategory.MIDI,
+            hasVideo = true,
+        ),
+        TutorialTopic(
+            id = "phrase-actions",
+            title = "Give a phrase its own MIDI action",
+            description = "In Settings -> Phrase Actions, pick any phrase and assign it its " +
+                "own MIDI action, fired once whenever you jump to that phrase - tapping its dot " +
+                "on the main screen, or arriving there automatically as the queue advances.",
+            category = TutorialCategory.MIDI,
+            hasVideo = true,
+        ),
+        TutorialTopic(
+            id = "trigger-button",
+            title = "Manually trigger a beat's MIDI action",
+            description = "Once MIDI Actions is turned on, latch HOLD (long-press or double-tap " +
+                "it) and TAP switches from tap-tempo to a lightning-bolt Trigger button - tap it " +
+                "to fire whatever's actually configured for the engine's live current beat " +
+                "position, for one-shot testing or hand-triggering gear/lights on cue, without " +
+                "starting playback or leaving the latch.",
             category = TutorialCategory.MIDI,
             hasVideo = true,
         ),
@@ -182,6 +248,15 @@ object TutorialTopics {
             description = "In Settings -> Layout, enable Symbol-only controls to drop text " +
                 "labels from the main screen's tempo/transport controls in favor of icons and " +
                 "dots.",
+            category = TutorialCategory.SETTINGS,
+            hasVideo = true,
+        ),
+        TutorialTopic(
+            id = "unit-symbols",
+            title = "Unit symbols",
+            description = "In Settings -> Layout, Unit symbols (on by default) shows a small mark " +
+                "next to BPM, beat type, bar, and phrase controls, naming what each one is " +
+                "at a glance. Turn off for a cleaner, symbol-free look.",
             category = TutorialCategory.SETTINGS,
             hasVideo = true,
         ),

@@ -286,6 +286,17 @@ There are two release tracks with different bars:
       round, instead of living as a second, overlapping narrative of the same
       debugging thread. [`docs/README.md`](README.md) is the new top-level
       index tying every doc to its corresponding ADR.
+- [x] **Beat Overrides, Phrase Actions, Trigger, and bar/phrase proportional scaling**:
+      README's "Using qMetronome" → "Staying in sync with other gear" covers overriding one
+      beat/phrase and the manual Trigger action as narrative; the Glossary's `MidiActionSender`/
+      `HelpScreen` entries cover the same ground by class name, including the one MIDI category
+      whose five topics needed `HelpScreen` restructured to demo them live rather than a shared
+      control. `governance/qm/adr/DRAFT-per-beat-and-phrase-midi-overrides.md` covers the design
+      rationale (the override-layering model, and reusing TAP instead of a fourth transport
+      button). All three MIDI topics this round added now have `docs/user-guide/` video coverage,
+      not just a static screenshot - the same bar as `bar-queue-management`/`phrase-queue-
+      management`, which the earlier per-beat-type MIDI actions round didn't extend to since
+      they didn't exist yet.
 
 ## Repository Governance
 
@@ -683,3 +694,129 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       profiler if available) over a few minutes of continuous playback and
       confirm nothing suggests a thread pegged at 100% CPU - the busy-spin
       bug's other symptom besides audible jitter.
+- [ ] **v0.0.28 first-beat lag/catch-up, fixed by keeping the streaming click engine warm**:
+      reported as "substantial lag in the first beat followed by what seems like a
+      catchup, especially noticeable when trying to line up with an existing tempo."
+      Root cause: `StreamingClickEngine` was torn down and rebuilt on every single
+      play/stop toggle, re-paying `AudioTrack.getTimestamp()`'s warm-up wait (and, on
+      real hardware, real HAL/buffer settling time Robolectric can't model) every time,
+      not just once per app session - most commonly triggered by the Glyph Toy's own
+      lock/unlock-stops-playback behavior (persistent mode off) mid-practice-session, not
+      just a cold app launch. With the click on at a moderate tempo, toggle play/stop (or
+      lock/unlock the phone via the Glyph Toy) several times in a row and confirm the
+      first click of each *subsequent* session lands as promptly as later beats, not with
+      the previously-reported lag/catch-up. Compare specifically against the very first
+      play after a fresh install/launch, which is still expected to pay a one-time
+      warm-up cost - only *repeated* sessions should now feel instant.
+- [ ] **v0.0.28 no stale click after pressing stop**: press stop immediately after a
+      beat's predictive schedule would have just landed (timing is inexact - repeat
+      several times to catch it) and confirm no click sounds after the press. The
+      streaming engine's `AudioTrack`/writer now keep running (mixing silence) between
+      sessions instead of being torn down, so this specifically guards against a
+      schedule that was already pending at the moment of stop still audibly firing.
+- [ ] **v0.0.28 long idle-then-resume session**: leave the app open (or backgrounded,
+      persistent mode off) for several minutes without playing, then press play and
+      confirm the first beat still lands promptly - guards against the writer having
+      silently died while idle with nothing to catch it (the one scenario that still
+      forces a real rebuild - see `StreamingClickEngine.start()`'s liveness check).
+- [ ] **v0.0.29 first-beat count-in (Gap B follow-up) - target met**: reported that the
+      warm-keep fix above wasn't sufficient on its own - beat 0 structurally has no
+      lead-scheduling window the way every later beat does, traced and confirmed in
+      `docs/timing-accuracy-benchmark.md`. Fixed with a small, user-tunable, bounded pause
+      (Settings → Audio timing offset → "First beat count-in," default 100ms cap) that
+      gives beat 0's audio the same genuine lead every other beat gets, at the cost of a
+      brief delay before the very first press's flash/click. Two follow-up hypotheses for
+      the initial ~31-36ms residual (routing beat 0 through the same polling loop
+      steady-state beats use; keeping that loop's own coroutine warm across sessions) were
+      tried and measured the same day - one a no-op, one a measured regression, reverted.
+      A round of research into how other systems solve this (Web Audio's lookahead
+      scheduler, Android's AAudio/Oboe guidance, professional metronome apps - full
+      citations in `docs/timing-accuracy-benchmark.md`) led to the actual fix: a
+      self-calibrating lead margin (`LeadMarginCalibrator`) surfaced, via a temporary
+      diagnostic, that `AudioTrack.getMinBufferSize()` was sizing this engine's buffer at
+      ~120ms on the test device - two orders of magnitude larger than a real low-latency
+      burst, and large enough to silently route it off AudioFlinger's fast mixer path
+      despite `PERFORMANCE_MODE_LOW_LATENCY` being set. Sizing the buffer from
+      `AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER` instead (`StreamingClickEngine.
+      configureFromDevice`) dropped steady-state placement error ~3.6x (47ms → 13ms) and
+      beat 0's excess to **~2ms** (Nothing A024, SDK 36, 2026-07-09) - inside the doc's
+      ≤10ms target, close to its ≤5ms stretch goal. Remaining manual check: confirm the
+      count-in's pause is barely perceptible at the default cap, and that cap=0 still
+      restores the exact old instant-but-unled behavior for comparison.
+- [ ] **v0.0.28 audio/visual offset defaults changed to 0ms - intentional, documented**:
+      `DEFAULT_VISUAL_OFFSET_MS` (was `-50f`) and `DEFAULT_AUDIO_OFFSET_MS` (was `-30f`) are
+      now true zero, not a hand-guessed per-device pre-roll that was never actually
+      calibrated against a given unit's real display/audio latency - see both constants'
+      own kdoc in `MetronomeSettings.kt` for the reasoning, still fully adjustable via
+      Settings. This exposed a real, previously-latent bug rather than being a simple
+      value swap: `MetronomeEngine.startAudioScheduling`'s predictive lookahead loop, and
+      `beatZeroCountInNanos`, both used to gate on the offset being *strictly negative*,
+      conflating "the user wants perceptual pre-roll" with "the streaming engine
+      structurally needs some lead time to place any click precisely" - true regardless of
+      the offset's sign. Went unnoticed while the shipped default was negative (always
+      satisfying the old check); would have silently disabled lead-scheduling for *every*
+      beat, not just beat 0, the moment the default became exactly `0`. Fixed alongside the
+      default change (`< 0f` → `<= 0f` in the scheduling gate, `>= 0f` → `> 0f` in
+      `beatZeroCountInNanos`) - positive (deliberate-lag) offsets are unaffected. Manual
+      check: confirm a fresh install (offset=0, default count-in cap) still lands the first
+      beat and steady-state clicks with the same precision as the ~2ms/~13ms measured above
+      - this should be identical, since 0 now takes the same code path negative offsets do.
+- [ ] **Beat accent marking**: long-press the beats-per-bar number, confirm beat 1 shows as a
+      fixed non-interactive "Bar" chip and every other beat cycles NONE → Accent → Strong Accent →
+      Custom → NONE on tap, and that Settings → Click's now-five tabs (Bar/Beat/Accent/Strong
+      Accent/Custom) each sound audibly distinct once marked and tuned.
+- [ ] **MIDI Actions, real hardware**: per `docs/usb-midi-test-plan.md` section 7 - Note and CC
+      messages per beat type, velocity-0 flooring, firing independent of Click/mute, and no
+      interference with simultaneous outgoing clock. Never run against anything but a fake
+      `MidiReceiver` in tests.
+- [ ] **Phrase-management strip, on-device feel**: with a single phrase (default), confirm the only
+      new chrome versus before this feature is one small icon at the end of the bar-queue row - tap
+      it and confirm the full phrase-management strip (reset/remove/dots/add/mode) appears below
+      without shifting the BPM/transport rows above it. Add a few phrases with different bar/tempo
+      content, confirm tap-to-jump always lands on the target phrase's first bar (never "where you
+      left off"), long-press removes a phrase, and removing back down to one phrase makes the whole
+      strip disappear again - not just go inert the way the bar queue's own controls do with a
+      single bar.
+- [ ] **Phrase Once-mode cascade, on-device**: build two phrases, set the first phrase's own
+      bar-queue mode to Once and the phrase-level mode to Loop, press play, and confirm playback
+      actually hands off from the first phrase to the second the moment the first phrase's bars run
+      out - this is real-timing engine behavior (unit-tested via `Thread.sleep`-based Robolectric
+      tests, not yet watched/heard on a real device).
+- [ ] **Hold-gated destructive controls**: with HOLD off, confirm the bar-queue and phrase-strip
+      reset/remove icons are absent (dots/add/mode-cycle stay visible); press-and-hold or latch
+      HOLD and confirm both icons appear at both levels, then disappear again once HOLD releases.
+- [ ] **Bigger time signature, on-screen fit**: confirm the enlarged beats-per-bar/note-value
+      numbers and steppers still fit comfortably next to the BPM display at both portrait and
+      compact-landscape layouts, on the smallest screen available to test with.
+- [ ] **Unit symbols toggle**: with the Settings → Layout "Unit symbols" switch on (default),
+      confirm the small bpm/beat-type/bar/phrase marks appear next to their respective
+      controls (main screen and the beats-per-bar accent-marking dialog); toggle off and confirm
+      every mark disappears with no layout shift. Beats-per-bar itself has no mark - three dots at
+      this size read as a stray dash, not "three dots" (removed for that reason).
+- [ ] **Beat Overrides across phrases/bars, real hardware**: per `docs/usb-midi-test-plan.md`
+      section 7.1 - browse to a specific phrase/bar via the dot pickers, step to a beat within it,
+      assign it a Note/CC override distinct from its type's own default, confirm playback sends the
+      override (not the type default) for that one beat and the type default for every other beat
+      of the same type. With a second bar/phrase queued, confirm an override set on a *non-active*
+      one stays silent until playback actually reaches it.
+- [ ] **Main screen Trigger action (TAP, once latched), real hardware**: per
+      `docs/usb-midi-test-plan.md` section 7.3 - with MIDI Actions on, latch HOLD and confirm TAP
+      switches to the lightning-bolt Trigger icon, fires whatever's configured for the engine's
+      current beat position both while stopped and while playing without dropping the latch, and
+      reverts to tap-tempo once the latch ends or MIDI Actions is turned off.
+- [ ] **Phrase dots as mini bar-stacks, on-screen**: with a phrase containing several bars of
+      different beat counts, confirm each phrase dot renders as a small vertical stack of
+      bar-segments (not one uniform block), each segment's width roughly tracking that bar's beat
+      count relative to its own phrase's bars - and that the phrase strip's own layout doesn't
+      shift as bars are added/removed within a phrase.
+- [ ] **Radial phrase indicator, real Glyph hardware**: with more than one phrase queued, confirm
+      a small dot per phrase appears around the physical Glyph Matrix's outer rim (and its
+      on-screen preview mirror), the active phrase's dot reading brighter than the others, and
+      that it's independently toggleable from the bar-queue background via Settings → Visualizer.
+      Check legibility specifically at higher phrase counts (6-8+) where dots may start crowding -
+      this is the practical ceiling the feature shipped acknowledging, not something engineered
+      around for a first pass.
+- [ ] **Phrase Actions, real hardware**: per `docs/usb-midi-test-plan.md` section 7.2 - pick a
+      specific phrase via its dot, assign it a Note/CC action, and confirm it fires exactly once each time you
+      jump to that phrase (tapping its dot, and via the automatic Once-mode cascade), including
+      re-entering the already-active phrase directly.

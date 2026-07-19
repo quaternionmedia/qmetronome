@@ -11,6 +11,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
@@ -97,9 +98,79 @@ class StreamingClickEngineTest {
     }
 
     @Test
+    fun `configureFromDevice does not throw, before or after start, and start still succeeds after it`() {
+        // Robolectric's AudioManager shadow may not report a real PROPERTY_OUTPUT_FRAMES_PER_BUFFER
+        // value - this only guards that the best-effort query path (see its own kdoc) never
+        // crashes and never blocks the engine from starting, on a device where it can't answer.
+        engine.configureFromDevice(RuntimeEnvironment.getApplication())
+        assertTrue(engine.start(scope))
+        engine.configureFromDevice(RuntimeEnvironment.getApplication())
+    }
+
+    @Test
+    fun `calibratedLeadMarginNanos equals leadMarginNanos before any beat has been mixed`() {
+        // No placement error has been observed yet (see LeadMarginCalibratorTest for the
+        // correction math itself) - the calibrated value should just be the raw estimate, both
+        // before and after start().
+        assertEquals(engine.leadMarginNanos(), engine.calibratedLeadMarginNanos())
+        engine.start(scope)
+        assertEquals(engine.leadMarginNanos(), engine.calibratedLeadMarginNanos())
+    }
+
+    @Test
     fun `leadMarginNanos returns to zero after stop`() {
         engine.start(scope)
         engine.stop()
         assertEquals(0L, engine.leadMarginNanos())
+    }
+
+    @Test
+    fun `resetSchedule before start is a harmless no-op`() {
+        engine.resetSchedule()
+    }
+
+    @Test
+    fun `a start-resetSchedule-start cycle does not rebuild - leadMarginNanos never drops to zero`() {
+        // Mirrors how MetronomeEngine now calls this between play/stop sessions (resetSchedule,
+        // not a real stop) - see MetronomeEngine.stop()'s own kdoc for why. Contrast with
+        // `leadMarginNanos returns to zero after stop` above, which still exercises the real
+        // teardown path via .stop() and is unaffected by this change.
+        engine.start(scope)
+        val marginAfterFirstStart = engine.leadMarginNanos()
+        assertTrue("expected a non-zero lead margin once running", marginAfterFirstStart > 0L)
+
+        engine.resetSchedule()
+        engine.scheduleBeat(0L, ClickSound.BAR, System.nanoTime())
+        engine.start(scope) // simulates the next session's start() - should be a no-op rebuild-wise
+
+        assertEquals(
+            "a second start() after resetSchedule (not a real stop) should not have rebuilt the track",
+            marginAfterFirstStart,
+            engine.leadMarginNanos(),
+        )
+    }
+
+    @Test
+    fun `a dead writer is detected and rebuilt on the next start, not trusted as still running`() {
+        // Simulates the writer coroutine dying mid-session (e.g. a real AudioTrack.write()
+        // failure) without going through engine.stop() - cancelling its own scope directly is the
+        // closest a test can get to that without faking a write() failure. Regression guard for
+        // the liveness check in start(): trusting a stale `track != null` alone here would leave
+        // the engine reporting "already running" forever with nothing ever mixed in again.
+        val deadScope = CoroutineScope(Dispatchers.Default)
+        engine.start(deadScope)
+        deadScope.cancel()
+
+        val freshScope = CoroutineScope(Dispatchers.Default)
+        try {
+            val started = engine.start(freshScope)
+            assertTrue("expected start() to recover from a dead writer by rebuilding", started)
+            assertTrue(
+                "expected a non-negative lead margin after rebuilding, got ${engine.leadMarginNanos()}",
+                engine.leadMarginNanos() >= 0L,
+            )
+        } finally {
+            freshScope.cancel()
+        }
     }
 }
