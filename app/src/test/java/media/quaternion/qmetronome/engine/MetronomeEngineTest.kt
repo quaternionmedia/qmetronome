@@ -1,5 +1,6 @@
 package media.quaternion.qmetronome.engine
 
+import media.quaternion.qmetronome.midi.MidiActionSender
 import media.quaternion.qmetronome.midi.MidiClockSource
 import media.quaternion.qmetronome.visualizers.GlyphVisualizer
 import media.quaternion.qmetronome.visualizers.VisualizerRegistry
@@ -863,6 +864,17 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `setPhraseIndicatorEnabled defaults to true and round-trips`() {
+        assertTrue(MetronomeEngine.phraseIndicatorEnabled.value)
+
+        MetronomeEngine.setPhraseIndicatorEnabled(false)
+        assertFalse(MetronomeEngine.phraseIndicatorEnabled.value)
+
+        MetronomeEngine.setPhraseIndicatorEnabled(true)
+        assertTrue(MetronomeEngine.phraseIndicatorEnabled.value)
+    }
+
+    @Test
     fun `setVisualizerEnabled defaults to true and round-trips independently of the queue overlay`() {
         assertTrue(MetronomeEngine.visualizerEnabled.value)
 
@@ -1088,6 +1100,95 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `beatTypeFor reads BAR for beat 0 regardless of any accent pattern`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.setAccentPattern(listOf(BeatAccent.CUSTOM, BeatAccent.NONE, BeatAccent.NONE, BeatAccent.NONE))
+
+        assertEquals(ClickSound.BAR, MetronomeEngine.beatTypeFor(0))
+    }
+
+    @Test
+    fun `beatTypeFor maps each BeatAccent tier to its matching ClickSound`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.setAccentPattern(
+            listOf(BeatAccent.NONE, BeatAccent.ACCENT, BeatAccent.STRONG_ACCENT, BeatAccent.CUSTOM),
+        )
+
+        assertEquals(ClickSound.ACCENT, MetronomeEngine.beatTypeFor(1))
+        assertEquals(ClickSound.STRONG_ACCENT, MetronomeEngine.beatTypeFor(2))
+        assertEquals(ClickSound.CUSTOM, MetronomeEngine.beatTypeFor(3))
+    }
+
+    @Test
+    fun `beatTypeFor reads REGULAR for a non-zero beat with no custom accent pattern`() {
+        MetronomeEngine.setBeatsPerBar(4)
+
+        assertEquals(ClickSound.REGULAR, MetronomeEngine.beatTypeFor(1))
+        assertEquals(ClickSound.REGULAR, MetronomeEngine.beatTypeFor(3))
+    }
+
+    @Test
+    fun `setAccentPattern always writes into whichever bar is currently active`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.addBarToQueue() // second entry, active
+
+        MetronomeEngine.setAccentPattern(listOf(BeatAccent.NONE, BeatAccent.ACCENT, BeatAccent.NONE, BeatAccent.NONE))
+
+        val queue = MetronomeEngine.timeSignatureQueue.value
+        assertEquals(null, queue[0].accentPattern)
+        assertEquals(BeatAccent.ACCENT, queue[1].accentPattern?.get(1))
+    }
+
+    @Test
+    fun `setMidiOverride always writes into whichever bar is currently active`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.addBarToQueue() // second entry, active
+        val override = MidiBeatAction(type = MidiActionType.NOTE, number = 72)
+
+        MetronomeEngine.setMidiOverride(1, override)
+
+        val queue = MetronomeEngine.timeSignatureQueue.value
+        assertEquals(null, queue[0].midiOverrides)
+        assertEquals(override, queue[1].midiOverrides?.get(1))
+    }
+
+    @Test
+    fun `setMidiOverride with a null action clears an existing override`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.setMidiOverride(1, MidiBeatAction(type = MidiActionType.NOTE, number = 72))
+
+        MetronomeEngine.setMidiOverride(1, null)
+
+        assertEquals(null, MetronomeEngine.timeSignature.value.midiOverrides)
+    }
+
+    @Test
+    fun `resolveMidiActionForBeat falls back to the beat type's own configured default when no override exists`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        val typeDefault = MidiBeatAction(type = MidiActionType.CC, number = 20)
+        MidiActionSender.setAction(ClickSound.REGULAR, typeDefault)
+
+        assertEquals(typeDefault, MetronomeEngine.resolveMidiActionForBeat(1))
+    }
+
+    @Test
+    fun `resolveMidiActionForBeat prefers a beat's own override over its type's configured default`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MidiActionSender.setAction(ClickSound.REGULAR, MidiBeatAction(type = MidiActionType.CC, number = 20))
+        val override = MidiBeatAction(type = MidiActionType.NOTE, number = 72, value = 110, durationMs = 15)
+        MetronomeEngine.setMidiOverride(1, override)
+
+        assertEquals(override, MetronomeEngine.resolveMidiActionForBeat(1))
+    }
+
+    @Test
+    fun `resolveMidiActionForBeat is NONE when neither an override nor a type default is configured`() {
+        MetronomeEngine.setBeatsPerBar(4)
+
+        assertEquals(MidiBeatAction(), MetronomeEngine.resolveMidiActionForBeat(1))
+    }
+
+    @Test
     fun `a multi-bar queue in LOOP mode actually advances during real playback`() {
         MetronomeEngine.setBeatsPerBar(1) // one beat per bar, so every beat is a bar boundary
         MetronomeEngine.addBarToQueue()
@@ -1107,6 +1208,188 @@ class MetronomeEngineTest {
             MetronomeEngine.state.value.totalBeats >= 1,
         )
         assertEquals(1, MetronomeEngine.queueIndex.value)
+    }
+
+    @Test
+    fun `addPhrase appends a fresh default phrase - not a copy of the active one - and jumps to it`() {
+        MetronomeEngine.setBeatsPerBar(5)
+
+        MetronomeEngine.addPhrase()
+
+        val phrases = MetronomeEngine.phrases.value
+        assertEquals(2, phrases.size)
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value)
+        assertEquals(4, phrases[1].bars[0].beatCount) // fresh default, not a copy of phrase 0's 5
+        assertEquals(5, phrases[0].bars[0].beatCount) // the phrase left behind is untouched
+    }
+
+    @Test
+    fun `goToPhrase loads the target phrase's own bars and always resets to its first bar`() {
+        MetronomeEngine.setBeatsPerBar(3)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.setBeatsPerBar(7)
+        MetronomeEngine.addBarToQueue() // phrase 1 (active) now has 2 bars; queueIndex == 1
+
+        MetronomeEngine.goToPhrase(0)
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value)
+        assertEquals(3, MetronomeEngine.state.value.beatsPerBar)
+        assertEquals(0, MetronomeEngine.queueIndex.value)
+
+        MetronomeEngine.goToPhrase(1)
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value)
+        // Always resets to bar 0 of the target phrase, even though phrase 1 was left on bar 1 - no
+        // "remember where I left off" memory.
+        assertEquals(0, MetronomeEngine.queueIndex.value)
+        assertEquals(7, MetronomeEngine.state.value.beatsPerBar)
+    }
+
+    @Test
+    fun `removePhrase keeps the same phrase active, adjusting the index for the shift`() {
+        MetronomeEngine.addPhrase() // phrase 1
+        MetronomeEngine.addPhrase() // phrase 2, active
+
+        MetronomeEngine.removePhrase(0)
+
+        assertEquals(2, MetronomeEngine.phrases.value.size)
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value) // shifted down from 2
+    }
+
+    @Test
+    fun `removePhrase is a no-op when only one phrase remains`() {
+        MetronomeEngine.removePhrase(0)
+        assertEquals(1, MetronomeEngine.phrases.value.size)
+    }
+
+    @Test
+    fun `resetPhrasesToDefault collapses back to a single default phrase in LOOP mode`() {
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.setPhraseQueueMode(MetronomeEngine.QueueMode.MANUAL)
+
+        MetronomeEngine.resetPhrasesToDefault()
+
+        assertEquals(1, MetronomeEngine.phrases.value.size)
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value)
+        assertEquals(MetronomeEngine.QueueMode.LOOP, MetronomeEngine.phraseQueueMode.value)
+    }
+
+    @Test
+    fun `nextPhrase and previousPhrase clamp rather than wrap`() {
+        MetronomeEngine.addPhrase()
+
+        MetronomeEngine.nextPhrase()
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value) // clamped, not wrapped past the last phrase
+
+        MetronomeEngine.previousPhrase()
+        MetronomeEngine.previousPhrase()
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value) // clamped at 0, not negative
+    }
+
+    @Test
+    fun `setPhraseQueueMode round-trips`() {
+        MetronomeEngine.setPhraseQueueMode(MetronomeEngine.QueueMode.ONCE)
+        assertEquals(MetronomeEngine.QueueMode.ONCE, MetronomeEngine.phraseQueueMode.value)
+    }
+
+    @Test
+    fun `start resets to bar 0 of whichever phrase is currently active, not phrase 0`() {
+        MetronomeEngine.addPhrase() // phrase 1, active
+        MetronomeEngine.setBeatsPerBar(6)
+        MetronomeEngine.addBarToQueue() // phrase 1 now has 2 bars; queueIndex == 1
+
+        MetronomeEngine.start()
+
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value)
+        assertEquals(0, MetronomeEngine.queueIndex.value)
+        assertEquals(6, MetronomeEngine.state.value.beatsPerBar)
+    }
+
+    @Test
+    fun `a 1-bar ONCE phrase cascades to the next phrase on every bar boundary`() {
+        // The phrase-boundary cascade trigger is deliberately "bar-level next is null AND this phrase's
+        // own mode is ONCE" with NO extra "more than one bar" guard - a 1-bar ONCE phrase is the
+        // simplest, most natural phrase shape (a whole section that's just one bar) and must cascade
+        // every single bar, not sit inert. See advanceQueueAtBarBoundary's own kdoc.
+        MetronomeEngine.setBeatsPerBar(1) // one beat per bar - every beat is a bar boundary
+        MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.ONCE)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.setPhraseQueueMode(MetronomeEngine.QueueMode.LOOP)
+        MetronomeEngine.goToPhrase(0)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat, keeps this quick
+
+        MetronomeEngine.start()
+        Thread.sleep(230) // past the first bar boundary (~150ms)
+
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value)
+    }
+
+    @Test
+    fun `a 1-bar LOOP phrase never cascades to another phrase`() {
+        MetronomeEngine.setBeatsPerBar(1)
+        MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.LOOP)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.goToPhrase(0)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM)
+
+        MetronomeEngine.start()
+        Thread.sleep(400) // several bar boundaries' worth
+
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value)
+    }
+
+    @Test
+    fun `a 1-bar MANUAL phrase never cascades to another phrase`() {
+        MetronomeEngine.setBeatsPerBar(1)
+        MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.MANUAL)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.goToPhrase(0)
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM)
+
+        MetronomeEngine.start()
+        Thread.sleep(400)
+
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value)
+    }
+
+    @Test
+    fun `a multi-bar LOOP phrase never cascades to another phrase - it has no 'finished' state`() {
+        MetronomeEngine.setBeatsPerBar(1)
+        // Fast tempo set before duplicating the bar - see the ONCE-phrase test's own comment for why
+        // setting it only on bar 0 afterward would leave bar 1 stalled at the slow 120bpm default.
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM)
+        MetronomeEngine.addBarToQueue() // phrase 0 now has 2 bars, both fast, LOOP mode (default)
+        MetronomeEngine.goToQueueBar(0)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.goToPhrase(0)
+
+        MetronomeEngine.start()
+        Thread.sleep(500) // several bar boundaries - should just loop within phrase 0's own 2 bars
+
+        assertEquals(0, MetronomeEngine.activePhraseIndex.value)
+    }
+
+    @Test
+    fun `a multi-bar ONCE phrase cascades to the next phrase once it reaches its last bar`() {
+        MetronomeEngine.setBeatsPerBar(1)
+        // Set the fast tempo *before* duplicating the bar, so both of phrase 0's bars inherit it -
+        // addBarToQueue() copies whichever bar is active *at that moment*, and a bar's bpm is its
+        // own (see TimeSignature's own bpm field) - setting it only on bar 0 afterward would leave
+        // bar 1 at the slow 120 bpm default, stalling the clock once the phrase advances to it.
+        MetronomeEngine.setBpm(MetronomeEngine.MAX_BPM) // 150ms/beat
+        MetronomeEngine.addBarToQueue() // phrase 0: 2 bars, both at MAX_BPM
+        MetronomeEngine.goToQueueBar(0)
+        MetronomeEngine.setQueueMode(MetronomeEngine.QueueMode.ONCE)
+        MetronomeEngine.addPhrase()
+        MetronomeEngine.setPhraseQueueMode(MetronomeEngine.QueueMode.LOOP)
+        MetronomeEngine.goToPhrase(0)
+
+        MetronomeEngine.start()
+        // beat 0 (t=0, no advance - start() guard), beat 1 (~150ms, bar 0->1 within phrase 0), beat 2
+        // (~300ms, phrase 0's bar 1 is both last-in-phrase and ONCE -> cascades to phrase 1). Land
+        // comfortably past that third boundary.
+        Thread.sleep(450)
+
+        assertEquals(1, MetronomeEngine.activePhraseIndex.value)
     }
 
     @Test

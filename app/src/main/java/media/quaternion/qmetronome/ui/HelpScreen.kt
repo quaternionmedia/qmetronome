@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import media.quaternion.qmetronome.engine.MetronomeEngine
+import media.quaternion.qmetronome.midi.MidiActionSender
 import media.quaternion.qmetronome.tutorial.TutorialCategory
 import media.quaternion.qmetronome.tutorial.TutorialTopic
 import media.quaternion.qmetronome.tutorial.TutorialTopics
@@ -52,6 +53,7 @@ fun HelpScreen(onDismiss: () -> Unit) {
     val beat by MetronomeEngine.state.collectAsState()
     val compactLandscape by MetronomeEngine.compactLandscape.collectAsState()
     val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
+    val midiActions by MidiActionSender.actions.collectAsState()
     val topicsByCategory = TutorialTopics.all.groupBy { it.category }
 
     Box(
@@ -89,7 +91,10 @@ fun HelpScreen(onDismiss: () -> Unit) {
                             val frame by MetronomeEngine.frame.collectAsState()
                             PreviewBox(previewSize = previewSizeFor(frame), frame = frame, onShowSettings = {}, modifier = Modifier.fillMaxWidth())
                         }
-                        TutorialCategory.MIDI -> ClockFeelChips()
+                        TutorialCategory.MIDI -> {
+                            ClockFeelChips()
+                            MidiActionTabs(midiActions)
+                        }
                         TutorialCategory.SETTINGS -> {
                             JumpToUnitChips()
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

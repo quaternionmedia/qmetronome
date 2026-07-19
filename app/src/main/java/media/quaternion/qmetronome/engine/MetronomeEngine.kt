@@ -2,6 +2,7 @@ package media.quaternion.qmetronome.engine
 
 import android.content.Context
 import android.util.Log
+import media.quaternion.qmetronome.midi.MidiActionSender
 import media.quaternion.qmetronome.midi.MidiClockSource
 import media.quaternion.qmetronome.visualizers.GlyphVisualizer
 import media.quaternion.qmetronome.visualizers.QueueOverlay
@@ -169,6 +170,14 @@ object MetronomeEngine {
     private val _symbolicControlsEnabled = MutableStateFlow(false)
     val symbolicControlsEnabled: StateFlow<Boolean> = _symbolicControlsEnabled.asStateFlow()
 
+    /** When on, a small secondary-colored unit-symbol mark (bpm/beats/beat-type/bar/phrase) is
+     * shown next to each control's own value - purely a subtle label, not a second set of
+     * controls. Separate from [symbolicControlsEnabled] (an unrelated toggle: text vs. icon-only
+     * transport controls) - conflating the two would confuse both. On by default, unlike most
+     * display toggles here, since the symbols are small/secondary enough not to need opt-in. */
+    private val _unitSymbolsEnabled = MutableStateFlow(true)
+    val unitSymbolsEnabled: StateFlow<Boolean> = _unitSymbolsEnabled.asStateFlow()
+
     /** See [MetronomeSettings.persistentModeEnabled] - watched by `QMetronomeApp` to start/stop
      * `PersistentPlaybackService`, and by `MetronomeGlyphService` to decide whether a Glyph Toy
      * unbind should stop playback. */
@@ -190,10 +199,32 @@ object MetronomeEngine {
     private val _queueMode = MutableStateFlow(QueueMode.LOOP)
     val queueMode: StateFlow<QueueMode> = _queueMode.asStateFlow()
 
+    /** The phrase queue - song-form sections, each carrying its own full bar queue (see [Phrase]).
+     * A single entry (today's default) behaves exactly like there being no phrase concept at all:
+     * [timeSignatureQueue]/[queueIndex]/[queueMode] always mirror `phrases[activePhraseIndex]` (kept in
+     * sync by every function that touches either "side" - see `syncActivePhraseMemory`/[goToPhrase]),
+     * so every existing bar-queue call site keeps working unmodified for that common case. */
+    private val _phrases = MutableStateFlow(listOf(Phrase()))
+    val phrases: StateFlow<List<Phrase>> = _phrases.asStateFlow()
+
+    private val _activePhraseIndex = MutableStateFlow(0)
+    val activePhraseIndex: StateFlow<Int> = _activePhraseIndex.asStateFlow()
+
+    /** Governs how *phrases* advance into each other, the same [QueueMode] concept as [queueMode]
+     * reused one level up - see `advanceQueueAtBarBoundary`'s phrase-boundary cascade. */
+    private val _phraseQueueMode = MutableStateFlow(QueueMode.LOOP)
+    val phraseQueueMode: StateFlow<QueueMode> = _phraseQueueMode.asStateFlow()
+
     /** Whether [QueueOverlay]'s ambient per-bar/per-beat background is drawn into the Glyph
      * frame at all - on by default, but purely cosmetic, so it's fully optional. */
     private val _queueOverlayEnabled = MutableStateFlow(true)
     val queueOverlayEnabled: StateFlow<Boolean> = _queueOverlayEnabled.asStateFlow()
+
+    /** Whether [QueueOverlay]'s radial per-phrase dots are drawn - independent of
+     * [queueOverlayEnabled] (which governs the per-bar rows), so a performer can run either, both,
+     * or neither. On by default, matching [queueOverlayEnabled]'s own default; purely cosmetic. */
+    private val _phraseIndicatorEnabled = MutableStateFlow(true)
+    val phraseIndicatorEnabled: StateFlow<Boolean> = _phraseIndicatorEnabled.asStateFlow()
 
     /** Whether the selected [GlyphVisualizer] itself renders at all - independent of
      * [queueOverlayEnabled], so a performer can run either, both, or neither. Disabled, the base
@@ -290,17 +321,26 @@ object MetronomeEngine {
         settings = store
         streamingClickEngine.configureFromDevice(context.applicationContext)
         _visualizer.value = VisualizerRegistry.byId(store.visualizerId)
-        val restoredQueue = store.queue
-        val restoredIndex = store.queueIndex.coerceIn(0, restoredQueue.size - 1)
-        val restoredSpec = restoredQueue[restoredIndex]
-        _timeSignatureQueue.value = restoredQueue
+        val restoredPhrases = store.phrases
+        val restoredPhraseIndex = store.activePhraseIndex.coerceIn(0, restoredPhrases.size - 1)
+        val activePhrase = restoredPhrases[restoredPhraseIndex]
+        val restoredIndex = store.queueIndex.coerceIn(0, activePhrase.bars.size - 1)
+        val restoredSpec = activePhrase.bars[restoredIndex]
+        _phrases.value = restoredPhrases
+        _activePhraseIndex.value = restoredPhraseIndex
+        _phraseQueueMode.value = store.phraseQueueMode
+        _timeSignatureQueue.value = activePhrase.bars
         _queueIndex.value = restoredIndex
-        _queueMode.value = store.queueMode
+        _queueMode.value = activePhrase.barQueueMode
         _timeSignature.value = restoredSpec
         _state.value = BeatPhase.IDLE.copy(bpm = restoredSpec.bpm, beatsPerBar = restoredSpec.beatCount)
         // The active bar's own visualizer choice (if it's ever pinned one) wins over the plain
         // last-used global visualizer restored above.
         restoredSpec.visualizerId?.let { _visualizer.value = VisualizerRegistry.byId(it) }
+        // Locks in a legacy-queue migration (see MetronomeSettings.phrases' kdoc) so future opens
+        // read the canonical phrases format directly rather than re-deriving it every time.
+        store.phrases = restoredPhrases
+        store.activePhraseIndex = restoredPhraseIndex
         _clickEnabled.value = store.clickEnabled
         val restoredSpecs = ClickSound.entries.associateWith { store.clickSpec(it) }
         restoredSpecs.forEach { (sound, spec) ->
@@ -313,6 +353,7 @@ object MetronomeEngine {
         _firstBeatCountInCapMs.value = store.firstBeatCountInCapMs
         _compactLandscape.value = store.compactLandscape
         _symbolicControlsEnabled.value = store.symbolicControlsEnabled
+        _unitSymbolsEnabled.value = store.unitSymbolsEnabled
         _persistentModeEnabled.value = store.persistentModeEnabled
         _hasShownBpmHint.value = store.hasShownBpmHint
         _muteProbability.value = store.muteProbability
@@ -320,6 +361,7 @@ object MetronomeEngine {
         _progressiveMuteRampBars.value = store.progressiveMuteRampBars
         _extendedBpmRangeEnabled.value = store.extendedBpmRangeEnabled
         _queueOverlayEnabled.value = store.queueOverlayEnabled
+        _phraseIndicatorEnabled.value = store.phraseIndicatorEnabled
         _visualizerEnabled.value = store.visualizerEnabled
 
         MidiClockSource.onExternalActivity = { if (!usingMidiClock) useMidiClock() }
@@ -362,6 +404,38 @@ object MetronomeEngine {
     }
 
     /**
+     * Writes whatever [timeSignatureQueue]/[queueMode] currently hold - the active phrase's own
+     * "scratch" bar-queue state, mutated in place by every existing bar-level function exactly as
+     * it always was - back into [_phrases] at [_activePhraseIndex]. Called at the end of every function
+     * that mutates the active phrase's own bars/mode, so [phrases] (the source of truth for anything
+     * about a phrase *other* than the currently-active one, and what's actually persisted) never
+     * drifts out of sync with the scratch state. See [goToPhrase] for the reverse direction: loading
+     * a *different* phrase's own bars/mode into that same scratch state. Kept separate from
+     * [persistPhrases] so [setBpmImmediate]'s debounced disk write can update this in-memory state
+     * immediately while still batching the disk write itself.
+     */
+    private fun syncActivePhraseMemory() {
+        _phrases.update { phrases ->
+            val index = _activePhraseIndex.value.coerceIn(0, phrases.lastIndex)
+            phrases.toMutableList().apply {
+                this[index] = this[index].copy(bars = _timeSignatureQueue.value, barQueueMode = _queueMode.value)
+            }
+        }
+    }
+
+    private fun persistPhrases() {
+        settings?.phrases = _phrases.value
+        settings?.activePhraseIndex = _activePhraseIndex.value
+    }
+
+    /** [syncActivePhraseMemory] plus an immediate [persistPhrases] - the common case for every bar-level
+     * mutator except [setBpmImmediate], which debounces the disk write instead. */
+    private fun syncActivePhraseMemoryAndPersist() {
+        syncActivePhraseMemory()
+        persistPhrases()
+    }
+
+    /**
      * The press-and-hold step buttons and the drag-to-scrub gesture can both call this many
      * times a second - the engine state update stays instant, but the SharedPreferences write
      * is debounced rather than firing on every single call, otherwise a few seconds of dragging
@@ -397,11 +471,12 @@ object MetronomeEngine {
             if (index !in queue.indices) return@update queue
             queue.toMutableList().apply { this[index] = this[index].copy(bpm = clamped) }
         }
+        syncActivePhraseMemory()
         persistBpmJob?.cancel()
         persistBpmJob = persistScope.launch {
             delay(BPM_PERSIST_DEBOUNCE_MS)
             settings?.bpm = clamped
-            settings?.queue = _timeSignatureQueue.value
+            persistPhrases()
         }
         // The queue overlay's dot height reflects bpm, and this is the one function every
         // bpm-committing path (direct edits, goToQueueBar switching bars, the denominator
@@ -432,7 +507,7 @@ object MetronomeEngine {
             queue.toMutableList().apply { this[index] = this[index].copy(beatCount = clamped) }
         }
         settings?.beatsPerBar = clamped
-        settings?.queue = _timeSignatureQueue.value
+        syncActivePhraseMemoryAndPersist()
         // The queue overlay's dot width reflects beat count - see setBpmImmediate's matching call.
         emitIdleFrame()
     }
@@ -461,7 +536,40 @@ object MetronomeEngine {
             if (index !in queue.indices) return@update queue
             queue.toMutableList().apply { this[index] = this[index].copy(unitNoteValue = clamped) }
         }
-        settings?.queue = _timeSignatureQueue.value
+        syncActivePhraseMemoryAndPersist()
+    }
+
+    /** The accent tier authored for each non-downbeat position in the active bar - see
+     * [TimeSignature.accentPattern]/[BeatAccent]. Always writes into whichever bar is currently
+     * active in the queue, the same "always edits the active bar" pattern [setBeatsPerBar]/
+     * [setUnitNoteValue] already follow. */
+    fun setAccentPattern(pattern: List<BeatAccent>) {
+        _timeSignature.value = _timeSignature.value.copy(accentPattern = pattern)
+        _timeSignatureQueue.update { queue ->
+            val index = _queueIndex.value
+            if (index !in queue.indices) return@update queue
+            queue.toMutableList().apply { this[index] = this[index].copy(accentPattern = pattern) }
+        }
+        syncActivePhraseMemoryAndPersist()
+    }
+
+    /** Sets or clears (via `action = null`) a single beat's own MIDI override in the active bar -
+     * see [TimeSignature.midiOverrides]/[resolveMidiActionForBeat]. Always writes into whichever
+     * bar is currently active in the queue, the same "always edits the active bar" pattern
+     * [setAccentPattern] already follows. */
+    fun setMidiOverride(beatIndex: Int, action: MidiBeatAction?) {
+        fun TimeSignature.withOverride(): TimeSignature {
+            val updated = (midiOverrides ?: emptyMap()).toMutableMap()
+            if (action == null) updated.remove(beatIndex) else updated[beatIndex] = action
+            return copy(midiOverrides = updated.ifEmpty { null })
+        }
+        _timeSignature.value = _timeSignature.value.withOverride()
+        _timeSignatureQueue.update { queue ->
+            val index = _queueIndex.value
+            if (index !in queue.indices) return@update queue
+            queue.toMutableList().apply { this[index] = this[index].withOverride() }
+        }
+        syncActivePhraseMemoryAndPersist()
     }
 
     /**
@@ -515,7 +623,7 @@ object MetronomeEngine {
         val queue = _timeSignatureQueue.value
         val newBar = queue.getOrElse(_queueIndex.value) { TimeSignature.DEFAULT }
         _timeSignatureQueue.value = queue + newBar
-        settings?.queue = _timeSignatureQueue.value
+        syncActivePhraseMemoryAndPersist()
         goToQueueBar(queue.size)
     }
 
@@ -531,7 +639,7 @@ object MetronomeEngine {
         if (queue.size <= 1 || index !in queue.indices) return
         val updated = queue.toMutableList().apply { removeAt(index) }
         _timeSignatureQueue.value = updated
-        settings?.queue = updated
+        syncActivePhraseMemoryAndPersist()
         val activeIndex = _queueIndex.value
         val newActiveIndex = if (index < activeIndex) activeIndex - 1 else activeIndex
         goToQueueBar(newActiveIndex.coerceAtMost(updated.size - 1))
@@ -545,20 +653,25 @@ object MetronomeEngine {
      * performer wants a clean slate rather than removing bars one by one. */
     fun resetQueueToDefault() {
         _timeSignatureQueue.value = listOf(TimeSignature.DEFAULT)
-        settings?.queue = _timeSignatureQueue.value
         _queueMode.value = QueueMode.LOOP
-        settings?.queueMode = QueueMode.LOOP
         goToQueueBar(0)
+        syncActivePhraseMemoryAndPersist()
     }
 
     fun setQueueMode(mode: QueueMode) {
         _queueMode.value = mode
-        settings?.queueMode = mode
+        syncActivePhraseMemoryAndPersist()
     }
 
     fun setQueueOverlayEnabled(enabled: Boolean) {
         _queueOverlayEnabled.value = enabled
         settings?.queueOverlayEnabled = enabled
+        emitIdleFrame()
+    }
+
+    fun setPhraseIndicatorEnabled(enabled: Boolean) {
+        _phraseIndicatorEnabled.value = enabled
+        settings?.phraseIndicatorEnabled = enabled
         emitIdleFrame()
     }
 
@@ -572,8 +685,11 @@ object MetronomeEngine {
      * Pure decision logic for [advanceQueueAtBarBoundary] - returns the index to advance to, or
      * null if nothing should change ([QueueMode.MANUAL], a single-entry queue, or [QueueMode.ONCE]
      * having already reached the last bar - it stays there rather than stopping playback
-     * outright, since the performer decides when to actually stop). Exposed (not private) so the
-     * decision is directly unit-testable without driving a real beat loop.
+     * outright, since the performer decides when to actually stop). Applied twice by
+     * [advanceQueueAtBarBoundary]: once for bars within the active phrase, once - identically - for
+     * phrases within [phrases], since "advance to the next slot, wrap/stop/hold depending on mode" is
+     * the same decision at both levels. Exposed (not private) so the decision is directly
+     * unit-testable without driving a real beat loop.
      */
     fun nextQueueIndexAfterBar(currentIndex: Int, queueSize: Int, mode: QueueMode): Int? {
         if (queueSize <= 1) return null
@@ -586,11 +702,128 @@ object MetronomeEngine {
         }
     }
 
-    /** Called at each bar boundary (see [onBeat]) once the *previous* bar has fully played out. */
+    /**
+     * Called at each bar boundary (see [onBeat]) once the *previous* bar has fully played out.
+     * First tries to advance within the active phrase's own bars, exactly as before phrases existed. If
+     * there's nothing further to advance to there *and* the phrase's own mode is [QueueMode.ONCE]
+     * (i.e. this phrase just legitimately finished - not "MANUAL never advances" and not "a single
+     * bar is inert either way", both of which also return null from [nextQueueIndexAfterBar] but
+     * shouldn't hand off to another phrase), falls through to a phrase-level transition via the
+     * identical [nextQueueIndexAfterBar] applied one level up. Deliberately no extra "more than
+     * one bar" guard on that fall-through: a one-bar ONCE-mode phrase is the simplest, most natural
+     * phrase shape (a whole section that's just one bar), and it must cascade on every single bar,
+     * not be silently inert the way a bar-less guard would make it.
+     */
     private fun advanceQueueAtBarBoundary() {
         val queue = _timeSignatureQueue.value
-        val next = nextQueueIndexAfterBar(_queueIndex.value, queue.size, _queueMode.value) ?: return
-        goToQueueBar(next)
+        val barNext = nextQueueIndexAfterBar(_queueIndex.value, queue.size, _queueMode.value)
+        if (barNext != null) {
+            goToQueueBar(barNext)
+            return
+        }
+        if (_queueMode.value != QueueMode.ONCE) return
+        val phrases = _phrases.value
+        val phraseNext = nextQueueIndexAfterBar(_activePhraseIndex.value, phrases.size, _phraseQueueMode.value) ?: return
+        goToPhrase(phraseNext)
+    }
+
+    /** Jumps directly to a phrase (clamped to a valid index), loading its own bars/mode into the
+     * active bar-queue "scratch" state ([timeSignatureQueue]/[queueMode] - see
+     * `syncActivePhraseMemory`'s kdoc for why that state, not [phrases] directly, is what every existing
+     * bar-level function actually reads/writes) and landing on that phrase's first bar. Always resets
+     * to bar 0 of the target phrase rather than remembering where a previous visit left off -
+     * simplest and least surprising for song-form playback, where entering a section should start
+     * at its own beat 1, whether you got there manually or via [advanceQueueAtBarBoundary]'s
+     * automatic cascade. Fires the target [Phrase.action] every time this resolves to a phrase,
+     * including a direct tap re-entering the already-active one - "fires whenever a phrase is
+     * confirmed/entered" is the simpler mental model over "only on a genuine transition", and
+     * matches [MidiBeatAction]'s own NONE-by-default silence for anyone who hasn't configured one.
+     */
+    fun goToPhrase(index: Int) {
+        val phrases = _phrases.value
+        if (phrases.isEmpty()) return
+        val clampedIndex = index.coerceIn(0, phrases.size - 1)
+        _activePhraseIndex.value = clampedIndex
+        settings?.activePhraseIndex = clampedIndex
+        val phrase = phrases[clampedIndex]
+        _timeSignatureQueue.value = phrase.bars
+        _queueMode.value = phrase.barQueueMode
+        MidiActionSender.fire(phrase.action, System.nanoTime())
+        goToQueueBar(0)
+    }
+
+    /** Manual navigation - one phrase at a time, clamped rather than wrapping (wrapping is
+     * [phraseQueueMode]'s [QueueMode.LOOP] job at a phrase boundary) - the phrase-level counterpart to
+     * [nextQueueBar]/[previousQueueBar]. */
+    fun nextPhrase() = goToPhrase(_activePhraseIndex.value + 1)
+    fun previousPhrase() = goToPhrase(_activePhraseIndex.value - 1)
+
+    /** Appends a new phrase - a single default bar, [QueueMode.LOOP] - after the current last phrase and
+     * jumps to it. Unlike [addBarToQueue] (which copies the active bar, since neighboring bars
+     * within a phrase are often variations of each other), a new phrase deliberately starts fresh rather
+     * than copying the active phrase's own bars - a new song-form section is a different thing, not a
+     * variation of the one you were just on. This is also the single always-visible entry point
+     * that makes every other phrase-management control appear in the first place (see
+     * `BeatsPerBarControls`'s "+phrase" affordance) - before this is ever called, [phrases] holds exactly
+     * one entry and nothing about phrases is visible on screen.
+     */
+    fun addPhrase() {
+        val phrases = _phrases.value
+        _phrases.value = phrases + Phrase()
+        settings?.phrases = _phrases.value
+        goToPhrase(phrases.size)
+    }
+
+    /**
+     * Removes a specific phrase - a no-op if it's the only one left (phrases, like bars, can never be
+     * empty) or [index] is out of range. Mirrors [removeBarFromQueue]'s behavior one level up:
+     * removing a phrase *other* than the active one keeps the same one active (adjusting for the
+     * shift); removing the active phrase itself lands on whichever phrase now occupies its old slot,
+     * clamped to the new last phrase if it was the end.
+     */
+    fun removePhrase(index: Int) {
+        val phrases = _phrases.value
+        if (phrases.size <= 1 || index !in phrases.indices) return
+        val updated = phrases.toMutableList().apply { removeAt(index) }
+        _phrases.value = updated
+        settings?.phrases = updated
+        val activeIndex = _activePhraseIndex.value
+        val newActiveIndex = if (index < activeIndex) activeIndex - 1 else activeIndex
+        goToPhrase(newActiveIndex.coerceAtMost(updated.size - 1))
+    }
+
+    /** Removes the currently-active phrase - see [removePhrase]. */
+    fun removeCurrentPhrase() = removePhrase(_activePhraseIndex.value)
+
+    /** Collapses back to a single default phrase and [QueueMode.LOOP] phrase mode - the phrase-level
+     * counterpart to [resetQueueToDefault], for starting a multi-phrase set over from scratch. Once
+     * this runs, [phrases] is back to a single entry and the phrase-management strip disappears again -
+     * symmetric with how [addPhrase] is what first made it appear. */
+    fun resetPhrasesToDefault() {
+        _phrases.value = listOf(Phrase())
+        settings?.phrases = _phrases.value
+        _phraseQueueMode.value = QueueMode.LOOP
+        settings?.phraseQueueMode = QueueMode.LOOP
+        goToPhrase(0)
+    }
+
+    fun setPhraseQueueMode(mode: QueueMode) {
+        _phraseQueueMode.value = mode
+        settings?.phraseQueueMode = mode
+    }
+
+    /** Sets a specific phrase's own [Phrase.action] - fired once via [MidiActionSender.fire]
+     * every time [goToPhrase] resolves to that phrase (see its own kdoc). Unlike [setMidiOverride]/
+     * [setAccentPattern], this doesn't need to sync into the "scratch" bar-queue state
+     * ([timeSignatureQueue]/[queueMode]) - [Phrase.action] is only ever read directly off
+     * [phrases] itself, at the moment [goToPhrase] navigates to it, not part of the live
+     * single-bar editing surface those other setters maintain. */
+    fun setPhraseAction(index: Int, action: MidiBeatAction) {
+        val phrases = _phrases.value
+        if (index !in phrases.indices) return
+        val updated = phrases.toMutableList().apply { this[index] = this[index].copy(action = action) }
+        _phrases.value = updated
+        settings?.phrases = updated
     }
 
     /** Finger down on HOLD: starts staging BPM/beats-per-bar changes. No-op if already staging
@@ -695,6 +928,11 @@ object MetronomeEngine {
         settings?.symbolicControlsEnabled = enabled
     }
 
+    fun setUnitSymbolsEnabled(enabled: Boolean) {
+        _unitSymbolsEnabled.value = enabled
+        settings?.unitSymbolsEnabled = enabled
+    }
+
     fun setPersistentModeEnabled(enabled: Boolean) {
         _persistentModeEnabled.value = enabled
         settings?.persistentModeEnabled = enabled
@@ -782,7 +1020,7 @@ object MetronomeEngine {
             if (index !in queue.indices) return@update queue
             queue.toMutableList().apply { this[index] = this[index].copy(visualizerId = visualizer.id) }
         }
-        settings?.queue = _timeSignatureQueue.value
+        syncActivePhraseMemoryAndPersist()
         emitIdleFrame()
     }
 
@@ -1072,6 +1310,7 @@ object MetronomeEngine {
         clickListenerForTesting = null
         _compactLandscape.value = false
         _symbolicControlsEnabled.value = false
+        _unitSymbolsEnabled.value = true
         _persistentModeEnabled.value = false
         _hasShownBpmHint.value = false
         _muteProbability.value = 0f
@@ -1082,7 +1321,11 @@ object MetronomeEngine {
         _timeSignatureQueue.value = listOf(TimeSignature.DEFAULT)
         _queueIndex.value = 0
         _queueMode.value = QueueMode.LOOP
+        _phrases.value = listOf(Phrase())
+        _activePhraseIndex.value = 0
+        _phraseQueueMode.value = QueueMode.LOOP
         _queueOverlayEnabled.value = true
+        _phraseIndicatorEnabled.value = true
         _visualizerEnabled.value = true
         _holdMode.value = HoldMode.Off
         _stagedBpm.value = null
@@ -1093,6 +1336,7 @@ object MetronomeEngine {
         lastTapNanos = 0L
         tapIntervalsMs.clear()
         MidiClockSource.resetForTesting()
+        MidiActionSender.resetForTesting()
     }
 
     private fun onBeat(timestampNanos: Long, measuredBpm: Float?) {
@@ -1107,21 +1351,29 @@ object MetronomeEngine {
             // queue on bar 0, so this only fires once a bar has actually completed.
             if (totalBeats > 0) advanceQueueAtBarBoundary()
         }
-        val isAccent = _timeSignature.value.isAccented(beatIndex)
         val index = beatIndex
         val count = totalBeats
+        val beatType = beatTypeFor(index)
         _state.update {
             it.copy(
                 bpm = measuredBpm?.coerceIn(effectiveMinBpm(), effectiveMaxBpm()) ?: it.bpm,
                 beatIndex = index,
                 totalBeats = count,
-                isAccent = isAccent,
+                isAccent = beatType != ClickSound.REGULAR,
                 phase = 0f,
             )
         }
         if (usingMidiClock) {
             _clockStatus.value = ClockStatus.Midi(measuredBpm, MidiClockSource.activeSource?.name)
         }
+        // Independent of clickEnabled/mute-probability (see beatTypeFor's own kdoc) and of the
+        // audio-resolution branching below - MidiActionSender does its own enabled/action-type
+        // gating internally, and onBeat fires exactly once per real beat, so there's no cache or
+        // double-fire concern here the way resolveBeatAudio's caching exists to prevent. Resolves
+        // through resolveMidiActionForBeat (not the thinner fireForBeat(beatType, ...)) so a
+        // per-beat override (see TimeSignature.midiOverrides) wins over beatType's own type-level
+        // default, the same single resolution path the manual Trigger button also goes through.
+        MidiActionSender.fire(resolveMidiActionForBeat(index, knownSound = beatType), timestampNanos)
         // Advance the beat counters *before* resolving/dispatching this beat's audio, not after -
         // so a concurrent reader (the audio scheduling loop, running on its own dedicated thread -
         // see [startAudioScheduling]) never observes [totalBeats] still reading `count` while this
@@ -1174,13 +1426,50 @@ object MetronomeEngine {
     private fun resolveBeatAudio(totalBeatsForBeat: Long, beatIndexForBeat: Int): ResolvedBeatAudio {
         val probability = effectiveMuteProbability(barsElapsedSincePlay)
         val muted = probability > 0f && random.nextFloat() < probability
-        val sound = when {
-            !_clickEnabled.value || muted -> null
-            beatIndexForBeat == 0 -> ClickSound.BAR
-            _timeSignature.value.isAccented(beatIndexForBeat) -> ClickSound.ACCENT
-            else -> ClickSound.REGULAR
-        }
+        val sound = if (!_clickEnabled.value || muted) null else beatTypeFor(beatIndexForBeat)
         return ResolvedBeatAudio(totalBeatsForBeat, sound)
+    }
+
+    /** The [ClickSound] beat type at [beatIndexForBeat] - beat 0 is always [ClickSound.BAR];
+     * otherwise maps the active [TimeSignature]'s [BeatAccent] tier at that index (see
+     * [TimeSignature.accentAt]). Pure and independent of [_clickEnabled]/mute-probability -
+     * [resolveBeatAudio] layers that audio-specific gating on top for the audible click, while
+     * [onBeat] feeds this same, ungated value straight to
+     * [media.quaternion.qmetronome.midi.MidiActionSender] - MIDI beat-actions deliberately fire
+     * regardless of whether the audible click is muted/disabled, the same way the visual flash
+     * already does (see [effectiveMuteProbability]'s own kdoc: muting is scoped to "the audible
+     * click only"). Exposed (not private) so it's directly unit-testable without driving a real
+     * beat loop, the same precedent [rescaledBpmForUnitNoteValueChange]/[nextQueueIndexAfterBar]
+     * already establish. */
+    fun beatTypeFor(beatIndexForBeat: Int): ClickSound = if (beatIndexForBeat == 0) {
+        ClickSound.BAR
+    } else {
+        when (_timeSignature.value.accentAt(beatIndexForBeat)) {
+            BeatAccent.NONE -> ClickSound.REGULAR
+            BeatAccent.ACCENT -> ClickSound.ACCENT
+            BeatAccent.STRONG_ACCENT -> ClickSound.STRONG_ACCENT
+            BeatAccent.CUSTOM -> ClickSound.CUSTOM
+        }
+    }
+
+    /** The actually-configured [MidiBeatAction] for [beatIndexForBeat]: that beat's own override
+     * (see [TimeSignature.midiOverrideAt]) if one has been authored, else [beatTypeFor]'s resolved
+     * [ClickSound]'s own type-level default (see
+     * [media.quaternion.qmetronome.midi.MidiActionSender.actions]), else [MidiBeatAction]'s own
+     * NONE default if neither is configured. `onBeat` and the manual Trigger button (Settings ->
+     * MIDI Actions -> Beat Overrides) both resolve through this single function, so beat-type MIDI
+     * config and per-beat overrides are one resolution path, not two independent ones a future
+     * reader has to reconcile. [knownSound] lets a caller that already computed [beatTypeFor] for
+     * this same beat (`onBeat` always has, for [BeatPhase.isAccent]) pass it straight in rather
+     * than this function silently recomputing it - one fewer [_timeSignature] read and enum
+     * `when` on `onBeat`'s own timing-critical clock thread. Passing nothing (the common case for
+     * the Trigger button, which doesn't already have one lying around) resolves it fresh, exactly
+     * as before this parameter existed. */
+    fun resolveMidiActionForBeat(beatIndexForBeat: Int, knownSound: ClickSound? = null): MidiBeatAction {
+        val sound = knownSound ?: beatTypeFor(beatIndexForBeat)
+        return _timeSignature.value.midiOverrideAt(beatIndexForBeat)
+            ?: MidiActionSender.actions.value[sound]
+            ?: MidiBeatAction()
     }
 
     /** [ClickPlayer]-fallback-only: fires (or schedules) [sound] for a beat whose real timestamp
@@ -1436,13 +1725,34 @@ object MetronomeEngine {
         }
     }
 
-    /** Bakes the ambient per-bar/per-beat background (see [QueueOverlay]) into an already-rendered
-     * frame - a no-op when there's nothing to indicate, so a single-entry queue (the common case)
-     * leaves every visualizer's own frame completely untouched. */
+    /** Bakes the ambient per-bar/per-beat background and/or the radial per-phrase indicator (see
+     * [QueueOverlay]) into an already-rendered frame - each independently a no-op when there's
+     * nothing to indicate or its own toggle is off, so the common case (single bar, single phrase)
+     * leaves every visualizer's own frame completely untouched. [_queueOverlayEnabled] and
+     * [_phraseIndicatorEnabled] are consumed here (not inside [QueueOverlay.apply] itself, which
+     * has no notion of either toggle) by feeding a size-0 [queue]/`phraseCount` when a toggle is
+     * off, reusing [QueueOverlay.apply]'s own per-section no-op guards rather than adding new
+     * ones - `emptyList()` specifically (not e.g. `queue.take(1)`), since it's a cached Kotlin
+     * singleton with no per-frame allocation, unlike building a new one-element list on this
+     * ~100fps render path every time a toggle happens to be off. */
     private fun withQueueOverlay(rendered: IntArray, beatIndex: Int, phase: Float): IntArray {
         val queue = _timeSignatureQueue.value
-        if (queue.size <= 1 || !_queueOverlayEnabled.value) return rendered
-        return QueueOverlay.apply(rendered, matrixSize, queue, _queueIndex.value, beatIndex, phase, MIN_BPM, MAX_BPM)
+        val phrases = _phrases.value
+        val showRows = queue.size > 1 && _queueOverlayEnabled.value
+        val showPhraseIndicator = phrases.size > 1 && _phraseIndicatorEnabled.value
+        if (!showRows && !showPhraseIndicator) return rendered
+        return QueueOverlay.apply(
+            rendered,
+            matrixSize,
+            if (showRows) queue else emptyList(),
+            _queueIndex.value,
+            beatIndex,
+            phase,
+            MIN_BPM,
+            MAX_BPM,
+            phraseCount = if (showPhraseIndicator) phrases.size else 1,
+            activePhraseIndex = _activePhraseIndex.value,
+        )
     }
 
     private const val TAG = "MetronomeEngine"

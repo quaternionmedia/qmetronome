@@ -16,6 +16,7 @@ private const val MAX_BPM = 400f
 // QueueOverlay.kt - if those tuning constants change, update these too.
 private const val USABLE_RADIUS_FRACTION = 0.85f
 private const val MIN_ROW_WEIGHT = 0.4f
+private const val PHRASE_INDICATOR_RADIUS_FRACTION = 0.95f
 
 class QueueOverlayTest {
 
@@ -224,5 +225,87 @@ class QueueOverlayTest {
         val snapshot = original.copyOf()
         QueueOverlay.apply(original, 25, listOf(bar(4, 60f), bar(8, 240f)), 1, 0, 0f, MIN_BPM, MAX_BPM)
         assertTrue("apply() must not mutate its input array in place", original.contentEquals(snapshot))
+    }
+
+    @Test
+    fun `a single-entry queue with only one phrase is still a no-op`() {
+        val frame = frameOf(25, 50)
+        val result = QueueOverlay.apply(frame, 25, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 1, activePhraseIndex = 0)
+        assertSame("nothing to indicate on either axis - should return the same array", frame, result)
+    }
+
+    @Test
+    fun `a single-bar queue still draws the radial phrase indicator when multiple phrases exist`() {
+        val size = 25
+        val result = QueueOverlay.apply(
+            frameOf(size, 0), size, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 3, activePhraseIndex = 0,
+        )
+        assertTrue(
+            "a single-bar queue no longer suppresses the phrase indicator - multiple phrases should still light pixels",
+            result.any { it > 0 },
+        )
+    }
+
+    @Test
+    fun `a multi-bar queue still draws rows when only one phrase exists`() {
+        val size = 25
+        val queue = listOf(bar(4, 120f), bar(4, 120f))
+        val withDefault = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 0, 0f, MIN_BPM, MAX_BPM)
+        val withExplicitSinglePhrase = QueueOverlay.apply(
+            frameOf(size, 0), size, queue, 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 1, activePhraseIndex = 0,
+        )
+        assertTrue(
+            "rows must not depend on phraseCount defaulting vs. being passed explicitly as 1",
+            withDefault.contentEquals(withExplicitSinglePhrase),
+        )
+    }
+
+    @Test
+    fun `every phrase-indicator pixel stays within the SDK's own circular mask`() {
+        val size = 25
+        val original = frameOf(size, 0)
+        val result = QueueOverlay.apply(original, size, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 6, activePhraseIndex = 2)
+        val center = (size - 1) / 2f
+        // The indicator sits deliberately outside the per-bar-row content's own conservative
+        // USABLE_RADIUS_FRACTION - allow a small margin past PHRASE_INDICATOR_RADIUS_FRACTION for
+        // the dot's own radius rather than asserting a razor-exact bound.
+        val maxAllowedRadius = size / 2f * PHRASE_INDICATOR_RADIUS_FRACTION + size / 2f * 0.1f
+
+        for (y in 0 until size) {
+            for (x in 0 until size) {
+                val index = y * size + x
+                if (result[index] != original[index]) {
+                    val distance = hypot(x - center, y - center)
+                    assertTrue(
+                        "phrase-indicator pixel ($x,$y) at distance $distance exceeds $maxAllowedRadius",
+                        distance <= maxAllowedRadius,
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `the active phrase's dot is brighter than an inactive phrase's dot`() {
+        val size = 25
+        val result = QueueOverlay.apply(frameOf(size, 0), size, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 4, activePhraseIndex = 0)
+        assertTrue("some phrase-indicator pixels should read at full brightness (the active phrase)", result.any { it == 255 })
+        assertTrue(
+            "some phrase-indicator pixels should read dimmer than full brightness (an inactive phrase)",
+            result.any { it in 1..254 },
+        )
+    }
+
+    @Test
+    fun `an out-of-range activePhraseIndex is clamped instead of throwing`() {
+        QueueOverlay.apply(frameOf(25, 0), 25, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 3, activePhraseIndex = -1)
+        QueueOverlay.apply(frameOf(25, 0), 25, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 3, activePhraseIndex = 99)
+    }
+
+    @Test
+    fun `a phraseCount much larger than the matrix does not throw`() {
+        val result = QueueOverlay.apply(frameOf(13, 0), 13, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 40, activePhraseIndex = 20)
+        assertEquals(13 * 13, result.size)
+        assertTrue(result.all { it in 0..255 })
     }
 }

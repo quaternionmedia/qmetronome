@@ -750,3 +750,55 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       check: confirm a fresh install (offset=0, default count-in cap) still lands the first
       beat and steady-state clicks with the same precision as the ~2ms/~13ms measured above
       - this should be identical, since 0 now takes the same code path negative offsets do.
+- [ ] **Beat accent marking**: long-press the beats-per-bar number, confirm beat 1 shows as a
+      fixed non-interactive "Bar" chip and every other beat cycles NONE → Accent → Strong Accent →
+      Custom → NONE on tap, and that Settings → Click's now-five tabs (Bar/Beat/Accent/Strong
+      Accent/Custom) each sound audibly distinct once marked and tuned.
+- [ ] **MIDI Actions, real hardware**: per `docs/usb-midi-test-plan.md` section 7 - Note and CC
+      messages per beat type, velocity-0 flooring, firing independent of Click/mute, and no
+      interference with simultaneous outgoing clock. Never run against anything but a fake
+      `MidiReceiver` in tests.
+- [ ] **Phrase-management strip, on-device feel**: with a single phrase (default), confirm the only
+      new chrome versus before this feature is one small icon at the end of the bar-queue row - tap
+      it and confirm the full phrase-management strip (reset/remove/dots/add/mode) appears below
+      without shifting the BPM/transport rows above it. Add a few phrases with different bar/tempo
+      content, confirm tap-to-jump always lands on the target phrase's first bar (never "where you
+      left off"), long-press removes a phrase, and removing back down to one phrase makes the whole
+      strip disappear again - not just go inert the way the bar queue's own controls do with a
+      single bar.
+- [ ] **Phrase Once-mode cascade, on-device**: build two phrases, set the first phrase's own
+      bar-queue mode to Once and the phrase-level mode to Loop, press play, and confirm playback
+      actually hands off from the first phrase to the second the moment the first phrase's bars run
+      out - this is real-timing engine behavior (unit-tested via `Thread.sleep`-based Robolectric
+      tests, not yet watched/heard on a real device).
+- [ ] **Hold-gated destructive controls**: with HOLD off, confirm the bar-queue and phrase-strip
+      reset/remove icons are absent (dots/add/mode-cycle stay visible); press-and-hold or latch
+      HOLD and confirm both icons appear at both levels, then disappear again once HOLD releases.
+- [ ] **Bigger time signature, on-screen fit**: confirm the enlarged beats-per-bar/note-value
+      numbers and steppers still fit comfortably next to the BPM display at both portrait and
+      compact-landscape layouts, on the smallest screen available to test with.
+- [ ] **Unit symbols toggle**: with the Settings → Layout "Unit symbols" switch on (default),
+      confirm the small bpm/beats/beat-type/bar/phrase marks appear next to their respective
+      controls (main screen and the beats-per-bar accent-marking dialog); toggle off and confirm
+      every mark disappears with no layout shift.
+- [ ] **Beat Overrides + Trigger, real hardware**: per `docs/usb-midi-test-plan.md` section 7 -
+      step to a specific beat, assign it a Note/CC override distinct from its type's own default,
+      confirm playback sends the override (not the type default) for that one beat and the type
+      default for every other beat of the same type. Confirm the Trigger button fires whatever's
+      configured for the engine's current beat position both while stopped and while playing.
+- [ ] **Phrase dots as mini bar-stacks, on-screen**: with a phrase containing several bars of
+      different beat counts, confirm each phrase dot renders as a small vertical stack of
+      bar-segments (not one uniform block), each segment's width roughly tracking that bar's beat
+      count relative to its own phrase's bars - and that the phrase strip's own layout doesn't
+      shift as bars are added/removed within a phrase.
+- [ ] **Radial phrase indicator, real Glyph hardware**: with more than one phrase queued, confirm
+      a small dot per phrase appears around the physical Glyph Matrix's outer rim (and its
+      on-screen preview mirror), the active phrase's dot reading brighter than the others, and
+      that it's independently toggleable from the bar-queue background via Settings → Visualizer.
+      Check legibility specifically at higher phrase counts (6-8+) where dots may start crowding -
+      this is the practical ceiling the feature shipped acknowledging, not something engineered
+      around for a first pass.
+- [ ] **Phrase Actions, real hardware**: per `docs/usb-midi-test-plan.md` section 7 - step to a
+      specific phrase, assign it a Note/CC action, and confirm it fires exactly once each time you
+      jump to that phrase (tapping its dot, and via the automatic Once-mode cascade), including
+      re-entering the already-active phrase directly.

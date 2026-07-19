@@ -17,5 +17,24 @@ for the truest, most locked-in beat; Organic lets a followed clock's own natural
 through unfiltered. See [`docs/external-midi-clock.md`](../../docs/external-midi-clock.md) for the
 full design rationale behind both directions.
 
+## Sending a MIDI note or CC per beat type
+
+![Turning on MIDI Actions and picking Note for a beat type, in motion](../../docs/images/generated/screenshots/midi-actions.png)
+
+Settings → MIDI Actions turns qMetronome into more than a clock source: any beat type - Bar, Beat,
+Accent, Strong Accent, or Custom - can send its own MIDI Note or CC message, over the same
+virtual/USB connections "Send clock" above already reaches. Pick a type per beat, then its channel,
+note/CC number, and velocity/value (plus how long a Note stays on before its matching Note Off).
+This runs independently of the audible click - beat actions still fire whether Click is on or off,
+and whether or not a given beat happens to be randomly muted for practice, since external gear and
+lights shouldn't hiccup because of a performer's own practice settings.
+
+Reaching anything beyond Bar and Beat first needs marking which beats in a bar count as Accent,
+Strong Accent, or Custom: long-press the beats-per-bar number to open time signature entry, and
+below the usual beat-count/note-value fields is a chip per beat - beat 1 is always a fixed "Bar"
+chip, and tapping any other one cycles it through the three accent tiers and back to unmarked. The
+same marks drive both the audible click's tone (Settings → Click already has a tab per tone) and
+whichever MIDI action is configured for that type.
+
 Every gesture here also has its own screenshot/video page in
 [the user guide](../../docs/user-guide/README.md#midi-clock).

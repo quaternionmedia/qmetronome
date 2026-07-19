@@ -85,4 +85,22 @@ class BarQueueScreenshotTest {
         composeTestRule.waitForIdle()
         assertEquals(MetronomeEngine.QueueMode.LOOP, MetronomeEngine.queueMode.value)
     }
+
+    @Test
+    fun `reset and remove buttons only appear while HOLD is active`() {
+        composeTestRule.setThemedContent { MainScreen(onActivateToy = {}) }
+
+        composeTestRule.onNodeWithTag("queue_reset_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("queue_remove_button").assertDoesNotExist()
+
+        MetronomeEngine.beginHold()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("queue_reset_button").assertExists()
+        composeTestRule.onNodeWithTag("queue_remove_button").assertExists()
+
+        MetronomeEngine.endHold()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("queue_reset_button").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("queue_remove_button").assertDoesNotExist()
+    }
 }

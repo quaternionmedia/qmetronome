@@ -7,6 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import org.junit.After
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -75,5 +76,19 @@ class LayoutToggleScreenshotTest {
         composeTestRule.onNodeWithTag("symbol_only_controls_switch").invokeOnClick()
         composeTestRule.waitForIdle()
         assertTrue(MetronomeEngine.symbolicControlsEnabled.value)
+    }
+
+    @Test
+    fun `toggling unit symbols`() {
+        MetronomeEngine.setUnitSymbolsEnabled(true)
+        composeTestRule.setThemedContent { SettingsSheet(onDismiss = {}, onActivateToy = {}) }
+        expandSection("section_header_Layout")
+        composeTestRule.onNodeWithTag("unit_symbols_switch").performScrollTo()
+
+        composeTestRule.onScreenshotRoot().captureRoboImage(screenshotPath("unit-symbols"))
+
+        composeTestRule.onNodeWithTag("unit_symbols_switch").invokeOnClick()
+        composeTestRule.waitForIdle()
+        assertFalse(MetronomeEngine.unitSymbolsEnabled.value)
     }
 }

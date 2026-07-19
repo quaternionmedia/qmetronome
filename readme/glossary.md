@@ -26,10 +26,13 @@ device/OEM audio stack doesn't cooperate with `StreamingClickEngine`'s `MODE_STR
 or timestamp warm-up.
 
 **`ClickSound` / `ClickSynth`** (`engine/ClickSound.kt`, `engine/ClickSynth.kt`) — `ClickSound`
-separates *which* click to play (a bar's first beat gets a bigger, longer tone than every other
-beat) from the playback plumbing; a new sound is a new tone-table row, not a rewrite. `ClickSynth`
-renders each `ClickSound`'s `ClickSpec` (waveform/frequency/duration/gain, tunable in Settings →
-Click) to samples.
+(`BAR`, `REGULAR`, `ACCENT`, `STRONG_ACCENT`, `CUSTOM`) separates *which* click to play/which MIDI
+action to fire (see `MidiActionSender`) from the playback plumbing; a new sound is a new tone-table
+row, not a rewrite. Beat 0 is always `BAR`; every other beat's sound comes from that bar's
+`TimeSignature.accentPattern` (a `BeatAccent` per beat, authored via the accent chips in
+`ui/TimeSignatureEntryDialog.kt` — see `MetronomeEngine.beatTypeFor` for the single place that
+mapping happens). `ClickSynth` renders each `ClickSound`'s `ClickSpec` (waveform/frequency/
+duration/gain, tunable in Settings → Click) to samples.
 
 **`HelpScreen`** (`ui/HelpScreen.kt`) — the in-app counterpart to `docs/user-guide/`, reached via
 the **?** icon next to the Settings gear on `MainScreen`. Reads the same `TutorialTopics` content
@@ -86,6 +89,19 @@ and calls `updateAll()` only when one of those actually changes — never on the
 phase ticks. No screenshot here yet - see
 [A widget for the home screen](using-qmetronome/a-widget-for-the-home-screen.md) for why.
 
+**`MidiActionSender`** (`midi/MidiActionSender.kt`) — sends a MIDI Note or CC message per beat's
+resolved `ClickSound` (see `MetronomeEngine.beatTypeFor`), configured per sound in Settings → MIDI
+Actions. The mirror image of `MidiClockSender` (same destination-registry shape via
+`MidiReceiverRegistry`) but reactive rather than a free-running loop: called directly from
+`MetronomeEngine.onBeat`, which already fires exactly once per real beat. Deliberately independent
+of `clickEnabled`/mute-probability — gated only by its own `enabled` flag and each beat type's own
+configured action, the same way the visual flash is unaffected by muting the audible click. `fire`
+is the actual gating/send entry point; `fireForBeat` is a thin per-`ClickSound` wrapper over it -
+`onBeat` resolves through `MetronomeEngine.resolveMidiActionForBeat` (type default, unless a
+per-beat override is set) and calls `fire` directly, and the Settings → Beat Overrides "Trigger"
+button and `Phrase.action` both call `fire` the same way, so there is exactly one send path
+regardless of which of the three configures the action.
+
 **`MidiClockSender`** (`midi/MidiClockSender.kt`) — generates MIDI clock (24 ppqn) from
 `MetronomeEngine.state` and writes it to a registered set of destinations, turning qMetronome into
 a clock *source*.
@@ -95,12 +111,25 @@ real-time MIDI bytes and measures tempo from a smoothed rolling average of tick 
 regardless of transport. `MetronomeEngine` auto-switches to it the moment MIDI Clock activity
 arrives, and falls back to `InternalClockSource` if that feed goes quiet for a few beats.
 
+**`Phrase`** (`engine/Phrase.kt`) — one entry in `MetronomeEngine`'s phrase queue: a song-form
+section ("Verse", "Chorus") carrying its own full bar queue and its own `QueueMode`. A single-phrase
+list (the default) behaves exactly like there being no phrase concept at all — `timeSignatureQueue`/
+`queueIndex`/`queueMode` always mirror `phrases[activePhraseIndex]`, so every bar-queue control keeps
+working unmodified for that common case. `phraseQueueMode` governs how *phrases* advance into each
+other, the same `QueueMode` reused one level up — see `QueueMode`'s own entry below. `action` is
+this phrase's own `MidiBeatAction` (Settings → Phrase Actions), fired once via
+`MidiActionSender.fire` every time `MetronomeEngine.goToPhrase` resolves to it — NONE by default,
+so a phrase nobody has configured this for stays silent.
+
 **`QueueMode`** — how the bar queue advances at each bar boundary during playback: `LOOP` (default)
 wraps back to the first bar after the last; `ONCE` stops advancing once it reaches the last bar
 (holding there rather than stopping playback outright); `MANUAL` never auto-advances — tapping a
 bar's dot is the only way to move. Queue *position* isn't staged the way editing a bar's own values
 is (staging-aware exactly the same as everything else in `MetronomeEngine`) — navigating which bar
-you're looking at is closer to "which page am I on" than a pending settings change.
+you're looking at is closer to "which page am I on" than a pending settings change. The same enum
+governs how *phrases* (see `Phrase`) advance into each other, one level up — a phrase's own bars
+falling through to `ONCE`'s "nothing left to advance to" is what triggers a phrase-boundary transition (see
+`MetronomeEngine.advanceQueueAtBarBoundary`'s own kdoc for the exact trigger condition).
 
 **`QueueOverlay`** (`visualizers/QueueOverlay.kt`) — an ambient version of "which bar, which beat"
 baked directly into the Glyph Matrix frame itself (and its on-screen `MatrixPreview` mirror).
@@ -145,7 +174,11 @@ a studio tally light, not a wash of color.
 
 **`TimeSignature`** (`engine/TimeSignature.kt`) — a real "1×2 matrix" time signature: `beatCount`
 (numerator) and `unitNoteValue` (denominator, e.g. the "4" in 4/4), edited independently, plus its
-own `bpm` and `accentPattern` (reserved for later). Changing `unitNoteValue` rescales `bpm` to
+own `bpm`, `accentPattern` (a `BeatAccent` per non-downbeat position, authored via the accent chips
+in `ui/TimeSignatureEntryDialog.kt`), and `midiOverrides` (a sparse `Map<Int, MidiBeatAction>`,
+authored in Settings → Beat Overrides — a specific beat's own MIDI action, winning over its
+resolved `ClickSound` type's configured default; see `MetronomeEngine.resolveMidiActionForBeat`).
+Changing `unitNoteValue` rescales `bpm` to
 preserve the underlying tempo (`bpm / unitNoteValue` held constant — the same "half note = 60 /
 quarter note = 120" equivalence real notation uses), so switching a bar between, say, 6/4 and 3/2
 redistributes the same bar duration into 3 clicks instead of 6 rather than silently doubling the

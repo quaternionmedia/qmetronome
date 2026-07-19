@@ -1,8 +1,10 @@
 package media.quaternion.qmetronome.visualizers
 
 import media.quaternion.qmetronome.engine.TimeSignature
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
  * An ambient "which bar, which beat" background baked directly into the Glyph Matrix frame,
@@ -44,6 +46,17 @@ import kotlin.math.roundToInt
  * candidate pixel is individually checked against a conservative inner circle
  * ([USABLE_RADIUS_FRACTION] of the nominal radius) before being touched, since row/tick content
  * spans the whole matrix and there's no single safe baseline to round inward from.
+ *
+ * [phraseCount]/[activePhraseIndex] additionally draw a small radial dot per phrase around the
+ * matrix's outer rim (just outside the per-bar-row content's own [USABLE_RADIUS_FRACTION], still
+ * inside the SDK's circular mask) when there's more than one phrase - independent of the per-bar
+ * rows above: a single-bar active phrase (`queue.size <= 1`) still gets its radial dots drawn if
+ * multiple phrases exist, and a multi-bar phrase still gets its rows drawn even with only one
+ * phrase. Toggled independently by the caller (see
+ * [media.quaternion.qmetronome.engine.MetronomeEngine.phraseIndicatorEnabled]) the same way
+ * [media.quaternion.qmetronome.engine.MetronomeEngine.queueOverlayEnabled] already gates the
+ * per-bar rows - a caller with the toggle off simply passes `phraseCount = 1` regardless of the
+ * real count, reusing this function's own no-op guard rather than adding a second one.
  */
 object QueueOverlay {
 
@@ -56,52 +69,70 @@ object QueueOverlay {
         phase: Float,
         minBpm: Float,
         maxBpm: Float,
+        phraseCount: Int = 1,
+        activePhraseIndex: Int = 0,
     ): IntArray {
-        if (queue.size <= 1) return frame
+        if (queue.size <= 1 && phraseCount <= 1) return frame
 
         val canvas = GlyphCanvas(matrixSize, initial = frame)
         val center = canvas.center
         val usableRadius = matrixSize / 2f * USABLE_RADIUS_FRACTION
-        val startY = center - usableRadius
-        val totalHeight = usableRadius * 2f
-        val leftX = center - usableRadius
-        val rightX = center + usableRadius
 
-        // Row thickness is weighted, not a raw fraction, so even the slowest bar in the queue
-        // still gets a visibly non-zero row rather than shrinking toward nothing.
-        val weights = queue.map { bar ->
-            val tempoFraction = ((bar.bpm - minBpm) / (maxBpm - minBpm).coerceAtLeast(1f)).coerceIn(0f, 1f)
-            MIN_ROW_WEIGHT + (1f - MIN_ROW_WEIGHT) * tempoFraction
-        }
-        val totalWeight = weights.sum()
-        val clampedActive = activeIndex.coerceIn(0, queue.lastIndex)
+        if (queue.size > 1) {
+            val startY = center - usableRadius
+            val totalHeight = usableRadius * 2f
+            val leftX = center - usableRadius
+            val rightX = center + usableRadius
 
-        var cumulative = 0f
-        queue.forEachIndexed { slot, bar ->
-            val rowTop = startY + (cumulative / totalWeight) * totalHeight
-            cumulative += weights[slot]
-            val rowBottom = startY + (cumulative / totalWeight) * totalHeight
-            val rowHeight = rowBottom - rowTop
-            val inset = rowHeight * (1f - TICK_HEIGHT_FRACTION) / 2f
-            val topPx = (rowTop + inset).roundToInt()
-            val bottomPx = (rowBottom - inset).roundToInt().coerceAtLeast(topPx)
-            val tickHalfWidth = (matrixSize / 15).coerceIn(0, 1)
-            val isActiveBar = slot == clampedActive
+            // Row thickness is weighted, not a raw fraction, so even the slowest bar in the queue
+            // still gets a visibly non-zero row rather than shrinking toward nothing.
+            val weights = queue.map { bar ->
+                val tempoFraction = ((bar.bpm - minBpm) / (maxBpm - minBpm).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                MIN_ROW_WEIGHT + (1f - MIN_ROW_WEIGHT) * tempoFraction
+            }
+            val totalWeight = weights.sum()
+            val clampedActive = activeIndex.coerceIn(0, queue.lastIndex)
 
-            repeat(bar.beatCount) { beat ->
-                val tickX = (leftX + (beat + 0.5f) / bar.beatCount * (rightX - leftX)).roundToInt()
-                val brightness = if (isActiveBar && beat == beatIndex) {
-                    (BASE_TICK_BRIGHTNESS + (255 - BASE_TICK_BRIGHTNESS) * decayEase(phase)).roundToInt()
-                } else {
-                    BASE_TICK_BRIGHTNESS
-                }
-                for (y in topPx..bottomPx) {
-                    for (x in (tickX - tickHalfWidth)..(tickX + tickHalfWidth)) {
-                        if (hypot(x - center, y - center) <= usableRadius) {
-                            canvas.max(x, y, brightness)
+            var cumulative = 0f
+            queue.forEachIndexed { slot, bar ->
+                val rowTop = startY + (cumulative / totalWeight) * totalHeight
+                cumulative += weights[slot]
+                val rowBottom = startY + (cumulative / totalWeight) * totalHeight
+                val rowHeight = rowBottom - rowTop
+                val inset = rowHeight * (1f - TICK_HEIGHT_FRACTION) / 2f
+                val topPx = (rowTop + inset).roundToInt()
+                val bottomPx = (rowBottom - inset).roundToInt().coerceAtLeast(topPx)
+                val tickHalfWidth = (matrixSize / 15).coerceIn(0, 1)
+                val isActiveBar = slot == clampedActive
+
+                repeat(bar.beatCount) { beat ->
+                    val tickX = (leftX + (beat + 0.5f) / bar.beatCount * (rightX - leftX)).roundToInt()
+                    val brightness = if (isActiveBar && beat == beatIndex) {
+                        (BASE_TICK_BRIGHTNESS + (255 - BASE_TICK_BRIGHTNESS) * decayEase(phase)).roundToInt()
+                    } else {
+                        BASE_TICK_BRIGHTNESS
+                    }
+                    for (y in topPx..bottomPx) {
+                        for (x in (tickX - tickHalfWidth)..(tickX + tickHalfWidth)) {
+                            if (hypot(x - center, y - center) <= usableRadius) {
+                                canvas.max(x, y, brightness)
+                            }
                         }
                     }
                 }
+            }
+        }
+
+        if (phraseCount > 1) {
+            val indicatorRadius = matrixSize / 2f * PHRASE_INDICATOR_RADIUS_FRACTION
+            val dotRadius = (matrixSize / 30f).coerceAtLeast(1f)
+            val clampedActivePhrase = activePhraseIndex.coerceIn(0, phraseCount - 1)
+            repeat(phraseCount) { i ->
+                val angle = Math.toRadians(-90.0 + i * 360.0 / phraseCount)
+                val x = center + indicatorRadius * cos(angle).toFloat()
+                val y = center + indicatorRadius * sin(angle).toFloat()
+                val brightness = if (i == clampedActivePhrase) 255 else BASE_TICK_BRIGHTNESS
+                canvas.filledCircle(x, y, dotRadius, brightness)
             }
         }
 
@@ -109,6 +140,7 @@ object QueueOverlay {
     }
 
     private const val USABLE_RADIUS_FRACTION = 0.85f
+    private const val PHRASE_INDICATOR_RADIUS_FRACTION = 0.95f
     private const val MIN_ROW_WEIGHT = 0.4f
     private const val TICK_HEIGHT_FRACTION = 0.7f
     private const val BASE_TICK_BRIGHTNESS = 70

@@ -87,4 +87,36 @@ class LayoutToggleVideoTest {
             invokeClickWithIndicator(toggle, holdMs = 400)
         }
     }
+
+    @OptIn(ExperimentalRoborazziApi::class)
+    @Test
+    fun `record toggling unit symbols`() {
+        MetronomeEngine.setUnitSymbolsEnabled(true)
+        composeTestRule.setThemedContent {
+            TouchIndicatorOverlay { SettingsSheet(onDismiss = {}, onActivateToy = {}) }
+        }
+
+        val chevron = composeTestRule.onNodeWithTag("section_header_Layout", useUnmergedTree = true)
+        // Scrolls to the anchor one row above the actual target - see
+        // `record toggling compact landscape layout`'s identical technique above for why: scrolling
+        // this list all the way down to `unit_symbols_switch` itself as the scroll *target* hangs
+        // Robolectric's scroll-to-node convergence (reproduced deterministically; root cause not
+        // fully understood, suspected to be this list's total scrollable extent crossing some
+        // internal threshold at this specific depth). Landing one row short and interacting with
+        // the real target directly (no dedicated scrollTo call on it) avoids the hang and still
+        // frames it comfortably, the same way the compact-landscape test already does one level up.
+        val anchor = composeTestRule.onNodeWithTag("symbol_only_controls_switch")
+        val toggle = composeTestRule.onNodeWithTag("unit_symbols_switch")
+        composeTestRule.onScreenshotRoot().recordRoboVideo(
+            composeRule = composeTestRule,
+            filePath = videoPath("unit-symbols"),
+            videoOptions = RoboVideoOptions(fps = 10),
+        ) {
+            invokeClickWithIndicator(chevron)
+            delay(200)
+            anchor.performScrollTo()
+            delay(200)
+            invokeClickWithIndicator(toggle, holdMs = 400)
+        }
+    }
 }

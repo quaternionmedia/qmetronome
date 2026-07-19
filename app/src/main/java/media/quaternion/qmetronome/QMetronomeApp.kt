@@ -7,6 +7,7 @@ import androidx.core.content.ContextCompat
 import androidx.glance.appwidget.updateAll
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.engine.PersistentPlaybackService
+import media.quaternion.qmetronome.midi.MidiActionSender
 import media.quaternion.qmetronome.midi.MidiClockSender
 import media.quaternion.qmetronome.midi.UsbMidiConnector
 import media.quaternion.qmetronome.widget.MetronomeWidget
@@ -26,6 +27,7 @@ class QMetronomeApp : Application() {
         super.onCreate()
         MetronomeEngine.attach(this)
         MidiClockSender.attach(this)
+        MidiActionSender.attach(this)
         UsbMidiConnector.attach(this)
 
         // Push a widget update only when displayed bpm or play state actually changes - not on

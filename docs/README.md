@@ -51,17 +51,22 @@ are part of the record, not just the eventual fix.
   (a silently-dying update collector, then a one-shot-snapshot-vs-reactive-
   composition bug that took two attempts to correctly diagnose). Ends with
   its own manual test checklist.
-- **[`realtime-audio-roadmap.md`](realtime-audio-roadmap.md)** — **not
-  started**, a scoping doc rather than a feasibility investigation with a
-  build behind it yet: independent audio-channel routing per beat type,
-  multiple simultaneous beat "threads" (true polyrhythm), and per-beat-type
-  MIDI actions. Written down explicitly so this direction is built toward
-  deliberately rather than boxed out by today's singleton-shaped engine.
+- **[`realtime-audio-roadmap.md`](realtime-audio-roadmap.md)** — a scoping
+  doc for three related capabilities: independent audio-channel routing per
+  beat type (**not started**), multiple simultaneous beat "threads" - true
+  polyrhythm (**not started**), and per-beat-type MIDI actions (**implemented**
+  - `midi/MidiActionSender`, Settings → MIDI Actions). Written down explicitly
+  so the still-open two-thirds keep being built toward deliberately rather
+  than boxed out by today's singleton-shaped engine. Multi-phrase bar queues
+  (`engine/Phrase.kt`, shipped alongside the MIDI actions work) are a related
+  but distinct thing from the "beat threads" item - sequential song-form
+  sections on one clock, not concurrent polyrhythm - see that file's kdoc.
 
-Corresponding decision records:
-`governance/qm/adr/DRAFT-midi-clock-as-open-standard-seam.md` and
-`governance/qm/adr/DRAFT-home-screen-widget-via-glance.md`. No ADR yet for
-the real-time audio roadmap - nothing to ratify until something's decided.
+Corresponding decision records: `governance/qm/adr/DRAFT-midi-clock-as-open-
+standard-seam.md`, `governance/qm/adr/DRAFT-home-screen-widget-via-glance.md`,
+and `governance/qm/adr/DRAFT-per-beat-type-midi-action-routing.md` (the
+real-time audio roadmap's #3, now implemented). No ADR yet for #1/#2 -
+nothing to ratify until something's decided.
 
 ## Project governance
 

@@ -208,6 +208,32 @@ object ExtraIcons {
         }
     }
 
+    /** Three stacked horizontal bars - the "add a phrase" affordance in `BeatsPerBarControls`
+     * (`MainScreen.kt`). Deliberately distinct from [Add][androidx.compose.material.icons.Icons.Filled.Add]
+     * (already used right next to it for "add a bar") since the two mean different things at
+     * different scopes - this reads as "phrases," not another generic plus. */
+    val Phrases: ImageVector by lazy {
+        icon("Phrases") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(4f, 4f)
+                lineTo(20f, 4f)
+                lineTo(20f, 7f)
+                lineTo(4f, 7f)
+                close()
+                moveTo(4f, 10.5f)
+                lineTo(20f, 10.5f)
+                lineTo(20f, 13.5f)
+                lineTo(4f, 13.5f)
+                close()
+                moveTo(4f, 17f)
+                lineTo(20f, 17f)
+                lineTo(20f, 20f)
+                lineTo(4f, 20f)
+                close()
+            }
+        }
+    }
+
     /** A fingertip dot with a ripple ring around it - not Google's hand-and-finger glyph, a
      * simpler original "tap point" design (see the file kdoc). */
     val TouchApp: ImageVector by lazy {
@@ -221,6 +247,81 @@ object ExtraIcons {
                 strokeLineWidth = 1.6f,
             ) {
                 circle(cx = 12f, cy = 10.5f, r = 6.5f)
+            }
+        }
+    }
+
+    /** A small upward triangle, evoking a physical metronome's body - the BPM unit-symbol mark
+     * (see [MetronomeEngine.unitSymbolsEnabled][media.quaternion.qmetronome.engine.MetronomeEngine.unitSymbolsEnabled]).
+     * This and the four icons below it are deliberately tiny/subtle - a label, not a control. */
+    val UnitBpm: ImageVector by lazy {
+        icon("UnitBpm") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(12f, 4f)
+                lineTo(19f, 20f)
+                lineTo(5f, 20f)
+                close()
+            }
+        }
+    }
+
+    /** Three small dots in a row - the beats-per-bar unit-symbol mark. */
+    val UnitBeats: ImageVector by lazy {
+        icon("UnitBeats") {
+            path(fill = SolidColor(Color.Black)) {
+                circle(cx = 6f, cy = 12f, r = 2.2f)
+                circle(cx = 12f, cy = 12f, r = 2.2f)
+                circle(cx = 18f, cy = 12f, r = 2.2f)
+            }
+        }
+    }
+
+    /** A ">" accent mark - the same notation musicians write above an accented note - the
+     * beat-type unit-symbol mark. */
+    val UnitBeatType: ImageVector by lazy {
+        icon("UnitBeatType") {
+            path(
+                fill = null,
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2.2f,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(6f, 5f)
+                lineTo(18f, 12f)
+                lineTo(6f, 19f)
+            }
+        }
+    }
+
+    /** A single vertical barline, the same mark that ends a measure in real notation - the bar
+     * unit-symbol mark. */
+    val UnitBar: ImageVector by lazy {
+        icon("UnitBar") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(11f, 4f)
+                lineTo(13f, 4f)
+                lineTo(13f, 20f)
+                lineTo(11f, 20f)
+                close()
+            }
+        }
+    }
+
+    /** A double vertical barline, the same mark musicians use to close a song-form section - the
+     * phrase unit-symbol mark. */
+    val UnitPhrase: ImageVector by lazy {
+        icon("UnitPhrase") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(8f, 4f)
+                lineTo(10f, 4f)
+                lineTo(10f, 20f)
+                lineTo(8f, 20f)
+                close()
+                moveTo(14f, 4f)
+                lineTo(16f, 4f)
+                lineTo(16f, 20f)
+                lineTo(14f, 20f)
+                close()
             }
         }
     }

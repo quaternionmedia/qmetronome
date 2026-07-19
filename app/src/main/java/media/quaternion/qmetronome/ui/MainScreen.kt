@@ -57,6 +57,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import media.quaternion.qmetronome.engine.Phrase
 import media.quaternion.qmetronome.engine.BeatPhase
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.engine.TimeSignature
@@ -389,6 +390,7 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
     val stagedBpm by MetronomeEngine.stagedBpm.collectAsState()
     val hasShownBpmHint by MetronomeEngine.hasShownBpmHint.collectAsState()
     val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
+    val unitSymbolsEnabled by MetronomeEngine.unitSymbolsEnabled.collectAsState()
     val bpmDragPxPerStep = with(LocalDensity.current) { 6.dp.toPx() }
 
     val displayBpm = stagedBpm ?: beat.bpm
@@ -451,12 +453,24 @@ internal fun BpmControls(beat: BeatPhase, onShowBpmDialog: () -> Unit) {
             Icon(Icons.Filled.Add, contentDescription = "Increase BPM")
         }
     }
-    if (!symbolicControlsEnabled) {
-        Text(
-            text = bpmDisplayUnit(displayBpm),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.secondary,
-        )
+    if (!symbolicControlsEnabled || unitSymbolsEnabled) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (unitSymbolsEnabled) {
+                Icon(
+                    ExtraIcons.UnitBpm,
+                    contentDescription = null,
+                    modifier = Modifier.size(UNIT_SYMBOL_SIZE),
+                    tint = MaterialTheme.colorScheme.secondary,
+                )
+            }
+            if (!symbolicControlsEnabled) {
+                Text(
+                    text = bpmDisplayUnit(displayBpm),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+        }
     }
     BpmGestureHint(visible = !hasShownBpmHint)
 }
@@ -516,7 +530,9 @@ private fun BpmGestureHint(visible: Boolean) {
  * feature less reliable (every tap had to wait out the double-tap timeout to disambiguate), and a
  * swipe starting that close to a button could easily be captured by the button instead. A
  * single-entry queue - the default - still shows one dot, but otherwise behaves exactly like a
- * plain, unchanging time signature.
+ * plain, unchanging time signature. The reset/remove icons (destructive, no confirmation dialog)
+ * only render while HOLD is active - dots/add/mode-cycle stay available regardless - so a stray
+ * tap can't wipe queued bars or phrases outside of a deliberate hold/latch gesture.
  *
  * Internal (not private): [SettingsSheet]'s "Tempo & Bars" section embeds this same composable
  * directly rather than building a second beats-per-bar/bar-queue display, which would otherwise
@@ -531,6 +547,10 @@ internal fun BeatsPerBarControls() {
     val queue by MetronomeEngine.timeSignatureQueue.collectAsState()
     val queueIndex by MetronomeEngine.queueIndex.collectAsState()
     val queueMode by MetronomeEngine.queueMode.collectAsState()
+    val phrases by MetronomeEngine.phrases.collectAsState()
+    val activePhraseIndex by MetronomeEngine.activePhraseIndex.collectAsState()
+    val phraseQueueMode by MetronomeEngine.phraseQueueMode.collectAsState()
+    val unitSymbolsEnabled by MetronomeEngine.unitSymbolsEnabled.collectAsState()
     var showDialog by remember { mutableStateOf(false) }
 
     val displayBeats = stagedBeatsPerBar ?: beat.beatsPerBar
@@ -558,6 +578,7 @@ internal fun BeatsPerBarControls() {
             contentDescriptionNoun = "beats per bar",
             stagedLabel = holdMode != MetronomeEngine.HoldMode.Off,
             testTag = "beats_per_bar_number",
+            unitIcon = ExtraIcons.UnitBeats,
         )
         TimeSignatureNumberRow(
             value = timeSignature.unitNoteValue,
@@ -589,21 +610,31 @@ internal fun BeatsPerBarControls() {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            QueueIconButton(
-                icon = Icons.Filled.Delete,
-                contentDescription = "Long-press to clear the queue and reset to a single default bar",
-                showDestructiveBadge = true,
-                onClick = MetronomeEngine::resetQueueToDefault,
-                modifier = Modifier.testTag("queue_reset_button"),
-            )
+            if (unitSymbolsEnabled) {
+                Icon(
+                    ExtraIcons.UnitBar,
+                    contentDescription = null,
+                    modifier = Modifier.size(UNIT_SYMBOL_SIZE),
+                    tint = MaterialTheme.colorScheme.secondary,
+                )
+            }
+            if (holdMode != MetronomeEngine.HoldMode.Off) {
+                QueueIconButton(
+                    icon = Icons.Filled.Delete,
+                    contentDescription = "Long-press to clear the queue and reset to a single default bar",
+                    showDestructiveBadge = true,
+                    onClick = MetronomeEngine::resetQueueToDefault,
+                    modifier = Modifier.testTag("queue_reset_button"),
+                )
 
-            QueueIconButton(
-                icon = ExtraIcons.Remove,
-                contentDescription = "Remove the active bar from the queue",
-                enabled = hasQueue,
-                onClick = MetronomeEngine::removeCurrentBarFromQueue,
-                modifier = Modifier.testTag("queue_remove_button"),
-            )
+                QueueIconButton(
+                    icon = ExtraIcons.Remove,
+                    contentDescription = "Remove the active bar from the queue",
+                    enabled = hasQueue,
+                    onClick = MetronomeEngine::removeCurrentBarFromQueue,
+                    modifier = Modifier.testTag("queue_remove_button"),
+                )
+            }
 
             BarQueueDots(
                 queue = queue,
@@ -635,6 +666,28 @@ internal fun BeatsPerBarControls() {
                 onClick = { MetronomeEngine.setQueueMode(nextMode) },
                 modifier = Modifier.testTag("queue_mode_button"),
             )
+
+            // The single new pixel that exists before phrases are ever invoked - see
+            // PhraseQueueControls' own kdoc for why this disappears once it's done its job.
+            if (phrases.size == 1) {
+                QueueIconButton(
+                    icon = ExtraIcons.Phrases,
+                    contentDescription = "Add a phrase - group bars into song-form sections",
+                    onClick = MetronomeEngine::addPhrase,
+                    modifier = Modifier.testTag("phrase_add_entry_button"),
+                )
+            }
+        }
+
+        if (phrases.size > 1) {
+            Spacer(Modifier.height(4.dp))
+            PhraseQueueControls(
+                phrases = phrases,
+                activePhraseIndex = activePhraseIndex,
+                phraseQueueMode = phraseQueueMode,
+                holdMode = holdMode,
+                unitSymbolsEnabled = unitSymbolsEnabled,
+            )
         }
     }
 
@@ -644,9 +697,11 @@ internal fun BeatsPerBarControls() {
             beatCountRange = MetronomeEngine.MIN_BEATS_PER_BAR..MetronomeEngine.MAX_BEATS_PER_BAR,
             initialUnitNoteValue = timeSignature.unitNoteValue,
             unitNoteValueRange = 1..MetronomeEngine.MAX_UNIT_NOTE_VALUE,
-            onConfirm = { newBeatCount, newUnitNoteValue ->
+            initialAccentPattern = timeSignature.accentPattern.orEmpty(),
+            onConfirm = { newBeatCount, newUnitNoteValue, newAccentPattern ->
                 MetronomeEngine.setBeatsPerBar(newBeatCount)
                 MetronomeEngine.setUnitNoteValue(newUnitNoteValue)
+                MetronomeEngine.setAccentPattern(newAccentPattern)
                 showDialog = false
             },
             onDismiss = { showDialog = false },
@@ -670,6 +725,7 @@ private fun TimeSignatureNumberRow(
     contentDescriptionNoun: String,
     stagedLabel: Boolean,
     testTag: String,
+    unitIcon: ImageVector? = null,
 ) {
     val dragPxPerStep = with(LocalDensity.current) { 6.dp.toPx() }
 
@@ -717,11 +773,22 @@ private fun TimeSignatureNumberRow(
             // this whole Row - out to (and past) the screen edge, pushing the "+" stepper off it
             // entirely. The Column's own horizontalAlignment already centers this Text within
             // whatever width it actually settles on.
-            Text(
-                text = value.toString(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.secondary,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                val unitSymbolsEnabled by MetronomeEngine.unitSymbolsEnabled.collectAsState()
+                if (unitIcon != null && unitSymbolsEnabled) {
+                    Icon(
+                        unitIcon,
+                        contentDescription = null,
+                        modifier = Modifier.size(UNIT_SYMBOL_SIZE),
+                        tint = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+                Text(
+                    text = value.toString(),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
             if (stagedLabel) {
                 val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
                 StagedIndicator(symbolMode = symbolicControlsEnabled)
@@ -804,6 +871,155 @@ private fun BarQueueDots(
                                 .weight(1f)
                                 .fillMaxWidth()
                                 .background(PureWhite.copy(alpha = segmentAlpha)),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The phrase-management strip - reset/remove/dots/add/mode-cycle, one level up from
+ * [BarQueueDots]/the bar-queue row above it, with full "controls like that of the single current"
+ * parity. Only ever composed while [phrases] holds more than one entry (see the call site in
+ * [BeatsPerBarControls]) - before a second phrase is ever added, none of this exists on screen at
+ * all, and the one small "+phrase" entry point on the bar-queue row above is the only trace of the
+ * feature. Removing phrases back down to a single one makes this whole strip disappear again,
+ * symmetric with how [MetronomeEngine.addPhrase] is what first made it appear. Mirrors
+ * [BeatsPerBarControls]' own reset/remove hold-gating - those two icons only render while
+ * [holdMode] is active.
+ */
+@Composable
+private fun PhraseQueueControls(
+    phrases: List<Phrase>,
+    activePhraseIndex: Int,
+    phraseQueueMode: MetronomeEngine.QueueMode,
+    holdMode: MetronomeEngine.HoldMode,
+    unitSymbolsEnabled: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .height(QUEUE_ROW_HEIGHT)
+            .horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (unitSymbolsEnabled) {
+            Icon(
+                ExtraIcons.UnitPhrase,
+                contentDescription = null,
+                modifier = Modifier.size(UNIT_SYMBOL_SIZE),
+                tint = MaterialTheme.colorScheme.secondary,
+            )
+        }
+        if (holdMode != MetronomeEngine.HoldMode.Off) {
+            QueueIconButton(
+                icon = Icons.Filled.Delete,
+                contentDescription = "Long-press to clear all phrases and reset to a single default phrase",
+                showDestructiveBadge = true,
+                onClick = MetronomeEngine::resetPhrasesToDefault,
+                modifier = Modifier.testTag("phrase_reset_button"),
+            )
+
+            QueueIconButton(
+                icon = ExtraIcons.Remove,
+                contentDescription = "Remove the active phrase",
+                onClick = MetronomeEngine::removeCurrentPhrase,
+                modifier = Modifier.testTag("phrase_remove_button"),
+            )
+        }
+
+        PhraseQueueDots(
+            phrases = phrases,
+            activeIndex = activePhraseIndex,
+            onDotClick = MetronomeEngine::goToPhrase,
+            onDotRemove = MetronomeEngine::removePhrase,
+        )
+
+        QueueIconButton(
+            icon = Icons.Filled.Add,
+            contentDescription = "Add a phrase",
+            onClick = MetronomeEngine::addPhrase,
+            modifier = Modifier.testTag("phrase_add_button"),
+        )
+
+        val nextPhraseMode = when (phraseQueueMode) {
+            MetronomeEngine.QueueMode.LOOP -> MetronomeEngine.QueueMode.ONCE
+            MetronomeEngine.QueueMode.ONCE -> MetronomeEngine.QueueMode.MANUAL
+            MetronomeEngine.QueueMode.MANUAL -> MetronomeEngine.QueueMode.LOOP
+        }
+        QueueIconButton(
+            icon = when (phraseQueueMode) {
+                MetronomeEngine.QueueMode.LOOP -> ExtraIcons.Repeat
+                MetronomeEngine.QueueMode.ONCE -> ExtraIcons.SkipNext
+                MetronomeEngine.QueueMode.MANUAL -> ExtraIcons.TouchApp
+            },
+            contentDescription = "Phrase mode: ${phraseQueueMode.name.lowercase()} - tap to change",
+            onClick = { MetronomeEngine.setPhraseQueueMode(nextPhraseMode) },
+            modifier = Modifier.testTag("phrase_mode_button"),
+        )
+    }
+}
+
+/**
+ * The phrase-level counterpart to [BarQueueDots] - each phrase's dot is a miniature vertical
+ * stack of thin bar-segments, one per bar in that phrase, rather than one uniform-sized rectangle.
+ * A segment's *width* echoes its bar's beat count relative to the phrase's own bars (the same
+ * scaling idea [BarQueueDots] uses one level down, simplified/miniaturized - deliberately not a
+ * second full [BarQueueDots], per the explicit "stay minimal" instruction this feature shipped
+ * under: no per-segment tempo/height scaling, no per-segment beat ticks, just enough shape to read
+ * "this phrase is made of N bars of roughly these relative lengths" at a glance). The dot's own
+ * overall bounding box stays fixed at [MIN_BAR_HIT_WIDTH]x[MAX_BAR_HEIGHT] regardless of bar
+ * count, so the phrase strip's own layout never shifts as bars are added/removed within a phrase -
+ * only what's drawn *inside* that fixed box changes. Tap a phrase to jump to it (see
+ * [MetronomeEngine.goToPhrase]); long-press to remove it, the same "long-press for destructive"
+ * gesture [BarQueueDots] already uses.
+ */
+@Composable
+private fun PhraseQueueDots(
+    phrases: List<Phrase>,
+    activeIndex: Int,
+    onDotClick: (Int) -> Unit,
+    onDotRemove: (Int) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        phrases.forEachIndexed { index, phrase ->
+            val isActive = index == activeIndex
+            val alpha = if (isActive) ACTIVE_BAR_ALPHA else INACTIVE_BAR_ALPHA
+            val minBeats = phrase.bars.minOf { it.beatCount }
+            val maxBeats = phrase.bars.maxOf { it.beatCount }
+            val beatSpan = (maxBeats - minBeats).coerceAtLeast(1)
+
+            Box(
+                modifier = Modifier
+                    .testTag("phrase_dot_$index")
+                    .width(MIN_BAR_HIT_WIDTH)
+                    .height(MAX_BAR_HEIGHT)
+                    .pointerInput(index) {
+                        detectTapGestures(
+                            onTap = { onDotClick(index) },
+                            onLongPress = { onDotRemove(index) },
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    modifier = Modifier.width(MAX_BAR_WIDTH).height(MAX_BAR_HEIGHT),
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                ) {
+                    phrase.bars.forEach { bar ->
+                        val widthFraction = if (maxBeats == minBeats) {
+                            1f
+                        } else {
+                            (bar.beatCount - minBeats).toFloat() / beatSpan
+                        }
+                        val segmentWidth = MIN_BAR_WIDTH + (MAX_BAR_WIDTH - MIN_BAR_WIDTH) * widthFraction
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .width(segmentWidth.coerceAtLeast(MIN_BAR_WIDTH))
+                                .background(PureWhite.copy(alpha = alpha)),
                         )
                     }
                 }
@@ -915,9 +1131,13 @@ private val MAX_BAR_HEIGHT = 30.dp
 private val MIN_BAR_HIT_WIDTH = 22.dp
 private const val INACTIVE_BAR_ALPHA = 0.35f
 private const val ACTIVE_BAR_ALPHA = 0.7f
-private val TIME_SIG_STEPPER_SIZE = 26.dp
-private val TIME_SIG_ICON_SIZE = 11.dp
-private val TIME_SIG_NUMBER_MIN_WIDTH = 20.dp
+private val TIME_SIG_STEPPER_SIZE = 32.dp
+private val TIME_SIG_ICON_SIZE = 14.dp
+private val TIME_SIG_NUMBER_MIN_WIDTH = 26.dp
+
+/** Size for the small, secondary-colored unit-symbol marks (bpm/beats/beat-type/bar/phrase) gated
+ * by [MetronomeEngine.unitSymbolsEnabled] - deliberately tiny, a label rather than a control. */
+private val UNIT_SYMBOL_SIZE = 10.dp
 
 /** Fixed height for the whole queue row (bars + icon buttons) - tall enough for the tallest
  * possible bar plus a little buffer, so the row's footprint never changes as bars are

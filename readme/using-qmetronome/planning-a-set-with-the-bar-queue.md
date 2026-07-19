@@ -41,5 +41,34 @@ blur together on the small shared canvas, the dedicated bar row above is still t
 navigate it. The queue, which bar is active, and the advance mode all persist across restarts, same
 as tempo and beats-per-bar always have.
 
+## Grouping bars into phrases
+
+![Adding a phrase and switching between them, in motion](../../docs/images/generated/videos/phrase-queue-management.gif)
+
+A single bar queue is enough for a lot of songs, but a real set often has distinct sections - a
+verse groove, a different chorus meter, a bridge at another tempo entirely. A small icon at the end
+of the bar-queue row adds a **phrase**: a song-form section with its own complete bar queue - own
+bars, own add/remove/dots, own advance mode - exactly like the one you already know, just one level
+up. With a single phrase (the default), this is the only trace of the feature on screen; nothing
+else changes, and there's nothing to learn until you actually add a second one.
+
+Once a second phrase exists, a full phrase-management strip appears below the bar queue, mirroring
+it control for control: a trash icon to collapse back to one default phrase, `−` to remove the
+active phrase, one dot per phrase (tap to jump to it and land on its first bar, long-press to
+remove it directly), `+` to add another, and a mode icon cycling **Loop**/**Once**/**Manual** - the
+same three choices the bar queue's own mode uses, now governing how playback flows from one phrase
+into the next. A phrase set to **Once** hands off to the next phrase (per the phrase-level mode) the
+moment its own bars run out; **Loop** keeps a phrase playing indefinitely until you switch away
+manually. Removing phrases back down to just one makes the whole strip disappear again - it only
+exists while there's more than one phrase to manage.
+
+Each phrase's dot is itself a small vertical stack of thin bar-segments, one per bar in that
+phrase, each segment's width echoing that bar's beat count relative to the others in the same
+phrase - a miniature version of the bar queue's own width-scaled rectangles above, giving a
+phrase's own rough shape at a glance without needing to open it. With more than one phrase queued,
+a small dot per phrase additionally appears around the physical Glyph Matrix's outer rim (and its
+on-screen preview mirror) - the active phrase reading brighter than the rest - independently
+toggleable from the bar-queue background in Settings → Visualizer.
+
 Every gesture here also has its own screenshot/video page in
 [the user guide](../../docs/user-guide/README.md#bar-queue).

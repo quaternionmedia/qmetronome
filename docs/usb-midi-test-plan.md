@@ -1,10 +1,12 @@
 # Real-world USB MIDI clock test plan
 
-For verifying the USB MIDI path (`UsbMidiConnector` + `MidiClockSource`/`MidiClockSender`)
-against actual hardware — this is the one part of the MIDI clock work I can't verify myself
-without the gear in hand, so this is written to be self-contained for you to run. Covers both
-directions: following a device's clock (section 2) and sending our clock to a device (section
-5) — they're independent connections, so test them separately before trying both at once.
+For verifying the USB MIDI path (`UsbMidiConnector` + `MidiClockSource`/`MidiClockSender`, plus
+`MidiActionSender` for per-beat-type Note/CC - section 7) against actual hardware — this is the
+part of the MIDI work I can't verify myself without the gear in hand, so this is written to be
+self-contained for you to run. Covers both clock directions: following a device's clock (section
+2) and sending our clock to a device (section 5) — they're independent connections, so test them
+separately before trying both at once. MIDI Actions (section 7) rides the same "Send to" USB
+connection as outgoing clock, so get that working first.
 
 ## What you'll need
 
@@ -170,3 +172,77 @@ never fired, fired but didn't recognize the device as starred (worth checking wh
 device's `PROPERTY_SERIAL_NUMBER` is null/empty and it's falling back to display name - two
 identical-model devices with no serial would then collide on the same key), or fired and tried to
 reconnect but `openDevice()` failed.
+
+## 7. Sending MIDI Note/CC actions per beat type
+
+Also never run against real hardware - `MidiActionSender` is unit-tested at the byte-construction
+level (`MidiActionSenderTest`, a fake `MidiReceiver`), but not against anything that actually
+interprets Note On/Off or CC as a synth or a lighting rig would.
+
+1. Get section 5 (sending clock) working first, or skip clock entirely and just connect via
+   "Send to" - Actions doesn't require clock-out to also be on, they're independent switches.
+2. In Settings → MIDI Actions, turn on the section's own switch (separate from "Send MIDI clock").
+3. Pick a beat type - **Bar** is the easiest first test, since it fires on every single beat with
+   `beatCount` set to 1 (Settings → Tempo & Bars, or just watch beat 1 of a normal bar). Set it to
+   **Note**, a channel, a note number, a velocity, and a short duration (20-50ms is a reasonable
+   start).
+4. Point your synth/DAW/MIDI monitor at whatever you connected in step 1, and press play in
+   qMetronome.
+
+**What should happen:** a Note On at the configured note/velocity/channel on every Bar beat,
+followed by a Note Off roughly `durationMs` later - on a synth, this should sound a distinct,
+short note in time with the downbeat; on a MIDI monitor, you should see matched On/Off pairs, not
+Note Ons with no matching Off (which would mean a receiver is holding a stuck note).
+
+Once Bar works, mark some beats **Accent**/**Strong Accent**/**Custom** (long-press the
+beats-per-bar number, tap a beat's chip to cycle it - see the in-app Help screen or
+`docs/user-guide/marking-beat-accents.md`) and configure a different Note or CC for each in
+Settings → MIDI Actions' per-sound tabs. Confirm each type actually fires only on beats marked
+that way, and that switching a beat type's action to **CC** sends a single 3-byte CC message with
+no Note Off follow-up (there's nothing to release).
+
+**Also worth checking specifically:**
+
+- **MIDI Actions still fires with Click off, or during a randomly-muted beat.** This is
+  deliberate, not a bug - see `MetronomeEngine.beatTypeFor`'s own kdoc. Turn Click off in
+  Settings, confirm the configured beat action still fires on your synth/monitor.
+- **Velocity 0 never arrives as a de-facto Note Off.** Set a beat's velocity to its minimum in the
+  UI and confirm the monitor shows a real Note On (velocity 1, not 0) - some receivers treat a
+  velocity-0 Note On as an implicit Note Off, which `MidiActionSender` deliberately floors against.
+- **Multiple beat types configured at once don't interfere with each other or with outgoing
+  clock**, if you also have "Send MIDI clock" on to the same device - Bar's Note shouldn't delay
+  or garble a clock tick landing at nearly the same moment, and vice versa.
+
+**If it doesn't work:** logcat for `MidiActionSender` will show every send attempt and any
+exception from a destination that's gone away, the same shape `MidiClockSender`'s own logging
+already has. If bytes never leave the phone at all, first confirm the MIDI Actions section's own
+switch is on (separate from "Send MIDI clock") and that the beat type you're testing isn't set to
+**None**.
+
+### 7.1 Per-beat overrides and the Trigger button
+
+In Settings → Beat Overrides, step to a specific beat (the +/- stepper is scoped to the active
+bar's own beat count) and assign it a Note/CC distinct from that beat's type-level default
+configured in section 7 above.
+
+**What should happen:** during playback, that one beat sends its own override, while every other
+beat of the same type still sends the type's own default - confirm both on a monitor across a
+few bars. The section's own summary text shows "N set" once any beat in the active bar has an
+override; clearing one via "Clear override" should drop that count and revert the beat back to
+following its type's default (shown as "Following &lt;Type&gt;'s own default").
+
+The **Trigger** button fires whatever's actually configured for the engine's current beat position
+- confirm it works both while stopped (a one-shot send with no playback running) and while
+playing (fires the same thing `onBeat` would have sent for that beat, independent of the live
+beat-firing loop).
+
+### 7.2 Phrase actions
+
+With more than one phrase queued (see `docs/user-guide/phrase-queue-management.md` for the
+gesture), open Settings → Phrase Actions, step to a phrase, and assign it a Note/CC.
+
+**What should happen:** the action fires exactly once every time that phrase becomes active -
+tapping its dot on the main screen, arriving via the automatic Once-mode cascade at a phrase
+boundary, and even tapping the dot of the phrase that's *already* active (re-entering fires again,
+it's not gated on a genuine transition). Confirm a phrase with no action configured (the default)
+stays silent - only phrases you've explicitly assigned one to should ever send anything here.

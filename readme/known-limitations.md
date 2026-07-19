@@ -18,3 +18,10 @@
 - USB MIDI only scans `TRANSPORT_MIDI_BYTE_STREAM` devices; a USB-MIDI 2.0/UMP-only device
   wouldn't show up in the scan yet (see the troubleshooting section in
   `docs/usb-midi-test-plan.md`).
+- Per-beat-type MIDI Note/CC output (Settings → MIDI Actions), per-beat overrides (Settings → Beat
+  Overrides, plus the manual Trigger button), and per-phrase actions (Settings → Phrase Actions)
+  are all implemented and unit-tested against a fake `MidiReceiver`, but not yet verified against
+  real hardware - see `docs/usb-midi-test-plan.md` section 7 and its 7.1/7.2 subsections.
+- The radial per-phrase indicator on the ambient Glyph Matrix overlay (`QueueOverlay`) has a
+  practical legibility ceiling, not engineered around for a first pass - dots start crowding
+  somewhere around 6-8+ simultaneous phrases on the real matrix's small pixel grid.

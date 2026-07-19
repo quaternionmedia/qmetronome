@@ -30,6 +30,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
@@ -41,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -62,6 +64,11 @@ import media.quaternion.qmetronome.engine.DEFAULT_AUDIO_OFFSET_MS
 import media.quaternion.qmetronome.engine.DEFAULT_FIRST_BEAT_COUNT_IN_CAP_MS
 import media.quaternion.qmetronome.engine.DEFAULT_VISUAL_OFFSET_MS
 import media.quaternion.qmetronome.engine.MetronomeEngine
+import media.quaternion.qmetronome.engine.MidiActionType
+import media.quaternion.qmetronome.engine.MidiBeatAction
+import media.quaternion.qmetronome.engine.Phrase
+import media.quaternion.qmetronome.engine.TimeSignature
+import media.quaternion.qmetronome.midi.MidiActionSender
 import media.quaternion.qmetronome.midi.MidiClockSender
 import media.quaternion.qmetronome.midi.UsbMidiConnector
 import media.quaternion.qmetronome.ui.icons.ExtraIcons
@@ -95,19 +102,24 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
     val clickEnabled by MetronomeEngine.clickEnabled.collectAsState()
     val clickSpecs by MetronomeEngine.clickSpecs.collectAsState()
     val clockOutEnabled by MidiClockSender.enabled.collectAsState()
+    val midiActionsEnabled by MidiActionSender.enabled.collectAsState()
+    val midiActions by MidiActionSender.actions.collectAsState()
     val visualOffsetMs by MetronomeEngine.visualOffsetMs.collectAsState()
     val audioOffsetMs by MetronomeEngine.audioOffsetMs.collectAsState()
     val firstBeatCountInCapMs by MetronomeEngine.firstBeatCountInCapMs.collectAsState()
     val stagedBpm by MetronomeEngine.stagedBpm.collectAsState()
     val timeSignature by MetronomeEngine.timeSignature.collectAsState()
+    val phrases by MetronomeEngine.phrases.collectAsState()
     val extendedBpmRangeEnabled by MetronomeEngine.extendedBpmRangeEnabled.collectAsState()
     var showBpmDialog by remember { mutableStateOf(false) }
     val compactLandscape by MetronomeEngine.compactLandscape.collectAsState()
     val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
+    val unitSymbolsEnabled by MetronomeEngine.unitSymbolsEnabled.collectAsState()
     val muteProbability by MetronomeEngine.muteProbability.collectAsState()
     val progressiveMuteEnabled by MetronomeEngine.progressiveMuteEnabled.collectAsState()
     val progressiveMuteRampBars by MetronomeEngine.progressiveMuteRampBars.collectAsState()
     val queueOverlayEnabled by MetronomeEngine.queueOverlayEnabled.collectAsState()
+    val phraseIndicatorEnabled by MetronomeEngine.phraseIndicatorEnabled.collectAsState()
     val visualizerEnabled by MetronomeEngine.visualizerEnabled.collectAsState()
     val persistentModeEnabled by MetronomeEngine.persistentModeEnabled.collectAsState()
 
@@ -262,13 +274,27 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Bar queue background", style = MaterialTheme.typography.bodyMedium)
-                    Switch(checked = queueOverlayEnabled, onCheckedChange = MetronomeEngine::setQueueOverlayEnabled)
+                    Switch(
+                        checked = queueOverlayEnabled,
+                        onCheckedChange = MetronomeEngine::setQueueOverlayEnabled,
+                        modifier = Modifier.testTag("queue_overlay_switch"),
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Phrase indicator", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = phraseIndicatorEnabled,
+                        onCheckedChange = MetronomeEngine::setPhraseIndicatorEnabled,
+                        modifier = Modifier.testTag("phrase_indicator_switch"),
+                    )
                 }
                 Text(
-                    text = "Independent toggles - run either, both, or neither. The beat visualizer " +
-                        "is the animated pattern above (pendulum, sweep, etc.); the bar queue " +
-                        "background is the ambient per-bar/per-beat pattern baked into the Glyph " +
-                        "Matrix (and its on-screen preview) when more than one bar is queued.",
+                    text = "Independent toggles - run any combination. The beat visualizer is the " +
+                        "animated pattern above (pendulum, sweep, etc.); the bar queue background " +
+                        "is the ambient per-bar/per-beat pattern baked into the Glyph Matrix (and " +
+                        "its on-screen preview) when more than one bar is queued; the phrase " +
+                        "indicator is a small dot per phrase around the matrix's outer rim when " +
+                        "more than one phrase exists.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.secondary,
                 )
@@ -375,6 +401,21 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                     text = "Drops words from the main screen's tempo/transport controls in favor of " +
                         "icons and dots only (TAP, HOLD, the BPM unit label, \"staged\" indicators) - " +
                         "a more unified, purely iconographic look that also needs no translation.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Unit symbols", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = unitSymbolsEnabled,
+                        onCheckedChange = MetronomeEngine::setUnitSymbolsEnabled,
+                        modifier = Modifier.testTag("unit_symbols_switch"),
+                    )
+                }
+                Text(
+                    text = "Shows a small secondary mark next to BPM, beats, beat type, bar, and " +
+                        "phrase controls, naming what each one is at a glance. On by default; turn " +
+                        "off for a cleaner, symbol-free look.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.secondary,
                 )
@@ -496,6 +537,61 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
 
             HorizontalDivider()
 
+            CollapsibleSection(
+                title = "MIDI Actions",
+                summary = {
+                    Switch(
+                        checked = midiActionsEnabled,
+                        onCheckedChange = MidiActionSender::setEnabled,
+                        modifier = Modifier.testTag("midi_actions_switch"),
+                    )
+                },
+            ) {
+                Text(
+                    text = "Send a MIDI Note or CC message per beat type, over the same virtual/USB " +
+                        "connections \"Send clock\" above already reaches - independent of the " +
+                        "audible click, so these fire on their own schedule whether or not Click is " +
+                        "on, or a beat happens to be randomly muted for practice.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+                MidiActionTabs(midiActions)
+            }
+
+            HorizontalDivider()
+
+            CollapsibleSection(
+                title = "Beat Overrides",
+                summary = {
+                    val overrideCount = timeSignature.midiOverrides?.size ?: 0
+                    Text(
+                        text = if (overrideCount == 0) "None set" else "$overrideCount set",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                },
+            ) {
+                BeatOverridesSection(timeSignature = timeSignature, midiActions = midiActions)
+            }
+
+            HorizontalDivider()
+
+            CollapsibleSection(
+                title = "Phrase Actions",
+                summary = {
+                    val phraseActionCount = phrases.count { it.action.type != MidiActionType.NONE }
+                    Text(
+                        text = if (phraseActionCount == 0) "None set" else "$phraseActionCount set",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                },
+            ) {
+                PhraseActionsSection(phrases = phrases)
+            }
+
+            HorizontalDivider()
+
             Spacer(Modifier.height(16.dp))
             Button(onClick = onActivateToy, modifier = Modifier.fillMaxWidth()) {
                 Text("Activate as Glyph Toy")
@@ -548,15 +644,23 @@ private fun AppVersionFooter() {
 
 // ── Click sounds ────────────────────────────────────────────────────────────
 
+private fun MidiActionType.displayLabel(): String = when (this) {
+    MidiActionType.NONE -> "None"
+    MidiActionType.NOTE -> "Note"
+    MidiActionType.CC -> "CC"
+}
+
 private fun ClickSound.displayLabel(): String = when (this) {
     ClickSound.BAR -> "Bar"
     ClickSound.REGULAR -> "Beat"
     ClickSound.ACCENT -> "Accent"
+    ClickSound.STRONG_ACCENT -> "Strong Accent"
+    ClickSound.CUSTOM -> "Custom"
 }
 
 /**
- * Bar/Beat/Accent share the exact same control schema ([ClickSpec]: waveform, frequency,
- * duration) - tabbed rather than stacked three times over, since that's exactly the case where
+ * All five [ClickSound]s share the exact same control schema ([ClickSpec]: waveform, frequency,
+ * duration) - tabbed rather than stacked five times over, since that's exactly the case where
  * tabs pay for themselves instead of just adding another layer of navigation.
  */
 @Composable
@@ -564,8 +668,11 @@ private fun ClickSoundTabs(clickSpecs: Map<ClickSound, ClickSpec>) {
     var selected by remember { mutableStateOf(ClickSound.BAR) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(ClickSound.BAR, ClickSound.REGULAR, ClickSound.ACCENT).forEach { sound ->
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ClickSound.entries.forEach { sound ->
                 FilterChip(
                     selected = selected == sound,
                     onClick = { selected = sound },
@@ -576,10 +683,257 @@ private fun ClickSoundTabs(clickSpecs: Map<ClickSound, ClickSpec>) {
         ClickSoundControls(sound = selected, spec = clickSpecs.getValue(selected))
         Text(
             text = "Generated tones, no samples - tune each one's waveform, pitch and length. " +
-                "Bar plays on beat 1 of every bar, Beat on every other beat. Accent is wired in " +
-                "but not reachable yet - nothing marks extra beats within a bar accented today.",
+                "Bar plays on beat 1 of every bar, Beat on every unmarked beat; Accent/Strong " +
+                "Accent/Custom play on beats marked that way - long-press the beats-per-bar " +
+                "number on the main screen to mark them.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.secondary,
+        )
+    }
+}
+
+/**
+ * All five [ClickSound]s share the exact same MIDI action schema ([MidiBeatAction]: type,
+ * channel, number, value, duration) - tabbed the same way [ClickSoundTabs] already is, for the
+ * same reason. Internal (not private) for the same reason as [ClockFeelChips]/[JumpToUnitChips]:
+ * [HelpScreen] embeds this exact live control directly.
+ */
+@Composable
+internal fun MidiActionTabs(actions: Map<ClickSound, MidiBeatAction>) {
+    var selected by remember { mutableStateOf(ClickSound.BAR) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ClickSound.entries.forEach { sound ->
+                FilterChip(
+                    selected = selected == sound,
+                    onClick = { selected = sound },
+                    label = { Text(sound.displayLabel()) },
+                )
+            }
+        }
+        MidiActionControls(sound = selected, action = actions.getValue(selected))
+    }
+}
+
+/** Thin wrapper over [MidiActionEditor] for the per-[ClickSound] type-default case - reads/writes
+ * through [MidiActionSender.setAction]/[MidiActionSender.actions]. */
+@Composable
+private fun MidiActionControls(sound: ClickSound, action: MidiBeatAction) {
+    MidiActionEditor(
+        label = sound.displayLabel(),
+        action = action,
+        currentAction = { MidiActionSender.actions.value.getValue(sound) },
+        onChange = { MidiActionSender.setAction(sound, it) },
+    )
+}
+
+/**
+ * The type/channel/number/value/duration controls shared by every [MidiBeatAction] editing
+ * surface in this app - the per-[ClickSound] type-default tabs ([MidiActionControls]) and the
+ * per-beat override editor ([BeatOverridesSection]) both call this instead of duplicating five
+ * [SteppedSlider]s each. [currentAction] mirrors [SteppedSlider]'s own [action] param - a
+ * caller backed by a `StateFlow` should read it fresh each call (not close over [action] itself),
+ * the same "authoritative source, not a stale recomposition-time snapshot" fix
+ * [BpmControls.currentBpm] established, needed here since [HoldRepeatButton]'s repeat loop can
+ * fire several steps before recomposition catches up.
+ */
+@Composable
+private fun MidiActionEditor(
+    label: String,
+    action: MidiBeatAction,
+    currentAction: () -> MidiBeatAction,
+    onChange: (MidiBeatAction) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MidiActionType.entries.forEach { type ->
+                FilterChip(
+                    selected = action.type == type,
+                    onClick = { onChange(action.copy(type = type)) },
+                    label = { Text(type.displayLabel()) },
+                )
+            }
+        }
+        if (action.type != MidiActionType.NONE) {
+            SteppedSlider(
+                value = (action.channel + 1).toFloat(),
+                onValueChange = { onChange(action.copy(channel = it.roundToInt().coerceIn(1, 16) - 1)) },
+                currentValue = { (currentAction().channel + 1).toFloat() },
+                valueRange = 1f..16f,
+                step = 1f,
+                defaultValue = 1f,
+                dialogTitle = "Set $label MIDI channel",
+                valueLabel = { "Ch ${it.roundToInt()}" },
+            )
+            SteppedSlider(
+                value = action.number.toFloat(),
+                onValueChange = { onChange(action.copy(number = it.roundToInt().coerceIn(0, 127))) },
+                currentValue = { currentAction().number.toFloat() },
+                valueRange = 0f..127f,
+                step = 1f,
+                defaultValue = 60f,
+                dialogTitle = if (action.type == MidiActionType.NOTE) "Set $label note number" else "Set $label CC number",
+                valueLabel = { if (action.type == MidiActionType.NOTE) "Note ${it.roundToInt()}" else "CC ${it.roundToInt()}" },
+            )
+            SteppedSlider(
+                value = action.value.toFloat(),
+                onValueChange = { onChange(action.copy(value = it.roundToInt().coerceIn(0, 127))) },
+                currentValue = { currentAction().value.toFloat() },
+                valueRange = 0f..127f,
+                step = 1f,
+                defaultValue = 100f,
+                dialogTitle = if (action.type == MidiActionType.NOTE) "Set $label velocity" else "Set $label CC value",
+                valueLabel = { "${it.roundToInt()}" },
+            )
+            if (action.type == MidiActionType.NOTE) {
+                SteppedSlider(
+                    value = action.durationMs.toFloat(),
+                    onValueChange = { onChange(action.copy(durationMs = it.roundToInt().coerceAtLeast(0))) },
+                    currentValue = { currentAction().durationMs.toFloat() },
+                    valueRange = 5f..500f,
+                    step = 5f,
+                    defaultValue = 20f,
+                    dialogTitle = "Set $label note duration (ms)",
+                    valueLabel = { "${it.roundToInt()} ms" },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Authors a single beat's own [MidiBeatAction] override (see [TimeSignature.midiOverrides]) - a
+ * simple +/- beat-index stepper (scoped to the active bar's [TimeSignature.beatCount], per the
+ * original ask: "Simple +/- transport is plenty for this round") plus the same [MidiActionEditor]
+ * the type-default tabs use, so authoring an override never drifts from authoring a type default.
+ * Shows that beat's *effective* action (its own override if set, else its resolved [ClickSound]
+ * type's own configured default - see [MetronomeEngine.resolveMidiActionForBeat]) rather than a
+ * blank slate, so editing always starts from what would actually fire.
+ *
+ * Takes [timeSignature]/[midiActions] as explicit parameters (not read internally from their own
+ * `StateFlow`s) so this composable's recomposition is driven by normal Compose parameter-change
+ * tracking - the same pattern [MidiActionTabs] already uses - rather than depending on whichever
+ * ancestor scope happens to also read those flows.
+ */
+@Composable
+private fun BeatOverridesSection(timeSignature: TimeSignature, midiActions: Map<ClickSound, MidiBeatAction>) {
+    var selectedBeatIndex by remember { mutableStateOf(0) }
+    val lastIndex = (timeSignature.beatCount - 1).coerceAtLeast(0)
+    val beatIndex = selectedBeatIndex.coerceIn(0, lastIndex)
+    val sound = MetronomeEngine.beatTypeFor(beatIndex)
+    val override = timeSignature.midiOverrideAt(beatIndex)
+    val effectiveAction = override ?: midiActions[sound] ?: MidiBeatAction()
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Give one specific beat its own MIDI action, overriding its type's default " +
+                "above for that beat only. The Trigger button fires whatever's actually " +
+                "configured for the engine's current beat - handy for one-shot testing without " +
+                "starting playback.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.secondary,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            IconButton(
+                onClick = { selectedBeatIndex = (beatIndex - 1).coerceAtLeast(0) },
+                modifier = Modifier.testTag("beat_override_prev_button"),
+            ) {
+                Icon(ExtraIcons.Remove, contentDescription = "Previous beat")
+            }
+            Text(
+                text = "Beat ${beatIndex + 1} of ${timeSignature.beatCount}",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag("beat_override_index_label"),
+            )
+            IconButton(
+                onClick = { selectedBeatIndex = (beatIndex + 1).coerceAtMost(lastIndex) },
+                modifier = Modifier.testTag("beat_override_next_button"),
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = "Next beat")
+            }
+        }
+        Text(
+            text = if (override != null) "Override set" else "Following ${sound.displayLabel()}'s own default",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (override != null) RecordingRed else MaterialTheme.colorScheme.secondary,
+        )
+        MidiActionEditor(
+            label = "beat ${beatIndex + 1}",
+            action = effectiveAction,
+            currentAction = { MetronomeEngine.resolveMidiActionForBeat(beatIndex) },
+            onChange = { MetronomeEngine.setMidiOverride(beatIndex, it) },
+        )
+        if (override != null) {
+            TextButton(
+                onClick = { MetronomeEngine.setMidiOverride(beatIndex, null) },
+                modifier = Modifier.testTag("beat_override_clear_button"),
+            ) {
+                Text("Clear override")
+            }
+        }
+        Button(
+            onClick = {
+                MidiActionSender.fire(MetronomeEngine.resolveMidiActionForBeat(MetronomeEngine.state.value.beatIndex), System.nanoTime())
+            },
+            modifier = Modifier.fillMaxWidth().testTag("midi_trigger_button"),
+        ) {
+            Text("Trigger")
+        }
+    }
+}
+
+/**
+ * Authors a single phrase's own [Phrase.action] (see [MetronomeEngine.setPhraseAction]) - a
+ * simple +/- phrase-index stepper plus the same [MidiActionEditor] [BeatOverridesSection] uses,
+ * so authoring a phrase action never drifts from authoring a beat override or a type default.
+ * Fires once, automatically, whenever [MetronomeEngine.goToPhrase] resolves to that phrase - no
+ * separate Trigger button here the way [BeatOverridesSection] has one, since jumping to the
+ * phrase *is* the trigger (tap its dot on the main screen, or step here and it'll fire the next
+ * time you navigate to it).
+ */
+@Composable
+private fun PhraseActionsSection(phrases: List<Phrase>) {
+    var selectedPhraseIndex by remember { mutableStateOf(0) }
+    val lastIndex = (phrases.size - 1).coerceAtLeast(0)
+    val phraseIndex = selectedPhraseIndex.coerceIn(0, lastIndex)
+    val action = phrases[phraseIndex].action
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Give a phrase its own MIDI action, fired once whenever you jump to it - " +
+                "tapping its dot on the main screen, or arriving there automatically as the " +
+                "queue advances.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.secondary,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            IconButton(
+                onClick = { selectedPhraseIndex = (phraseIndex - 1).coerceAtLeast(0) },
+                modifier = Modifier.testTag("phrase_action_prev_button"),
+            ) {
+                Icon(ExtraIcons.Remove, contentDescription = "Previous phrase")
+            }
+            Text(
+                text = "Phrase ${phraseIndex + 1} of ${phrases.size}",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag("phrase_action_index_label"),
+            )
+            IconButton(
+                onClick = { selectedPhraseIndex = (phraseIndex + 1).coerceAtMost(lastIndex) },
+                modifier = Modifier.testTag("phrase_action_next_button"),
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = "Next phrase")
+            }
+        }
+        MidiActionEditor(
+            label = "phrase ${phraseIndex + 1}",
+            action = action,
+            currentAction = { MetronomeEngine.phrases.value.getOrElse(phraseIndex) { Phrase() }.action },
+            onChange = { MetronomeEngine.setPhraseAction(phraseIndex, it) },
         )
     }
 }
