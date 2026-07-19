@@ -103,6 +103,31 @@ gradlew.bat test assembleDebug     # Windows
 CI runs the same tasks (plus the Glyph SDK import-boundary check) on every
 push and PR. A red CI is a blocker before merging.
 
+### Test execution bounds
+
+Every `Test` task carries an enforced, project-default wall-clock timeout
+(`tasks.withType<Test>().configureEach { timeout.set(...) }` in
+`app/build.gradle.kts`, currently 8 minutes) - applied automatically to every
+test class, current and future, with no per-file opt-in. A run that exceeds
+it is killed and fails loudly rather than continuing silently or
+indefinitely. This exists because "is this test hung or just slow" cannot be
+answered by watching it for a while and re-running it - that question has no
+terminating condition without an enforced bound (see
+[`governance/qm/adr/DRAFT-enforced-test-timeouts.md`](governance/qm/adr/DRAFT-enforced-test-timeouts.md)
+and the companion perspective
+[`governance/qm/perspectives/claude-sonnet-5-2026-07-18-test-timeout-halting-problem-retrospective.md`](governance/qm/perspectives/claude-sonnet-5-2026-07-18-test-timeout-halting-problem-retrospective.md)
+for the incident that established this rule).
+
+**If you're waiting on a test run - your own or an assistant's - and it looks
+stuck**: check `testLogging`'s live per-test `STARTED`/`PASSED`/`FAILED`
+output first (the last `STARTED` line with nothing after it is the one to
+investigate), and let the enforced timeout run its course rather than
+watching indefinitely or re-running speculatively. If you ever start a test
+run with no timeout in effect (e.g. after editing the `tasks.withType<Test>`
+block itself), treat restoring the bound as blocking, before continuing to
+wait on anything. Changing the bound means updating this section, the ADR
+above, and `app/build.gradle.kts` together, not just one of the three.
+
 ### Test coverage
 
 Tests live alongside the production code in `app/src/test/`. The suite uses

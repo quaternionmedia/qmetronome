@@ -1,4 +1,6 @@
+import java.time.Duration
 import java.util.Properties
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 
 plugins {
     alias(libs.plugins.android.application)
@@ -132,6 +134,30 @@ dependencies {
  * re-run (`./gradlew testDebugUnitTest -Proborazzi.test.record=true`). */
 roborazzi {
     outputDir.set(file("../docs/images/generated/screenshots"))
+}
+
+/** Per-test start/pass/fail/skip events, streamed live instead of only summarized at the end -
+ * without this, a slow or stalled individual test (Robolectric/Compose tests can occasionally
+ * hang on a `waitForIdle()` that never settles) is invisible until the whole task times out or
+ * finishes, with no way to tell which test was running. Applies to every `Test` task, including
+ * `generateUserGuide` below (it reuses `testDebugUnitTest`'s own task type). */
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events("started", "passed", "skipped", "failed")
+        exceptionFormat = TestExceptionFormat.FULL
+        showStackTraces = true
+    }
+    /** A hard, project-wide ceiling on the whole task's wall-clock time. Not a per-test bound -
+     * Gradle kills the whole test JVM, not just the offending method - but it's the mechanism
+     * that actually matters: without SOME enforced upper bound, "is this test hung or just slow"
+     * is undecidable from outside the process (the halting problem, for real), and the only
+     * fallback is babysitting a run indefinitely and re-checking it, which never converges on an
+     * answer either. 8 minutes is roughly 3x the suite's healthy full run (~2.5 min as of
+     * 2026-07), so a trip here is a real signal. Combined with the `testLogging` above, the last
+     * STARTED line before the kill identifies which test to investigate - required by
+     * `CONTRIBUTING.md`'s testing section and governance/qm's cross-project testing-standards ADR;
+     * do not remove without updating both. */
+    timeout.set(Duration.ofMinutes(8))
 }
 
 /** Regenerates `docs/user-guide/` (a `README.md` index plus one page per topic) from
