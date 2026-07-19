@@ -124,26 +124,32 @@ object MidiActionSender {
                     // receivers as a Note Off, which would silently turn a quiet accent into no
                     // sound at all rather than a quiet one.
                     val velocity = action.value.coerceIn(1, 127)
-                    send(byteArrayOf((NOTE_ON or channel).toByte(), note.toByte(), velocity.toByte()))
+                    send(byteArrayOf((NOTE_ON or channel).toByte(), note.toByte(), velocity.toByte()), timestampNanos)
                     val durationMs = action.durationMs.coerceAtLeast(0).toLong()
                     delay(durationMs)
-                    send(byteArrayOf((NOTE_OFF or channel).toByte(), note.toByte(), 0))
+                    // Stamped at the beat's own time plus the held duration, not send()'s actual
+                    // dispatch time - a timestamp-aware receiver should read Note Off as landing
+                    // exactly durationMs after this beat, regardless of coroutine/IPC scheduling jitter.
+                    send(byteArrayOf((NOTE_OFF or channel).toByte(), note.toByte(), 0), timestampNanos + durationMs * 1_000_000L)
                 }
                 MidiActionType.CC -> {
                     val channel = action.channel.coerceIn(0, 15)
                     val controller = action.number.coerceIn(0, 127)
                     val value = action.value.coerceIn(0, 127)
-                    send(byteArrayOf((CONTROL_CHANGE or channel).toByte(), controller.toByte(), value.toByte()))
+                    send(byteArrayOf((CONTROL_CHANGE or channel).toByte(), controller.toByte(), value.toByte()), timestampNanos)
                 }
             }
         }
     }
 
-    private fun send(message: ByteArray) {
-        val timestamp = System.nanoTime()
+    // [timestampNanos] is the caller's authoritative beat time (System.nanoTime() base, possibly
+    // lookahead-scheduled ahead of "now" - see MetronomeEngine.onBeat) rather than this function's
+    // own dispatch time, so a timestamp-aware receiver can align the event to the metronome's beat
+    // timing model instead of whenever the async send happened to run.
+    private fun send(message: ByteArray, timestampNanos: Long) {
         registry.forEach { destination ->
             try {
-                destination.send(message, 0, message.size, timestamp)
+                destination.send(message, 0, message.size, timestampNanos)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed sending a MIDI action to a destination", e)
             }

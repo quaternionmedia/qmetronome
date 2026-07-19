@@ -20,9 +20,11 @@ import org.robolectric.annotation.Config
 class MidiActionSenderTest {
 
     private val receivedMessages = mutableListOf<List<Int>>()
+    private val receivedTimestamps = mutableListOf<Long>()
     private val fakeDestination = object : MidiReceiver() {
         override fun onSend(msg: ByteArray, offset: Int, count: Int, timestamp: Long) {
             receivedMessages.add((offset until offset + count).map { msg[it].toInt() and 0xFF })
+            receivedTimestamps.add(timestamp)
         }
     }
 
@@ -30,6 +32,7 @@ class MidiActionSenderTest {
     fun setUp() {
         MetronomeEngine.resetForTesting()
         receivedMessages.clear()
+        receivedTimestamps.clear()
         MidiActionSender.addDestination(fakeDestination)
     }
 
@@ -84,6 +87,25 @@ class MidiActionSenderTest {
 
         assertEquals(2, receivedMessages.size)
         assertEquals(listOf(0x80, 60, 0), receivedMessages[1])
+    }
+
+    @Test
+    fun `send timestamps the caller's beat time, not the async dispatch time - Note Off offset by durationMs`() {
+        MidiActionSender.setEnabled(true)
+        MidiActionSender.setAction(
+            ClickSound.BAR,
+            MidiBeatAction(type = MidiActionType.NOTE, channel = 0, number = 60, value = 100, durationMs = 150),
+        )
+        val beatTimestampNanos = 42_000_000_000L // an arbitrary value far from any real nanoTime()
+
+        MidiActionSender.fireForBeat(ClickSound.BAR, beatTimestampNanos)
+        Thread.sleep(50)
+        assertEquals(1, receivedMessages.size)
+        assertEquals(beatTimestampNanos, receivedTimestamps[0])
+
+        Thread.sleep(250)
+        assertEquals(2, receivedMessages.size)
+        assertEquals(beatTimestampNanos + 150 * 1_000_000L, receivedTimestamps[1])
     }
 
     @Test

@@ -18,10 +18,13 @@ status=0
 
 while IFS= read -r line; do
   # `git submodule status` lines look like " <sha> <path> (<describe>)",
-  # optionally prefixed with `-` (not initialized) or `+` (checked-out SHA
-  # differs from the index) - strip either prefix, keep the SHA and path.
-  sha=$(echo "$line" | sed 's/^[-+]//' | awk '{print $1}')
-  path=$(echo "$line" | sed 's/^[-+]//' | awk '{print $2}')
+  # optionally prefixed with `-` (not initialized), `+` (checked-out SHA
+  # differs from the index), or `U` (merge conflict) - strip any of the three,
+  # keep the SHA and path. Without stripping `U` too, its SHA field would read
+  # "U<sha>" glued together as one token, and the resulting `git fetch` failure
+  # would report a wrong/misleading SHA instead of the real one.
+  sha=$(echo "$line" | sed 's/^[-+U]//' | awk '{print $1}')
+  path=$(echo "$line" | sed 's/^[-+U]//' | awk '{print $2}')
   url=$(git config -f .gitmodules --get "submodule.${path}.url" || true)
 
   if [ -z "$url" ]; then
