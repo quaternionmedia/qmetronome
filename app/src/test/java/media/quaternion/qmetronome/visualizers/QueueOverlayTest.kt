@@ -16,7 +16,6 @@ private const val MAX_BPM = 400f
 // QueueOverlay.kt - if those tuning constants change, update these too.
 private const val USABLE_RADIUS_FRACTION = 0.85f
 private const val MIN_ROW_WEIGHT = 0.4f
-private const val PHRASE_INDICATOR_RADIUS_FRACTION = 0.95f
 
 class QueueOverlayTest {
 
@@ -262,24 +261,25 @@ class QueueOverlayTest {
 
     @Test
     fun `every phrase-indicator pixel stays within the SDK's own circular mask`() {
-        val size = 25
-        val original = frameOf(size, 0)
-        val result = QueueOverlay.apply(original, size, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 6, activePhraseIndex = 2)
-        val center = (size - 1) / 2f
-        // The indicator sits deliberately outside the per-bar-row content's own conservative
-        // USABLE_RADIUS_FRACTION - allow a small margin past PHRASE_INDICATOR_RADIUS_FRACTION for
-        // the dot's own radius rather than asserting a razor-exact bound.
-        val maxAllowedRadius = size / 2f * PHRASE_INDICATOR_RADIUS_FRACTION + size / 2f * 0.1f
+        for (size in listOf(13, 25)) {
+            val original = frameOf(size, 0)
+            val result = QueueOverlay.apply(original, size, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 6, activePhraseIndex = 2)
+            val center = (size - 1) / 2f
+            // The true mask boundary - matrixSize/2 - not PHRASE_INDICATOR_RADIUS_FRACTION plus an
+            // arbitrary margin: QueueOverlay itself caps indicatorRadius so a dot's anti-aliased
+            // edge never crosses this, so this test should hold that exactly, not loosely.
+            val maxAllowedRadius = size / 2f
 
-        for (y in 0 until size) {
-            for (x in 0 until size) {
-                val index = y * size + x
-                if (result[index] != original[index]) {
-                    val distance = hypot(x - center, y - center)
-                    assertTrue(
-                        "phrase-indicator pixel ($x,$y) at distance $distance exceeds $maxAllowedRadius",
-                        distance <= maxAllowedRadius,
-                    )
+            for (y in 0 until size) {
+                for (x in 0 until size) {
+                    val index = y * size + x
+                    if (result[index] != original[index]) {
+                        val distance = hypot(x - center, y - center)
+                        assertTrue(
+                            "size=$size phrase-indicator pixel ($x,$y) at distance $distance exceeds $maxAllowedRadius",
+                            distance <= maxAllowedRadius,
+                        )
+                    }
                 }
             }
         }

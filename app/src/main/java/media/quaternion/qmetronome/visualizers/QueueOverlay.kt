@@ -128,8 +128,15 @@ object QueueOverlay {
         }
 
         if (phraseCount > 1) {
-            val indicatorRadius = matrixSize / 2f * PHRASE_INDICATOR_RADIUS_FRACTION
             val dotRadius = (matrixSize / 30f).coerceAtLeast(1f)
+            // filledCircle anti-aliases half a pixel past its own radius (see GlyphCanvas), so the
+            // farthest a lit pixel can land from the matrix center is indicatorRadius + dotRadius +
+            // 0.5 - cap indicatorRadius so that stays at or inside matrixSize/2, the SDK's own
+            // circular mask (readme/requirements.md's phrase-indicator requirement), rather than
+            // trusting PHRASE_INDICATOR_RADIUS_FRACTION alone, which spills past it at small matrix
+            // sizes where dotRadius's 1px floor is proportionally larger.
+            val indicatorRadius = (matrixSize / 2f * PHRASE_INDICATOR_RADIUS_FRACTION)
+                .coerceAtMost(matrixSize / 2f - dotRadius - 0.5f)
             val clampedActivePhrase = activePhraseIndex.coerceIn(0, phraseCount - 1)
             repeat(phraseCount) { i ->
                 val angle = Math.toRadians(-90.0 + i * 360.0 / phraseCount)

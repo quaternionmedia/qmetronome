@@ -153,7 +153,16 @@ fun TimeSignatureEntryDialog(
                                     val accent = accentPattern.getOrElse(beatIndex) { BeatAccent.NONE }
                                     FilterChip(
                                         selected = accent != BeatAccent.NONE,
-                                        onClick = { accentPattern[beatIndex] = accent.next() },
+                                        onClick = {
+                                            // beatCount's own recomposition can render a chip for
+                                            // beatIndex before the LaunchedEffect above has grown
+                                            // accentPattern to match (it reacts to beatCount on its
+                                            // own next effect pass, not synchronously with this
+                                            // composition) - grow here too so a tap in that window
+                                            // still lands instead of throwing IndexOutOfBounds.
+                                            while (accentPattern.size <= beatIndex) accentPattern.add(BeatAccent.NONE)
+                                            accentPattern[beatIndex] = accent.next()
+                                        },
                                         label = { Text(accent.chipLabel(beatIndex + 1)) },
                                     )
                                 }

@@ -376,7 +376,7 @@ class StreamingClickEngine {
             sampleRateHz,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
-        )).coerceAtLeast(chunkFrames() * 2)
+        )).coerceAtLeast(chunkFrames() * bytesPerFrame)
         bufferFrames = bufferBytes / bytesPerFrame
         return AudioTrack.Builder()
             .setAudioAttributes(
