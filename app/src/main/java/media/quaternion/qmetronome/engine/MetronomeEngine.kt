@@ -618,6 +618,17 @@ object MetronomeEngine {
         val spec = queue[clampedIndex]
         _timeSignature.value = spec
         _state.update { it.copy(beatsPerBar = spec.beatCount) }
+        // While HOLD is staging (Momentary or Latched), a staged value represents "what would
+        // apply to the bar I'm currently looking at" - re-snapshot both from the newly active
+        // bar here, the same initial capture beginHold()/toggleLatch() do when staging first
+        // begins. Without this, a bar change that lands here - direct navigation, or a
+        // reset/remove that jumps elsewhere - leaves the old bar's stale staged number both
+        // masking the real value on screen (see BpmControls' `stagedBpm ?: beat.bpm`) *and*
+        // primed to silently reapply itself and revert this change on the next flushStagedChanges().
+        if (_holdMode.value != HoldMode.Off) {
+            _stagedBeatsPerBar.value = spec.beatCount
+            _stagedBpm.value = spec.bpm
+        }
         // Switch the visualizer *before* setBpmImmediate() below, which is what actually refreshes
         // the idle-frame preview while stopped - switching after would mean that refresh still
         // rendered with the outgoing visualizer.

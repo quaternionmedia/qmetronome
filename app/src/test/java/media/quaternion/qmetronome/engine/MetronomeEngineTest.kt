@@ -422,6 +422,48 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `resetting the queue while latched updates the displayed staged bpm, not just the real one`() {
+        MetronomeEngine.setBpm(140f)
+        MetronomeEngine.toggleLatch() // latch captures the pre-reset bpm (140) as staged
+
+        MetronomeEngine.resetQueueToDefault()
+
+        // The real engine bpm is reset immediately (goToQueueBar always applies immediately -
+        // it's "which bar am I on", not a staged setting)...
+        assertEquals(TimeSignature.DEFAULT.bpm, MetronomeEngine.state.value.bpm, 0.01f)
+        // ...and the staged value - what BpmControls actually displays via `stagedBpm ?: beat.bpm`
+        // - must track it, or the screen would keep showing the stale pre-reset 140 while latched.
+        assertEquals(TimeSignature.DEFAULT.bpm, requireNotNull(MetronomeEngine.stagedBpm.value), 0.01f)
+
+        // Unlatching must not resurrect the stale 140 that was staged before the reset.
+        MetronomeEngine.toggleLatch()
+        assertEquals(TimeSignature.DEFAULT.bpm, MetronomeEngine.state.value.bpm, 0.01f)
+    }
+
+    @Test
+    fun `removing a bar while latched updates the displayed staged bpm and beats-per-bar too`() {
+        MetronomeEngine.setBeatsPerBar(3)
+        MetronomeEngine.setBpm(90f) // bar 0
+        MetronomeEngine.addBarToQueue() // bar 1, active
+        MetronomeEngine.setBeatsPerBar(5)
+        MetronomeEngine.setBpm(150f)
+
+        MetronomeEngine.toggleLatch() // latches bar 1's values (150 bpm, 5 beats) as staged
+
+        MetronomeEngine.removeCurrentBarFromQueue() // falls back to bar 0 (90 bpm, 3 beats)
+
+        assertEquals(90f, MetronomeEngine.state.value.bpm, 0.01f)
+        assertEquals(3, MetronomeEngine.state.value.beatsPerBar)
+        assertEquals(90f, requireNotNull(MetronomeEngine.stagedBpm.value), 0.01f)
+        assertEquals(3, MetronomeEngine.stagedBeatsPerBar.value)
+
+        // Unlatching must not reapply the stale, now-removed bar's staged 150bpm/5-beat values.
+        MetronomeEngine.toggleLatch()
+        assertEquals(90f, MetronomeEngine.state.value.bpm, 0.01f)
+        assertEquals(3, MetronomeEngine.state.value.beatsPerBar)
+    }
+
+    @Test
     fun `a negative audio offset fires the click before the engine's own beat counter advances (genuine lookahead)`() {
         val events = java.util.Collections.synchronizedList(mutableListOf<Pair<ClickSound, Long>>())
         MetronomeEngine.setClickListenerForTesting { sound, _ -> events.add(sound to MetronomeEngine.state.value.totalBeats) }
