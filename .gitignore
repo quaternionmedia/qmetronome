@@ -56,6 +56,7 @@ docs/images/generated/videos/*
 !docs/images/generated/screenshots/midi-actions.png
 !docs/images/generated/screenshots/beat-overrides.png
 !docs/images/generated/screenshots/phrase-actions.png
+!docs/images/generated/screenshots/trigger-button.png
 !docs/images/generated/screenshots/phrase-queue-management.png
 !docs/images/generated/screenshots/phrase-queue-mode-cycling.png
 !docs/images/generated/screenshots/unit-symbols.png
@@ -79,3 +80,6 @@ docs/images/generated/videos/*
 !docs/images/generated/videos/phrase-queue-management.gif
 !docs/images/generated/videos/phrase-queue-mode-cycling.gif
 !docs/images/generated/videos/unit-symbols.gif
+!docs/images/generated/videos/beat-overrides.gif
+!docs/images/generated/videos/phrase-actions.gif
+!docs/images/generated/videos/trigger-button.gif

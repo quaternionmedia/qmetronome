@@ -36,10 +36,13 @@ duration/gain, tunable in Settings → Click) to samples.
 
 **`HelpScreen`** (`ui/HelpScreen.kt`) — the in-app counterpart to `docs/user-guide/`, reached via
 the **?** icon next to the Settings gear on `MainScreen`. Reads the same `TutorialTopics` content
-as the generated doc, but instead of a static screenshot per topic, embeds the *real, live*
-production composable — the same shared-instance pattern `SettingsSheet` already established (one
-composed instance, wired to the actual `MetronomeEngine`, not a disconnected demo copy), so trying
-a control here really does change your tempo/settings, exactly like touching one in Settings would.
+as the generated doc; most categories embed the *real, live* production composable they're about —
+the same shared-instance pattern `SettingsSheet` already established (one composed instance, wired
+to the actual `MetronomeEngine`, not a disconnected demo copy), so trying a control there really
+does change your tempo/settings, exactly like touching one in Settings would. The exception is
+`TutorialCategory.MIDI`'s own topics beyond MIDI Actions/clock feel — Beat Overrides, Phrase
+Actions, and the Trigger action currently show only their text description here, not a live control
+of their own (a gap, not a design choice — see `HelpScreen`'s own `when` branch).
 
 **`HoldButton`** (`ui/HoldButton.kt`) — the momentary/latching "shift key" for BPM and
 beats-per-bar. While held, or latched, `MetronomeEngine.setBpm()`/`setBeatsPerBar()` stage instead
@@ -98,9 +101,10 @@ of `clickEnabled`/mute-probability — gated only by its own `enabled` flag and 
 configured action, the same way the visual flash is unaffected by muting the audible click. `fire`
 is the actual gating/send entry point; `fireForBeat` is a thin per-`ClickSound` wrapper over it -
 `onBeat` resolves through `MetronomeEngine.resolveMidiActionForBeat` (type default, unless a
-per-beat override is set) and calls `fire` directly, and the Settings → Beat Overrides "Trigger"
-button and `Phrase.action` both call `fire` the same way, so there is exactly one send path
-regardless of which of the three configures the action.
+per-beat override is set) and calls `fire` directly, and the main screen's manual Trigger action
+(TAP itself, once HOLD is latched and MIDI Actions is on — see `HoldButton`) and `Phrase.action`
+both call `fire` the same way, so there is exactly one send path regardless of which of the three
+configures the action.
 
 **`MidiClockSender`** (`midi/MidiClockSender.kt`) — generates MIDI clock (24 ppqn) from
 `MetronomeEngine.state` and writes it to a registered set of destinations, turning qMetronome into

@@ -34,14 +34,15 @@ Every gesture qMetronome has, one topic at a time - a screenshot of the real app
 - [Jump straight to BPM/BPH/BPS](settings-jump-to-unit.md) - In Settings, tap a unit chip to jump the live tempo straight into that range - a quick shortcut instead of dragging or typing an exact value.
 - [Compact landscape layout](compact-landscape-layout.md) - In Settings -> Layout, enable Compact landscape layout so rotating the phone puts the preview and controls side-by-side instead of overflowing.
 - [Symbol-only controls](symbol-only-controls.md) - In Settings -> Layout, enable Symbol-only controls to drop text labels from the main screen's tempo/transport controls in favor of icons and dots.
-- [Unit symbols](unit-symbols.md) - In Settings -> Layout, Unit symbols (on by default) shows a small mark next to BPM, beats, beat type, bar, and phrase controls, naming what each one is at a glance. Turn off for a cleaner, symbol-free look.
+- [Unit symbols](unit-symbols.md) - In Settings -> Layout, Unit symbols (on by default) shows a small mark next to BPM, beat type, bar, and phrase controls, naming what each one is at a glance. Turn off for a cleaner, symbol-free look.
 
 ## MIDI
 
 - [Mechanical vs Organic outgoing clock](settings-clock-feel.md) - Mechanical actively corrects the outgoing MIDI clock for the truest, most locked-in beat. Organic lets a followed clock's own natural timing variance through unfiltered. Only affects clock sent to other apps/gear, not this app's own click or flash.
 - [Send MIDI notes or CC per beat type](midi-actions.md) - In Settings -> MIDI Actions, turn on beat actions and pick Note or CC for any beat type (Bar, Beat, Accent, Strong Accent, Custom) - sent over the same virtual/USB connections "Send clock" already reaches, independent of whether the audible click is on.
-- [Give one beat its own MIDI action](beat-overrides.md) - In Settings -> Beat Overrides, step to any beat and assign it its own MIDI action, overriding its type's default for that beat only. The Trigger button fires whatever's configured for the engine's current beat position, for one-shot testing without starting playback.
-- [Give a phrase its own MIDI action](phrase-actions.md) - In Settings -> Phrase Actions, step to any phrase and assign it its own MIDI action, fired once whenever you jump to that phrase - tapping its dot on the main screen, or arriving there automatically as the queue advances.
+- [Give one beat its own MIDI action](beat-overrides.md) - In Settings -> Beat Overrides, browse to any phrase and bar (dot pickers, same as the main screen's own queues), step to any beat within it, and assign that exact beat its own MIDI action, overriding its type's default for that beat only.
+- [Give a phrase its own MIDI action](phrase-actions.md) - In Settings -> Phrase Actions, pick any phrase and assign it its own MIDI action, fired once whenever you jump to that phrase - tapping its dot on the main screen, or arriving there automatically as the queue advances.
+- [Manually trigger a beat's MIDI action](trigger-button.md) - Once MIDI Actions is turned on, latch HOLD (long-press or double-tap it) and TAP switches from tap-tempo to a lightning-bolt Trigger button - tap it to fire whatever's actually configured for the engine's live current beat position, for one-shot testing or hand-triggering gear/lights on cue, without starting playback or leaving the latch.
 
 ## Glyph Matrix
 

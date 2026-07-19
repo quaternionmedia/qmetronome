@@ -219,30 +219,47 @@ already has. If bytes never leave the phone at all, first confirm the MIDI Actio
 switch is on (separate from "Send MIDI clock") and that the beat type you're testing isn't set to
 **None**.
 
-### 7.1 Per-beat overrides and the Trigger button
+### 7.1 Per-beat overrides across any phrase/bar
 
-In Settings → Beat Overrides, step to a specific beat (the +/- stepper is scoped to the active
-bar's own beat count) and assign it a Note/CC distinct from that beat's type-level default
-configured in section 7 above.
+In Settings → Beat Overrides, browse to a specific phrase and bar - the same dot pickers the main
+screen's own phrase/bar queues use, shown only once there's more than one to choose from - then
+step to a beat within it (the +/- stepper is scoped to whichever bar is currently selected, not
+necessarily the one actually playing) and assign it a Note/CC distinct from that beat's type-level
+default configured in section 7 above.
 
 **What should happen:** during playback, that one beat sends its own override, while every other
 beat of the same type still sends the type's own default - confirm both on a monitor across a
-few bars. The section's own summary text shows "N set" once any beat in the active bar has an
-override; clearing one via "Clear override" should drop that count and revert the beat back to
-following its type's default (shown as "Following &lt;Type&gt;'s own default").
-
-The **Trigger** button fires whatever's actually configured for the engine's current beat position
-- confirm it works both while stopped (a one-shot send with no playback running) and while
-playing (fires the same thing `onBeat` would have sent for that beat, independent of the live
-beat-firing loop).
+few bars. Also confirm the override lands where you actually browsed to, not wherever playback
+happens to be: with a second bar or phrase queued, pick a *non-active* one, set an override there,
+and check it does **not** fire while the truly-active bar is playing - only once you navigate
+playback to that bar/phrase does it start firing. The section's own summary text shows "N set"
+across every phrase/bar combined once any beat anywhere has an override; clearing one via "Clear
+override" should drop that count and revert the beat back to following its type's default (shown
+as "Following &lt;Type&gt;'s own default").
 
 ### 7.2 Phrase actions
 
 With more than one phrase queued (see `docs/user-guide/phrase-queue-management.md` for the
-gesture), open Settings → Phrase Actions, step to a phrase, and assign it a Note/CC.
+gesture), open Settings → Phrase Actions, pick a phrase via its dot, and assign it a Note/CC.
 
 **What should happen:** the action fires exactly once every time that phrase becomes active -
 tapping its dot on the main screen, arriving via the automatic Once-mode cascade at a phrase
 boundary, and even tapping the dot of the phrase that's *already* active (re-entering fires again,
 it's not gated on a genuine transition). Confirm a phrase with no action configured (the default)
 stays silent - only phrases you've explicitly assigned one to should ever send anything here.
+
+### 7.3 The main screen's manual Trigger action (TAP, once latched)
+
+With MIDI Actions on (Settings → MIDI Actions), latch HOLD (long-press or double-tap it). TAP
+switches from tap-tempo to a lightning-bolt Trigger button for as long as the latch holds - tapping
+it fires whatever's actually configured for the engine's *live* current beat position (its type's
+default, or a per-beat override if one applies - same resolution `onBeat` itself uses), without
+unlatching or starting playback.
+
+**What should happen:** confirm it works both while stopped (a one-shot send with no playback
+running) and while playing (fires the same thing `onBeat` would have sent for that beat,
+independent of the live beat-firing loop, so pressing it mid-beat shouldn't double up or otherwise
+disrupt the running click), and that it can be tapped repeatedly without dropping the latch.
+Confirm TAP reverts to tap-tempo the moment either the latch ends (a later tap on HOLD) or MIDI
+Actions is turned back off, and that with MIDI Actions off, tapping TAP while latched still does
+its original job (commits the staged tempo, starts playing, unlatches).

@@ -286,6 +286,17 @@ There are two release tracks with different bars:
       round, instead of living as a second, overlapping narrative of the same
       debugging thread. [`docs/README.md`](README.md) is the new top-level
       index tying every doc to its corresponding ADR.
+- [x] **Beat Overrides, Phrase Actions, Trigger, and bar/phrase proportional scaling**:
+      README's "Using qMetronome" → "Staying in sync with other gear" covers overriding one
+      beat/phrase and the manual Trigger action as narrative; the Glossary's `MidiActionSender`/
+      `HelpScreen` entries cover the same ground by class name, including the one MIDI category
+      whose five topics needed `HelpScreen` restructured to demo them live rather than a shared
+      control. `governance/qm/adr/DRAFT-per-beat-and-phrase-midi-overrides.md` covers the design
+      rationale (the override-layering model, and reusing TAP instead of a fourth transport
+      button). All three MIDI topics this round added now have `docs/user-guide/` video coverage,
+      not just a static screenshot - the same bar as `bar-queue-management`/`phrase-queue-
+      management`, which the earlier per-beat-type MIDI actions round didn't extend to since
+      they didn't exist yet.
 
 ## Repository Governance
 
@@ -778,14 +789,21 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       numbers and steppers still fit comfortably next to the BPM display at both portrait and
       compact-landscape layouts, on the smallest screen available to test with.
 - [ ] **Unit symbols toggle**: with the Settings → Layout "Unit symbols" switch on (default),
-      confirm the small bpm/beats/beat-type/bar/phrase marks appear next to their respective
+      confirm the small bpm/beat-type/bar/phrase marks appear next to their respective
       controls (main screen and the beats-per-bar accent-marking dialog); toggle off and confirm
-      every mark disappears with no layout shift.
-- [ ] **Beat Overrides + Trigger, real hardware**: per `docs/usb-midi-test-plan.md` section 7 -
-      step to a specific beat, assign it a Note/CC override distinct from its type's own default,
-      confirm playback sends the override (not the type default) for that one beat and the type
-      default for every other beat of the same type. Confirm the Trigger button fires whatever's
-      configured for the engine's current beat position both while stopped and while playing.
+      every mark disappears with no layout shift. Beats-per-bar itself has no mark - three dots at
+      this size read as a stray dash, not "three dots" (removed for that reason).
+- [ ] **Beat Overrides across phrases/bars, real hardware**: per `docs/usb-midi-test-plan.md`
+      section 7.1 - browse to a specific phrase/bar via the dot pickers, step to a beat within it,
+      assign it a Note/CC override distinct from its type's own default, confirm playback sends the
+      override (not the type default) for that one beat and the type default for every other beat
+      of the same type. With a second bar/phrase queued, confirm an override set on a *non-active*
+      one stays silent until playback actually reaches it.
+- [ ] **Main screen Trigger action (TAP, once latched), real hardware**: per
+      `docs/usb-midi-test-plan.md` section 7.3 - with MIDI Actions on, latch HOLD and confirm TAP
+      switches to the lightning-bolt Trigger icon, fires whatever's configured for the engine's
+      current beat position both while stopped and while playing without dropping the latch, and
+      reverts to tap-tempo once the latch ends or MIDI Actions is turned off.
 - [ ] **Phrase dots as mini bar-stacks, on-screen**: with a phrase containing several bars of
       different beat counts, confirm each phrase dot renders as a small vertical stack of
       bar-segments (not one uniform block), each segment's width roughly tracking that bar's beat
@@ -798,7 +816,7 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       Check legibility specifically at higher phrase counts (6-8+) where dots may start crowding -
       this is the practical ceiling the feature shipped acknowledging, not something engineered
       around for a first pass.
-- [ ] **Phrase Actions, real hardware**: per `docs/usb-midi-test-plan.md` section 7 - step to a
-      specific phrase, assign it a Note/CC action, and confirm it fires exactly once each time you
+- [ ] **Phrase Actions, real hardware**: per `docs/usb-midi-test-plan.md` section 7.2 - pick a
+      specific phrase via its dot, assign it a Note/CC action, and confirm it fires exactly once each time you
       jump to that phrase (tapping its dot, and via the automatic Once-mode cascade), including
       re-entering the already-active phrase directly.

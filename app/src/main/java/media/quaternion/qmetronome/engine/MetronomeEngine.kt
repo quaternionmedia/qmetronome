@@ -170,8 +170,10 @@ object MetronomeEngine {
     private val _symbolicControlsEnabled = MutableStateFlow(false)
     val symbolicControlsEnabled: StateFlow<Boolean> = _symbolicControlsEnabled.asStateFlow()
 
-    /** When on, a small secondary-colored unit-symbol mark (bpm/beats/beat-type/bar/phrase) is
-     * shown next to each control's own value - purely a subtle label, not a second set of
+    /** When on, a small secondary-colored unit-symbol mark (bpm/beat-type/bar/phrase - not
+     * beats-per-bar, which dropped its own mark: three dots at this size read as a stray
+     * dash/ellipsis rather than "three dots", the opposite of the intended "name it at a glance")
+     * is shown next to each control's own value - purely a subtle label, not a second set of
      * controls. Separate from [symbolicControlsEnabled] (an unrelated toggle: text vs. icon-only
      * transport controls) - conflating the two would confuse both. On by default, unlike most
      * display toggles here, since the symbols are small/secondary enough not to need opt-in. */
@@ -553,23 +555,39 @@ object MetronomeEngine {
         syncActivePhraseMemoryAndPersist()
     }
 
-    /** Sets or clears (via `action = null`) a single beat's own MIDI override in the active bar -
-     * see [TimeSignature.midiOverrides]/[resolveMidiActionForBeat]. Always writes into whichever
-     * bar is currently active in the queue, the same "always edits the active bar" pattern
-     * [setAccentPattern] already follows. */
-    fun setMidiOverride(beatIndex: Int, action: MidiBeatAction?) {
-        fun TimeSignature.withOverride(): TimeSignature {
-            val updated = (midiOverrides ?: emptyMap()).toMutableMap()
-            if (action == null) updated.remove(beatIndex) else updated[beatIndex] = action
-            return copy(midiOverrides = updated.ifEmpty { null })
+    /**
+     * Sets or clears (via `action = null`) a single beat's own MIDI override at an *explicit*
+     * (phrase, bar, beat) location - see [TimeSignature.midiOverrides]/[resolveMidiActionForBeat].
+     * Unlike [setAccentPattern] (which always edits whichever bar the engine currently has active),
+     * this targets exactly the triple passed in, so an edit always lands on precisely the beat
+     * selected in the UI - never silently "whichever bar happens to be active" - the same explicit-
+     * index shape [setPhraseAction] already uses one level up. A no-op if either index is out of
+     * range. Mutates [_phrases] directly (this is authoring a specific bar's own data, not the
+     * "live active bar" scratch surface [setAccentPattern]/[setBpmImmediate] maintain), then also
+     * refreshes [_timeSignature]/[_timeSignatureQueue] when [phraseIndex]/[barIndex] happen to
+     * *be* the currently active phrase/bar, so anything reading those flows (the main screen, the
+     * engine's own beat-resolution path) sees the change immediately rather than only after the
+     * next navigation event reloads them from [_phrases].
+     */
+    fun setMidiOverride(phraseIndex: Int, barIndex: Int, beatIndex: Int, action: MidiBeatAction?) {
+        val phrases = _phrases.value
+        if (phraseIndex !in phrases.indices) return
+        val phrase = phrases[phraseIndex]
+        if (barIndex !in phrase.bars.indices) return
+        val bar = phrase.bars[barIndex]
+        val updatedOverrides = (bar.midiOverrides ?: emptyMap()).toMutableMap()
+        if (action == null) updatedOverrides.remove(beatIndex) else updatedOverrides[beatIndex] = action
+        val updatedBar = bar.copy(midiOverrides = updatedOverrides.ifEmpty { null })
+        val updatedBars = phrase.bars.toMutableList().apply { this[barIndex] = updatedBar }
+        val updatedPhrases = phrases.toMutableList().apply { this[phraseIndex] = phrase.copy(bars = updatedBars) }
+        _phrases.value = updatedPhrases
+        settings?.phrases = updatedPhrases
+        if (phraseIndex == _activePhraseIndex.value) {
+            _timeSignatureQueue.value = updatedBars
+            if (barIndex == _queueIndex.value) {
+                _timeSignature.value = updatedBar
+            }
         }
-        _timeSignature.value = _timeSignature.value.withOverride()
-        _timeSignatureQueue.update { queue ->
-            val index = _queueIndex.value
-            if (index !in queue.indices) return@update queue
-            queue.toMutableList().apply { this[index] = this[index].withOverride() }
-        }
-        syncActivePhraseMemoryAndPersist()
     }
 
     /**
@@ -1430,35 +1448,25 @@ object MetronomeEngine {
         return ResolvedBeatAudio(totalBeatsForBeat, sound)
     }
 
-    /** The [ClickSound] beat type at [beatIndexForBeat] - beat 0 is always [ClickSound.BAR];
-     * otherwise maps the active [TimeSignature]'s [BeatAccent] tier at that index (see
-     * [TimeSignature.accentAt]). Pure and independent of [_clickEnabled]/mute-probability -
-     * [resolveBeatAudio] layers that audio-specific gating on top for the audible click, while
-     * [onBeat] feeds this same, ungated value straight to
-     * [media.quaternion.qmetronome.midi.MidiActionSender] - MIDI beat-actions deliberately fire
-     * regardless of whether the audible click is muted/disabled, the same way the visual flash
-     * already does (see [effectiveMuteProbability]'s own kdoc: muting is scoped to "the audible
-     * click only"). Exposed (not private) so it's directly unit-testable without driving a real
-     * beat loop, the same precedent [rescaledBpmForUnitNoteValueChange]/[nextQueueIndexAfterBar]
-     * already establish. */
-    fun beatTypeFor(beatIndexForBeat: Int): ClickSound = if (beatIndexForBeat == 0) {
-        ClickSound.BAR
-    } else {
-        when (_timeSignature.value.accentAt(beatIndexForBeat)) {
-            BeatAccent.NONE -> ClickSound.REGULAR
-            BeatAccent.ACCENT -> ClickSound.ACCENT
-            BeatAccent.STRONG_ACCENT -> ClickSound.STRONG_ACCENT
-            BeatAccent.CUSTOM -> ClickSound.CUSTOM
-        }
-    }
+    /** The [ClickSound] beat type at [beatIndexForBeat] in the *active* bar - see
+     * [TimeSignature.clickSoundAt], which this just delegates to for [_timeSignature]. Pure and
+     * independent of [_clickEnabled]/mute-probability - [resolveBeatAudio] layers that
+     * audio-specific gating on top for the audible click, while [onBeat] feeds this same, ungated
+     * value straight to [media.quaternion.qmetronome.midi.MidiActionSender] - MIDI beat-actions
+     * deliberately fire regardless of whether the audible click is muted/disabled, the same way the
+     * visual flash already does (see [effectiveMuteProbability]'s own kdoc: muting is scoped to
+     * "the audible click only"). Exposed (not private) so it's directly unit-testable without
+     * driving a real beat loop, the same precedent [rescaledBpmForUnitNoteValueChange]/
+     * [nextQueueIndexAfterBar] already establish. */
+    fun beatTypeFor(beatIndexForBeat: Int): ClickSound = _timeSignature.value.clickSoundAt(beatIndexForBeat)
 
     /** The actually-configured [MidiBeatAction] for [beatIndexForBeat]: that beat's own override
      * (see [TimeSignature.midiOverrideAt]) if one has been authored, else [beatTypeFor]'s resolved
      * [ClickSound]'s own type-level default (see
      * [media.quaternion.qmetronome.midi.MidiActionSender.actions]), else [MidiBeatAction]'s own
-     * NONE default if neither is configured. `onBeat` and the manual Trigger button (Settings ->
-     * MIDI Actions -> Beat Overrides) both resolve through this single function, so beat-type MIDI
-     * config and per-beat overrides are one resolution path, not two independent ones a future
+     * NONE default if neither is configured. `onBeat` and the main screen's manual Trigger button
+     * both resolve through this single function, so beat-type MIDI config and per-beat overrides
+     * are one resolution path, not two independent ones a future
      * reader has to reconcile. [knownSound] lets a caller that already computed [beatTypeFor] for
      * this same beat (`onBeat` always has, for [BeatPhase.isAccent]) pass it straight in rather
      * than this function silently recomputing it - one fewer [_timeSignature] read and enum
@@ -1734,7 +1742,17 @@ object MetronomeEngine {
      * off, reusing [QueueOverlay.apply]'s own per-section no-op guards rather than adding new
      * ones - `emptyList()` specifically (not e.g. `queue.take(1)`), since it's a cached Kotlin
      * singleton with no per-frame allocation, unlike building a new one-element list on this
-     * ~100fps render path every time a toggle happens to be off. */
+     * ~100fps render path every time a toggle happens to be off.
+     *
+     * [QueueOverlay.apply]'s `minBpm`/`maxBpm` are [queue]'s own observed bpm range, not the
+     * fixed [MIN_BPM]/[MAX_BPM] constants this used to pass - the same "scale relative to what's
+     * actually queued, not a boundary most bars never approach" fix `BarQueueDots`'s row height
+     * got in `MainScreen.kt` (see its own kdoc), for the same reason: any bar using the extended
+     * BPM range used to silently clip to the same min/max row thickness as every other
+     * extended-range bar, on this row's on-screen twin as well as the physical Glyph Matrix
+     * itself. [queue] (not the size-0 substitution above) is always non-empty - the bar queue can
+     * never be empty - so this is safe to compute unconditionally, even though it's only actually
+     * used when [showRows] is true. */
     private fun withQueueOverlay(rendered: IntArray, beatIndex: Int, phase: Float): IntArray {
         val queue = _timeSignatureQueue.value
         val phrases = _phrases.value
@@ -1748,8 +1766,8 @@ object MetronomeEngine {
             _queueIndex.value,
             beatIndex,
             phase,
-            MIN_BPM,
-            MAX_BPM,
+            minBpm = queue.minOf { it.bpm },
+            maxBpm = queue.maxOf { it.bpm },
             phraseCount = if (showPhraseIndicator) phrases.size else 1,
             activePhraseIndex = _activePhraseIndex.value,
         )

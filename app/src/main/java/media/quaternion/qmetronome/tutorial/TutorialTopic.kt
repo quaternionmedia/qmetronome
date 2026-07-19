@@ -183,19 +183,32 @@ object TutorialTopics {
         TutorialTopic(
             id = "beat-overrides",
             title = "Give one beat its own MIDI action",
-            description = "In Settings -> Beat Overrides, step to any beat and assign it its own " +
-                "MIDI action, overriding its type's default for that beat only. The Trigger " +
-                "button fires whatever's configured for the engine's current beat position, for " +
-                "one-shot testing without starting playback.",
+            description = "In Settings -> Beat Overrides, browse to any phrase and bar (dot " +
+                "pickers, same as the main screen's own queues), step to any beat within it, and " +
+                "assign that exact beat its own MIDI action, overriding its type's default for " +
+                "that beat only.",
             category = TutorialCategory.MIDI,
+            hasVideo = true,
         ),
         TutorialTopic(
             id = "phrase-actions",
             title = "Give a phrase its own MIDI action",
-            description = "In Settings -> Phrase Actions, step to any phrase and assign it its " +
+            description = "In Settings -> Phrase Actions, pick any phrase and assign it its " +
                 "own MIDI action, fired once whenever you jump to that phrase - tapping its dot " +
                 "on the main screen, or arriving there automatically as the queue advances.",
             category = TutorialCategory.MIDI,
+            hasVideo = true,
+        ),
+        TutorialTopic(
+            id = "trigger-button",
+            title = "Manually trigger a beat's MIDI action",
+            description = "Once MIDI Actions is turned on, latch HOLD (long-press or double-tap " +
+                "it) and TAP switches from tap-tempo to a lightning-bolt Trigger button - tap it " +
+                "to fire whatever's actually configured for the engine's live current beat " +
+                "position, for one-shot testing or hand-triggering gear/lights on cue, without " +
+                "starting playback or leaving the latch.",
+            category = TutorialCategory.MIDI,
+            hasVideo = true,
         ),
         TutorialTopic(
             id = "preview-swipe-visualizer",
@@ -242,7 +255,7 @@ object TutorialTopics {
             id = "unit-symbols",
             title = "Unit symbols",
             description = "In Settings -> Layout, Unit symbols (on by default) shows a small mark " +
-                "next to BPM, beats, beat type, bar, and phrase controls, naming what each one is " +
+                "next to BPM, beat type, bar, and phrase controls, naming what each one is " +
                 "at a glance. Turn off for a cleaner, symbol-free look.",
             category = TutorialCategory.SETTINGS,
             hasVideo = true,

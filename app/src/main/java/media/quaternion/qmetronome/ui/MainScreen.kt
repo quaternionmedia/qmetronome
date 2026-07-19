@@ -61,6 +61,7 @@ import media.quaternion.qmetronome.engine.Phrase
 import media.quaternion.qmetronome.engine.BeatPhase
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import media.quaternion.qmetronome.engine.TimeSignature
+import media.quaternion.qmetronome.midi.MidiActionSender
 import media.quaternion.qmetronome.ui.icons.ExtraIcons
 import media.quaternion.qmetronome.ui.theme.PureWhite
 import media.quaternion.qmetronome.ui.theme.RecordingRed
@@ -578,7 +579,6 @@ internal fun BeatsPerBarControls() {
             contentDescriptionNoun = "beats per bar",
             stagedLabel = holdMode != MetronomeEngine.HoldMode.Off,
             testTag = "beats_per_bar_number",
-            unitIcon = ExtraIcons.UnitBeats,
         )
         TimeSignatureNumberRow(
             value = timeSignature.unitNoteValue,
@@ -804,6 +804,18 @@ private fun TimeSignatureNumberRow(
 }
 
 /**
+ * Where [value] falls between [min] and [max], as a 0..1 fraction - clamped, so a value outside
+ * the observed range (can't happen for the min/max callers derive their own bounds from, but
+ * guards a caller passing an unrelated value) never overshoots. 1f (not 0f) when [min] and [max]
+ * are equal, since "nothing to compare against" should read as one consistent, full-size shape
+ * rather than collapsing everything to the smallest possible one. Shared, directly-testable
+ * scaling math for [BarQueueDots] (beat-count width, bpm height) and [PhraseQueueDots] (beat-count
+ * width) - one formula instead of three near-identical inline copies.
+ */
+internal fun proportionFraction(value: Float, min: Float, max: Float): Float =
+    if (max <= min) 1f else ((value - min) / (max - min)).coerceIn(0f, 1f)
+
+/**
  * One rectangle per bar in the queue - a minimal, always-visible (even for the default single
  * bar) page indicator, since swiping alone gave no feedback about whether it did anything.
  * Deliberately mirrors the physical Glyph Matrix's own queue indicator
@@ -814,9 +826,27 @@ private fun TimeSignatureNumberRow(
  * same way, so the on-screen row and the glyph read as one consistent idea instead of two
  * different ones. The one bar actually active reads at full brightness; the rest are dimmed to
  * the same ratio the glyph overlay uses. Tap a bar to jump to it; long-press to remove it.
+ *
+ * Both width and height are scaled relative to *this queue's own* min/max, not a fixed absolute
+ * range - width already worked this way for beat count; tempo used to scale height against the
+ * fixed [MetronomeEngine.MIN_BPM]/[MetronomeEngine.MAX_BPM] (1-400)
+ * instead, which silently clipped: any bar using the extended BPM range (below 1 or above 400 -
+ * see [MetronomeEngine.extendedBpmRangeEnabled]) rendered at the same min/max height as every
+ * other extended-range bar, regardless of how much further beyond that boundary it actually was.
+ * Scoping to the queue's own bpm span fixes that and stays consistent with how width already
+ * behaves - a bar's rendered size is always meaningful relative to what's actually queued next to
+ * it, never silently pinned by an absolute boundary most bars never approach.
+ *
+ * Internal (not private): [SettingsSheet]'s Beat Overrides picker embeds this same composable to
+ * choose which bar to author an override for - the exact "graphic to choose" the main screen
+ * already uses, rather than a second bar-picker UI. That call site passes a neutered [beat]
+ * ([BeatPhase.IDLE] with `beatIndex = -1`, which never matches any real beat index) unless it's
+ * genuinely showing the live-active bar, and always passes local, non-navigating callbacks (picking
+ * a bar to *edit* there never calls [MetronomeEngine.goToQueueBar] the way this screen's own
+ * `onDotClick` does) - see that call site's own kdoc.
  */
 @Composable
-private fun BarQueueDots(
+internal fun BarQueueDots(
     queue: List<TimeSignature>,
     activeIndex: Int,
     beat: BeatPhase,
@@ -825,18 +855,14 @@ private fun BarQueueDots(
 ) {
     val minBeats = queue.minOf { it.beatCount }
     val maxBeats = queue.maxOf { it.beatCount }
-    val beatSpan = (maxBeats - minBeats).coerceAtLeast(1)
+    val minBpm = queue.minOf { it.bpm }
+    val maxBpm = queue.maxOf { it.bpm }
 
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         queue.forEachIndexed { index, spec ->
             val isActive = index == activeIndex
-            val widthFraction = if (maxBeats == minBeats) {
-                1f
-            } else {
-                (spec.beatCount - minBeats).toFloat() / beatSpan
-            }
-            val heightFraction = ((spec.bpm - MetronomeEngine.MIN_BPM) / (MetronomeEngine.MAX_BPM - MetronomeEngine.MIN_BPM))
-                .coerceIn(0f, 1f)
+            val widthFraction = proportionFraction(spec.beatCount.toFloat(), minBeats.toFloat(), maxBeats.toFloat())
+            val heightFraction = proportionFraction(spec.bpm, minBpm, maxBpm)
             val barWidth = MIN_BAR_WIDTH + (MAX_BAR_WIDTH - MIN_BAR_WIDTH) * widthFraction
             val barHeight = MIN_BAR_HEIGHT + (MAX_BAR_HEIGHT - MIN_BAR_HEIGHT) * heightFraction
             val baseAlpha = if (isActive) ACTIVE_BAR_ALPHA else INACTIVE_BAR_ALPHA
@@ -965,31 +991,45 @@ private fun PhraseQueueControls(
 /**
  * The phrase-level counterpart to [BarQueueDots] - each phrase's dot is a miniature vertical
  * stack of thin bar-segments, one per bar in that phrase, rather than one uniform-sized rectangle.
- * A segment's *width* echoes its bar's beat count relative to the phrase's own bars (the same
- * scaling idea [BarQueueDots] uses one level down, simplified/miniaturized - deliberately not a
- * second full [BarQueueDots], per the explicit "stay minimal" instruction this feature shipped
- * under: no per-segment tempo/height scaling, no per-segment beat ticks, just enough shape to read
- * "this phrase is made of N bars of roughly these relative lengths" at a glance). The dot's own
- * overall bounding box stays fixed at [MIN_BAR_HIT_WIDTH]x[MAX_BAR_HEIGHT] regardless of bar
- * count, so the phrase strip's own layout never shifts as bars are added/removed within a phrase -
- * only what's drawn *inside* that fixed box changes. Tap a phrase to jump to it (see
- * [MetronomeEngine.goToPhrase]); long-press to remove it, the same "long-press for destructive"
- * gesture [BarQueueDots] already uses.
+ * A segment's *width* echoes its bar's beat count relative to *every bar in every queued phrase*,
+ * not just its own phrase's bars - scoping the min/max per-phrase (as this originally shipped)
+ * meant a phrase's single bar always rendered at full width regardless of its actual beat count,
+ * since a lone bar is trivially both the min and the max of its own one-bar set: a 3-beat phrase
+ * and a 9-beat phrase, each with one bar, were visually indistinguishable. Scoping to the whole
+ * queue (the same fix [BarQueueDots] already gets for its own height/tempo scaling) makes a
+ * phrase's shape actually comparable to its neighbors, not just internally self-consistent -
+ * simplified/miniaturized relative to [BarQueueDots] in every other way (no per-segment tempo/
+ * height scaling, no per-segment beat ticks - deliberately not a second full [BarQueueDots], per
+ * the explicit "stay minimal" instruction this feature shipped under; just enough shape to read
+ * "this phrase is made of N bars of roughly these relative lengths, comparable to its neighbors"
+ * at a glance). The dot's own overall bounding box stays fixed at
+ * [MIN_BAR_HIT_WIDTH]x[MAX_BAR_HEIGHT] regardless of bar count, so the phrase strip's own layout
+ * never shifts as bars are added/removed within a phrase - only what's drawn *inside* that fixed
+ * box changes. Tap a phrase to jump to it (see [MetronomeEngine.goToPhrase]); long-press to remove
+ * it, the same "long-press for destructive" gesture [BarQueueDots] already uses.
+ *
+ * Internal (not private): [SettingsSheet] embeds this same composable in two of its own sections -
+ * Beat Overrides (picking which phrase to browse for an override) and Phrase Actions (picking
+ * which phrase to author an action for) - both with local, non-navigating callbacks (`onDotClick`
+ * updates that section's own selection state, never [MetronomeEngine.goToPhrase]) and `onDotRemove`
+ * a no-op, since a picker shouldn't double as a destructive control - removal stays the main
+ * screen's own hold-gated job.
  */
 @Composable
-private fun PhraseQueueDots(
+internal fun PhraseQueueDots(
     phrases: List<Phrase>,
     activeIndex: Int,
     onDotClick: (Int) -> Unit,
     onDotRemove: (Int) -> Unit,
 ) {
+    val allBars = phrases.flatMap { it.bars }
+    val minBeats = allBars.minOf { it.beatCount }
+    val maxBeats = allBars.maxOf { it.beatCount }
+
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         phrases.forEachIndexed { index, phrase ->
             val isActive = index == activeIndex
             val alpha = if (isActive) ACTIVE_BAR_ALPHA else INACTIVE_BAR_ALPHA
-            val minBeats = phrase.bars.minOf { it.beatCount }
-            val maxBeats = phrase.bars.maxOf { it.beatCount }
-            val beatSpan = (maxBeats - minBeats).coerceAtLeast(1)
 
             Box(
                 modifier = Modifier
@@ -1009,11 +1049,7 @@ private fun PhraseQueueDots(
                     verticalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
                     phrase.bars.forEach { bar ->
-                        val widthFraction = if (maxBeats == minBeats) {
-                            1f
-                        } else {
-                            (bar.beatCount - minBeats).toFloat() / beatSpan
-                        }
+                        val widthFraction = proportionFraction(bar.beatCount.toFloat(), minBeats.toFloat(), maxBeats.toFloat())
                         val segmentWidth = MIN_BAR_WIDTH + (MAX_BAR_WIDTH - MIN_BAR_WIDTH) * widthFraction
                         Box(
                             modifier = Modifier
@@ -1074,23 +1110,20 @@ private fun QueueIconButton(
     }
 }
 
+/**
+ * TAP / PLAY-STOP / HOLD - three controls, deliberately symmetric around the big centered
+ * PLAY/STOP circle, not four: the manual MIDI Trigger action (see [MidiActionSender.fire]) lives
+ * as a *gesture* on the existing TAP button (see [TapTriggerButton]) rather than its own
+ * always-visible fourth button, which read lopsided against this row's own established
+ * TAP/PLAY/HOLD balance.
+ */
 @Composable
 private fun TransportRow(beat: BeatPhase) {
-    val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        OutlinedButton(
-            onClick = { MetronomeEngine.tapTempo() },
-            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-        ) {
-            if (symbolicControlsEnabled) {
-                Icon(ExtraIcons.TouchApp, contentDescription = "Tap tempo")
-            } else {
-                Text("TAP")
-            }
-        }
+        TapTriggerButton()
         FilledIconButton(
             onClick = MetronomeEngine::toggle,
             modifier = Modifier.size(PLAY_PAUSE_SIZE),
@@ -1102,6 +1135,52 @@ private fun TransportRow(beat: BeatPhase) {
             )
         }
         HoldButton(modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp))
+    }
+}
+
+/**
+ * TAP itself - tap-tempo normally, or the main screen's manual MIDI Trigger action while HOLD is
+ * latched *and* MIDI Actions is on (see [TransportRow]'s own kdoc for why this lives on TAP
+ * rather than a fourth button). Its own composable, not inlined into [TransportRow], so
+ * [HelpScreen] can embed just this one control under the Trigger topic (itself
+ * [media.quaternion.qmetronome.tutorial.TutorialCategory.MIDI], not TEMPO/TIME_SIGNATURE/
+ * BAR_QUEUE) without also pulling in the rest of [TempoTransportCluster] - a second, simultaneously
+ * live BPM/beats-per-bar/bar-queue surface next to the one already shown under those other
+ * categories, not just visually redundant but duplicate `testTag`s for anything that queries by
+ * one.
+ *
+ * [testTag] defaults to the one every production call site (this screen, Settings' mirror) shares,
+ * but is overridable so a caller that needs a *second*, simultaneously-composed instance on the
+ * same screen - [HelpScreen]'s MIDI category, alongside TEMPO's already-shown [TempoTransportCluster]
+ * copy - can keep both uniquely queryable instead of colliding on the default tag.
+ */
+@Composable
+internal fun TapTriggerButton(testTag: String = "tap_trigger_button") {
+    val symbolicControlsEnabled by MetronomeEngine.symbolicControlsEnabled.collectAsState()
+    val midiActionsEnabled by MidiActionSender.enabled.collectAsState()
+    val holdMode by MetronomeEngine.holdMode.collectAsState()
+    // While latched (and there's actually something to fire), TAP's own tap gesture switches
+    // from tap-tempo to Trigger. Deliberately keyed on Latched specifically (not Momentary): a
+    // still-held Momentary press means the finger's about to lift and flush a staged bpm/beats
+    // change any moment, the wrong time to swap what a tap on a neighboring button does out from
+    // under it.
+    val tapFiresTrigger = holdMode == MetronomeEngine.HoldMode.Latched && midiActionsEnabled
+
+    OutlinedButton(
+        onClick = {
+            if (tapFiresTrigger) {
+                MidiActionSender.fire(MetronomeEngine.resolveMidiActionForBeat(MetronomeEngine.state.value.beatIndex), System.nanoTime())
+            } else {
+                MetronomeEngine.tapTempo()
+            }
+        },
+        modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).testTag(testTag),
+    ) {
+        when {
+            tapFiresTrigger -> Icon(ExtraIcons.Trigger, contentDescription = "Trigger the current beat's MIDI action")
+            symbolicControlsEnabled -> Icon(ExtraIcons.TouchApp, contentDescription = "Tap tempo")
+            else -> Text("TAP")
+        }
     }
 }
 
@@ -1135,7 +1214,7 @@ private val TIME_SIG_STEPPER_SIZE = 32.dp
 private val TIME_SIG_ICON_SIZE = 14.dp
 private val TIME_SIG_NUMBER_MIN_WIDTH = 26.dp
 
-/** Size for the small, secondary-colored unit-symbol marks (bpm/beats/beat-type/bar/phrase) gated
+/** Size for the small, secondary-colored unit-symbol marks (bpm/beat-type/bar/phrase) gated
  * by [MetronomeEngine.unitSymbolsEnabled] - deliberately tiny, a label rather than a control. */
 private val UNIT_SYMBOL_SIZE = 10.dp
 

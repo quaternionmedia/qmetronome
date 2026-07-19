@@ -903,6 +903,43 @@ class MetronomeEngineTest {
     }
 
     @Test
+    fun `the queue overlay's row thickness reflects the queue's own bpm range, not a fixed absolute one`() {
+        // Three bars, not two: with only two, whichever is smaller is trivially the queue's own
+        // "min" and whichever is larger is trivially its "max" *regardless of their actual gap*,
+        // so relative scaling alone can't distinguish "far apart" from "close together" pairs -
+        // a third, *middle* bar is what actually exposes whether scaling is relative to the
+        // queue's own span or clipped to a fixed one.
+        //
+        // Visualizer disabled so the base frame is guaranteed blank - isolates the overlay's own
+        // row-thickness contribution from any bpm-dependent visualizer pattern content, the same
+        // isolation the test above uses.
+        MetronomeEngine.setVisualizerEnabled(false)
+        MetronomeEngine.setExtendedBpmRangeEnabled(true)
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.setBpm(500f) // bar 0 - already above the old fixed MAX_BPM=400 boundary
+        MetronomeEngine.addBarToQueue()
+        MetronomeEngine.setBpm(2750f) // bar 1 (middle) - exactly halfway between bars 0 and 2
+        MetronomeEngine.addBarToQueue()
+        MetronomeEngine.setBpm(5000f) // bar 2 - also above 400, like bars 0 and 1
+        val middleAtHalfwayFrame = MetronomeEngine.frame.value.copyOf()
+
+        // Same three bars, but the middle one now sits near the top of the range instead of
+        // exactly halfway. Under the old fixed [1, 400] clipping, every bar here is already
+        // above 400 in both cases, so both frames would render an identical uniform row split
+        // (every bar clipped to the same maximum weight) - only relative-to-queue scaling makes
+        // the middle bar's own row visibly thicken as its tempo moves toward the top of the span.
+        MetronomeEngine.goToQueueBar(1)
+        MetronomeEngine.setBpm(4900f)
+        val middleNearTopFrame = MetronomeEngine.frame.value.copyOf()
+
+        assertFalse(
+            "moving the middle bar's tempo within the queue's own extended-range span should " +
+                "visibly change its row's thickness relative to its neighbors",
+            middleAtHalfwayFrame.contentEquals(middleNearTopFrame),
+        )
+    }
+
+    @Test
     fun `changing unit note value while held stages the rescaled bpm instead of applying it immediately`() {
         MetronomeEngine.setBpm(120f)
 
@@ -1140,12 +1177,12 @@ class MetronomeEngineTest {
     }
 
     @Test
-    fun `setMidiOverride always writes into whichever bar is currently active`() {
+    fun `setMidiOverride writes into the explicit phrase-bar-beat location passed in, not whichever bar is active`() {
         MetronomeEngine.setBeatsPerBar(4)
         MetronomeEngine.addBarToQueue() // second entry, active
         val override = MidiBeatAction(type = MidiActionType.NOTE, number = 72)
 
-        MetronomeEngine.setMidiOverride(1, override)
+        MetronomeEngine.setMidiOverride(phraseIndex = 0, barIndex = 1, beatIndex = 1, action = override)
 
         val queue = MetronomeEngine.timeSignatureQueue.value
         assertEquals(null, queue[0].midiOverrides)
@@ -1155,11 +1192,51 @@ class MetronomeEngineTest {
     @Test
     fun `setMidiOverride with a null action clears an existing override`() {
         MetronomeEngine.setBeatsPerBar(4)
-        MetronomeEngine.setMidiOverride(1, MidiBeatAction(type = MidiActionType.NOTE, number = 72))
+        MetronomeEngine.setMidiOverride(0, 0, 1, MidiBeatAction(type = MidiActionType.NOTE, number = 72))
 
-        MetronomeEngine.setMidiOverride(1, null)
+        MetronomeEngine.setMidiOverride(0, 0, 1, null)
 
         assertEquals(null, MetronomeEngine.timeSignature.value.midiOverrides)
+    }
+
+    @Test
+    fun `setMidiOverride on a non-active bar doesn't touch the active bar's own overrides`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.addBarToQueue() // bar 1, active
+        MetronomeEngine.goToQueueBar(0) // back to bar 0; bar 1 stays the non-active one
+
+        MetronomeEngine.setMidiOverride(phraseIndex = 0, barIndex = 1, beatIndex = 2, action = MidiBeatAction(type = MidiActionType.CC, number = 10))
+
+        assertEquals(null, MetronomeEngine.timeSignature.value.midiOverrides)
+        assertEquals(null, MetronomeEngine.timeSignatureQueue.value[0].midiOverrides)
+        assertEquals(MidiActionType.CC, MetronomeEngine.phrases.value[0].bars[1].midiOverrideAt(2)?.type)
+    }
+
+    @Test
+    fun `setMidiOverride on a non-active phrase doesn't disturb the active phrase's scratch state`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        MetronomeEngine.addPhrase() // phrase 1, active
+        MetronomeEngine.setBeatsPerBar(3)
+
+        MetronomeEngine.setMidiOverride(phraseIndex = 0, barIndex = 0, beatIndex = 1, action = MidiBeatAction(type = MidiActionType.NOTE, number = 40))
+
+        // Phrase 1 (active) scratch state is untouched - still 3 beats, no overrides.
+        assertEquals(3, MetronomeEngine.timeSignature.value.beatCount)
+        assertEquals(null, MetronomeEngine.timeSignature.value.midiOverrides)
+        // Phrase 0 (non-active) got the override, in its own data, not the scratch mirror.
+        assertEquals(MidiActionType.NOTE, MetronomeEngine.phrases.value[0].bars[0].midiOverrideAt(1)?.type)
+    }
+
+    @Test
+    fun `setMidiOverride on the active phrase-bar refreshes the scratch state immediately`() {
+        MetronomeEngine.setBeatsPerBar(4)
+        val override = MidiBeatAction(type = MidiActionType.NOTE, number = 55)
+
+        MetronomeEngine.setMidiOverride(phraseIndex = 0, barIndex = 0, beatIndex = 2, action = override)
+
+        // The active bar's own scratch mirror (what the live UI actually reads) sees it too.
+        assertEquals(override, MetronomeEngine.timeSignature.value.midiOverrideAt(2))
+        assertEquals(override, MetronomeEngine.timeSignatureQueue.value[0].midiOverrideAt(2))
     }
 
     @Test
@@ -1176,7 +1253,7 @@ class MetronomeEngineTest {
         MetronomeEngine.setBeatsPerBar(4)
         MidiActionSender.setAction(ClickSound.REGULAR, MidiBeatAction(type = MidiActionType.CC, number = 20))
         val override = MidiBeatAction(type = MidiActionType.NOTE, number = 72, value = 110, durationMs = 15)
-        MetronomeEngine.setMidiOverride(1, override)
+        MetronomeEngine.setMidiOverride(0, 0, 1, override)
 
         assertEquals(override, MetronomeEngine.resolveMidiActionForBeat(1))
     }

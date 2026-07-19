@@ -2,7 +2,7 @@
 
 [← User Guide](README.md) · MIDI
 
-In Settings -> Beat Overrides, step to any beat and assign it its own MIDI action, overriding its type's default for that beat only. The Trigger button fires whatever's configured for the engine's current beat position, for one-shot testing without starting playback.
+In Settings -> Beat Overrides, browse to any phrase and bar (dot pickers, same as the main screen's own queues), step to any beat within it, and assign that exact beat its own MIDI action, overriding its type's default for that beat only.
 
-![Give one beat its own MIDI action](../images/generated/screenshots/beat-overrides.png)
+![Give one beat its own MIDI action (in motion)](../images/generated/videos/beat-overrides.gif)
 

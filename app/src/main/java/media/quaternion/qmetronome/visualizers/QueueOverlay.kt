@@ -25,8 +25,12 @@ import kotlin.math.sin
  * beats across, the way a line of notation reads).
  *
  * A row's *thickness* - and therefore the size of every tick drawn in it - scales with that bar's
- * own tempo (faster reads thicker/bigger, matching the on-screen bar row's own tempo axis). This
- * is a deliberate, static property of the bar, not tied to the live beat animation - the earlier
+ * own tempo relative to [minBpm]/[maxBpm] (faster reads thicker/bigger, matching the on-screen bar
+ * row's own tempo axis) - the caller passes the *queue's own* observed bpm range, not a fixed
+ * absolute one, so a bar's row is always sized relative to what's actually queued next to it
+ * rather than silently clipping at some boundary most bars never approach (e.g. the extended BPM
+ * range's own 0.1-12000 span). This is a deliberate, static property of the bar, not tied to the
+ * live beat animation - the earlier
  * version only conveyed tempo through the active tick's transient brightness pulse, which decays
  * over a fixed fraction of *each beat's own duration* regardless of bpm: sampled at a fixed frame
  * rate, a fast bar's pulse is almost always caught already-decayed (it has so little of *this*

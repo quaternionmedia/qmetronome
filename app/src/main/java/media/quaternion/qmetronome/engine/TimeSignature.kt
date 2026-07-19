@@ -46,6 +46,23 @@ data class TimeSignature(
      * (see [MetronomeEngine.resolveMidiActionForBeat]). */
     fun midiOverrideAt(beatIndex: Int): MidiBeatAction? = midiOverrides?.get(beatIndex)
 
+    /** The [ClickSound] beat type at [beatIndex] within *this* bar specifically - beat 0 is always
+     * [ClickSound.BAR]; otherwise maps [accentAt]'s [BeatAccent] tier. Pulled out of
+     * [MetronomeEngine.beatTypeFor] (which just delegates here for the currently-*active* bar) so
+     * UI that browses a non-active bar - e.g. Settings' Beat Overrides picker, which can target any
+     * phrase/bar, not only whichever one the engine happens to be playing - can resolve a beat type
+     * for *that* bar without routing through the engine's own live state. */
+    fun clickSoundAt(beatIndex: Int): ClickSound = if (beatIndex == 0) {
+        ClickSound.BAR
+    } else {
+        when (accentAt(beatIndex)) {
+            BeatAccent.NONE -> ClickSound.REGULAR
+            BeatAccent.ACCENT -> ClickSound.ACCENT
+            BeatAccent.STRONG_ACCENT -> ClickSound.STRONG_ACCENT
+            BeatAccent.CUSTOM -> ClickSound.CUSTOM
+        }
+    }
+
     companion object {
         val DEFAULT = TimeSignature(beatCount = 4)
     }

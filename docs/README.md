@@ -64,9 +64,11 @@ are part of the record, not just the eventual fix.
 
 Corresponding decision records: `governance/qm/adr/DRAFT-midi-clock-as-open-
 standard-seam.md`, `governance/qm/adr/DRAFT-home-screen-widget-via-glance.md`,
-and `governance/qm/adr/DRAFT-per-beat-type-midi-action-routing.md` (the
-real-time audio roadmap's #3, now implemented). No ADR yet for #1/#2 -
-nothing to ratify until something's decided.
+`governance/qm/adr/DRAFT-per-beat-type-midi-action-routing.md` (the
+real-time audio roadmap's #3, now implemented), and
+`governance/qm/adr/DRAFT-per-beat-and-phrase-midi-overrides.md` (extends #3
+to a specific beat/phrase, plus manual triggering via the main screen's TAP
+button). No ADR yet for #1/#2 - nothing to ratify until something's decided.
 
 ## Project governance
 

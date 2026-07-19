@@ -56,6 +56,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import media.quaternion.qmetronome.engine.BeatPhase
 import media.quaternion.qmetronome.engine.ClickSound
 import media.quaternion.qmetronome.engine.ClickSpec
 import media.quaternion.qmetronome.engine.ClickWaveform
@@ -413,7 +414,7 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                     )
                 }
                 Text(
-                    text = "Shows a small secondary mark next to BPM, beats, beat type, bar, and " +
+                    text = "Shows a small secondary mark next to BPM, beat type, bar, and " +
                         "phrase controls, naming what each one is at a glance. On by default; turn " +
                         "off for a cleaner, symbol-free look.",
                     style = MaterialTheme.typography.bodySmall,
@@ -563,7 +564,7 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
             CollapsibleSection(
                 title = "Beat Overrides",
                 summary = {
-                    val overrideCount = timeSignature.midiOverrides?.size ?: 0
+                    val overrideCount = phrases.sumOf { phrase -> phrase.bars.sumOf { it.midiOverrides?.size ?: 0 } }
                     Text(
                         text = if (overrideCount == 0) "None set" else "$overrideCount set",
                         style = MaterialTheme.typography.bodyMedium,
@@ -571,7 +572,7 @@ fun SettingsSheet(onDismiss: () -> Unit, onActivateToy: () -> Unit) {
                     )
                 },
             ) {
-                BeatOverridesSection(timeSignature = timeSignature, midiActions = midiActions)
+                BeatOverridesSection(phrases = phrases, midiActions = midiActions)
             }
 
             HorizontalDivider()
@@ -806,37 +807,92 @@ private fun MidiActionEditor(
 }
 
 /**
- * Authors a single beat's own [MidiBeatAction] override (see [TimeSignature.midiOverrides]) - a
- * simple +/- beat-index stepper (scoped to the active bar's [TimeSignature.beatCount], per the
- * original ask: "Simple +/- transport is plenty for this round") plus the same [MidiActionEditor]
- * the type-default tabs use, so authoring an override never drifts from authoring a type default.
- * Shows that beat's *effective* action (its own override if set, else its resolved [ClickSound]
- * type's own configured default - see [MetronomeEngine.resolveMidiActionForBeat]) rather than a
- * blank slate, so editing always starts from what would actually fire.
+ * Authors a single beat's own [MidiBeatAction] override (see [TimeSignature.midiOverrides]) at an
+ * explicitly chosen phrase/bar/beat - not just whichever bar the engine happens to be playing.
+ * [PhraseQueueDots]/[BarQueueDots] (the *exact* pickers the main screen's own phrase/bar queues
+ * use - "the graphic to choose" reused rather than a second one invented for this section) pick
+ * which phrase and bar to browse, shown only once there's more than one to choose from; a beat-
+ * index stepper (unchanged from before - simple, as originally asked) then picks the beat within
+ * whichever bar that resolves to. [MetronomeEngine.setMidiOverride] takes that same explicit
+ * triple, so an edit always lands on precisely the beat selected here - the fix for what used to
+ * be an edit that could only ever reach "whichever bar is currently active," regardless of what
+ * this section displayed.
  *
- * Takes [timeSignature]/[midiActions] as explicit parameters (not read internally from their own
+ * Selection here is deliberately local UI state, not engine navigation: tapping a phrase/bar dot
+ * only updates [selectedPhraseIndex]/[selectedBarIndex], never calls
+ * [MetronomeEngine.goToPhrase]/[MetronomeEngine.goToQueueBar] the way the identical-looking dots on
+ * the main screen do - browsing here to author an override shouldn't also yank playback to a
+ * different phrase/bar out from under a live set.
+ *
+ * Shows the selected beat's *effective* action (its own override if set, else its resolved
+ * [ClickSound] type's own configured default) rather than a blank slate, so editing always starts
+ * from what would actually fire - computed via [TimeSignature.clickSoundAt] on the *selected* bar
+ * specifically, not [MetronomeEngine.beatTypeFor] (which only ever reads the *active* one).
+ *
+ * Takes [phrases]/[midiActions] as explicit parameters (not read internally from their own
  * `StateFlow`s) so this composable's recomposition is driven by normal Compose parameter-change
  * tracking - the same pattern [MidiActionTabs] already uses - rather than depending on whichever
  * ancestor scope happens to also read those flows.
+ *
+ * Internal (not private): [HelpScreen] embeds this exact live control under its own MIDI category,
+ * the same "one shared instance, not a disconnected demo copy" pattern [MidiActionTabs]/
+ * [ClockFeelChips]/[JumpToUnitChips] already establish there.
  */
 @Composable
-private fun BeatOverridesSection(timeSignature: TimeSignature, midiActions: Map<ClickSound, MidiBeatAction>) {
+internal fun BeatOverridesSection(phrases: List<Phrase>, midiActions: Map<ClickSound, MidiBeatAction>) {
+    var selectedPhraseIndex by remember { mutableStateOf(0) }
+    var selectedBarIndex by remember { mutableStateOf(0) }
     var selectedBeatIndex by remember { mutableStateOf(0) }
-    val lastIndex = (timeSignature.beatCount - 1).coerceAtLeast(0)
-    val beatIndex = selectedBeatIndex.coerceIn(0, lastIndex)
-    val sound = MetronomeEngine.beatTypeFor(beatIndex)
-    val override = timeSignature.midiOverrideAt(beatIndex)
+
+    val phraseIndex = selectedPhraseIndex.coerceIn(0, (phrases.size - 1).coerceAtLeast(0))
+    val phrase = phrases[phraseIndex]
+    val barIndex = selectedBarIndex.coerceIn(0, (phrase.bars.size - 1).coerceAtLeast(0))
+    val bar = phrase.bars[barIndex]
+    val lastBeatIndex = (bar.beatCount - 1).coerceAtLeast(0)
+    val beatIndex = selectedBeatIndex.coerceIn(0, lastBeatIndex)
+
+    val sound = bar.clickSoundAt(beatIndex)
+    val override = bar.midiOverrideAt(beatIndex)
     val effectiveAction = override ?: midiActions[sound] ?: MidiBeatAction()
+
+    // Reads the authoritative state fresh, the same "don't close over a recomposition-time
+    // snapshot" contract MidiActionEditor's own currentAction documents - phraseIndex/barIndex/
+    // beatIndex themselves are fine to close over (they're this composable's own local selection,
+    // not engine state that can change out from under it mid-gesture).
+    fun currentEffectiveAction(): MidiBeatAction {
+        val currentBar = MetronomeEngine.phrases.value.getOrNull(phraseIndex)?.bars?.getOrNull(barIndex) ?: return MidiBeatAction()
+        return currentBar.midiOverrideAt(beatIndex) ?: MidiActionSender.actions.value[currentBar.clickSoundAt(beatIndex)] ?: MidiBeatAction()
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = "Give one specific beat its own MIDI action, overriding its type's default " +
-                "above for that beat only. The Trigger button fires whatever's actually " +
-                "configured for the engine's current beat - handy for one-shot testing without " +
-                "starting playback.",
+                "above for that beat only - browse any phrase and bar below, not just the one " +
+                "currently playing. The main screen's own lightning-bolt button triggers " +
+                "whatever's actually configured for the engine's live beat position.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.secondary,
         )
+        if (phrases.size > 1) {
+            PhraseQueueDots(
+                phrases = phrases,
+                activeIndex = phraseIndex,
+                onDotClick = { selectedPhraseIndex = it },
+                onDotRemove = {},
+            )
+        }
+        if (phrase.bars.size > 1) {
+            BarQueueDots(
+                queue = phrase.bars,
+                activeIndex = barIndex,
+                // A neutered beat - beatIndex -1 never matches a real 0-until-beatCount index - so
+                // this picker never shows a misleading live pulse for a bar that isn't actually
+                // the one playing. See BarQueueDots' own kdoc for this call site's contract.
+                beat = BeatPhase.IDLE.copy(beatIndex = -1),
+                onDotClick = { selectedBarIndex = it },
+                onDotRemove = {},
+            )
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             IconButton(
                 onClick = { selectedBeatIndex = (beatIndex - 1).coerceAtLeast(0) },
@@ -845,12 +901,12 @@ private fun BeatOverridesSection(timeSignature: TimeSignature, midiActions: Map<
                 Icon(ExtraIcons.Remove, contentDescription = "Previous beat")
             }
             Text(
-                text = "Beat ${beatIndex + 1} of ${timeSignature.beatCount}",
+                text = "Beat ${beatIndex + 1} of ${bar.beatCount}",
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.testTag("beat_override_index_label"),
             )
             IconButton(
-                onClick = { selectedBeatIndex = (beatIndex + 1).coerceAtMost(lastIndex) },
+                onClick = { selectedBeatIndex = (beatIndex + 1).coerceAtMost(lastBeatIndex) },
                 modifier = Modifier.testTag("beat_override_next_button"),
             ) {
                 Icon(Icons.Filled.Add, contentDescription = "Next beat")
@@ -864,39 +920,35 @@ private fun BeatOverridesSection(timeSignature: TimeSignature, midiActions: Map<
         MidiActionEditor(
             label = "beat ${beatIndex + 1}",
             action = effectiveAction,
-            currentAction = { MetronomeEngine.resolveMidiActionForBeat(beatIndex) },
-            onChange = { MetronomeEngine.setMidiOverride(beatIndex, it) },
+            currentAction = { currentEffectiveAction() },
+            onChange = { MetronomeEngine.setMidiOverride(phraseIndex, barIndex, beatIndex, it) },
         )
         if (override != null) {
             TextButton(
-                onClick = { MetronomeEngine.setMidiOverride(beatIndex, null) },
+                onClick = { MetronomeEngine.setMidiOverride(phraseIndex, barIndex, beatIndex, null) },
                 modifier = Modifier.testTag("beat_override_clear_button"),
             ) {
                 Text("Clear override")
             }
         }
-        Button(
-            onClick = {
-                MidiActionSender.fire(MetronomeEngine.resolveMidiActionForBeat(MetronomeEngine.state.value.beatIndex), System.nanoTime())
-            },
-            modifier = Modifier.fillMaxWidth().testTag("midi_trigger_button"),
-        ) {
-            Text("Trigger")
-        }
     }
 }
 
 /**
- * Authors a single phrase's own [Phrase.action] (see [MetronomeEngine.setPhraseAction]) - a
- * simple +/- phrase-index stepper plus the same [MidiActionEditor] [BeatOverridesSection] uses,
- * so authoring a phrase action never drifts from authoring a beat override or a type default.
- * Fires once, automatically, whenever [MetronomeEngine.goToPhrase] resolves to that phrase - no
- * separate Trigger button here the way [BeatOverridesSection] has one, since jumping to the
- * phrase *is* the trigger (tap its dot on the main screen, or step here and it'll fire the next
- * time you navigate to it).
+ * Authors a single phrase's own [Phrase.action] (see [MetronomeEngine.setPhraseAction]) - the same
+ * [PhraseQueueDots] picker [BeatOverridesSection] uses (shown only once there's more than one
+ * phrase to choose from) plus the same [MidiActionEditor] every action-editing surface in this app
+ * shares. Selection is local UI state, not engine navigation, the same "picking here never moves
+ * playback" contract [BeatOverridesSection] follows - see its own kdoc. Fires once, automatically,
+ * whenever [MetronomeEngine.goToPhrase] resolves to that phrase - no separate Trigger button here,
+ * since jumping to the phrase *is* the trigger (tap its dot on the main screen, or arrive there via
+ * the queue advancing).
+ *
+ * Internal (not private): [HelpScreen] embeds this exact live control under its own MIDI category -
+ * see [BeatOverridesSection]'s own kdoc for why.
  */
 @Composable
-private fun PhraseActionsSection(phrases: List<Phrase>) {
+internal fun PhraseActionsSection(phrases: List<Phrase>) {
     var selectedPhraseIndex by remember { mutableStateOf(0) }
     val lastIndex = (phrases.size - 1).coerceAtLeast(0)
     val phraseIndex = selectedPhraseIndex.coerceIn(0, lastIndex)
@@ -910,25 +962,19 @@ private fun PhraseActionsSection(phrases: List<Phrase>) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.secondary,
         )
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            IconButton(
-                onClick = { selectedPhraseIndex = (phraseIndex - 1).coerceAtLeast(0) },
-                modifier = Modifier.testTag("phrase_action_prev_button"),
-            ) {
-                Icon(ExtraIcons.Remove, contentDescription = "Previous phrase")
-            }
-            Text(
-                text = "Phrase ${phraseIndex + 1} of ${phrases.size}",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.testTag("phrase_action_index_label"),
+        if (phrases.size > 1) {
+            PhraseQueueDots(
+                phrases = phrases,
+                activeIndex = phraseIndex,
+                onDotClick = { selectedPhraseIndex = it },
+                onDotRemove = {},
             )
-            IconButton(
-                onClick = { selectedPhraseIndex = (phraseIndex + 1).coerceAtMost(lastIndex) },
-                modifier = Modifier.testTag("phrase_action_next_button"),
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Next phrase")
-            }
         }
+        Text(
+            text = "Phrase ${phraseIndex + 1} of ${phrases.size}",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.testTag("phrase_action_index_label"),
+        )
         MidiActionEditor(
             label = "phrase ${phraseIndex + 1}",
             action = action,

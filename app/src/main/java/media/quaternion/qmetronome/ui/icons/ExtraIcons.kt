@@ -16,7 +16,8 @@ import kotlin.math.sin
  * doesn't include - `material-icons-extended` has all of them too, but as an ~87MB dependency
  * (confirmed via the Gradle cache) whose ~2000+ generated icon classes all get fully dexed in a
  * debug build (no R8 shrinking), which was the dominant cause of this app's oversized alpha APK
- * for a total of 8 icons actually used. Built from simple geometry (rectangles, triangles, and
+ * for what was originally a handful of icons actually used, now 15 and still growing incrementally
+ * rather than reconsidering the tradeoff. Built from simple geometry (rectangles, triangles, and
  * trig-computed circles/stars) rather than hand-copied bezier path data - safer to get exactly
  * right than transcribing curve coordinates from memory, and consistent with this app's own
  * [media.quaternion.qmetronome.visualizers.GlyphCanvas]-style "simple primitives" drawing
@@ -265,17 +266,6 @@ object ExtraIcons {
         }
     }
 
-    /** Three small dots in a row - the beats-per-bar unit-symbol mark. */
-    val UnitBeats: ImageVector by lazy {
-        icon("UnitBeats") {
-            path(fill = SolidColor(Color.Black)) {
-                circle(cx = 6f, cy = 12f, r = 2.2f)
-                circle(cx = 12f, cy = 12f, r = 2.2f)
-                circle(cx = 18f, cy = 12f, r = 2.2f)
-            }
-        }
-    }
-
     /** A ">" accent mark - the same notation musicians write above an accented note - the
      * beat-type unit-symbol mark. */
     val UnitBeatType: ImageVector by lazy {
@@ -289,6 +279,24 @@ object ExtraIcons {
                 moveTo(6f, 5f)
                 lineTo(18f, 12f)
                 lineTo(6f, 19f)
+            }
+        }
+    }
+
+    /** A lightning bolt - the main screen's manual MIDI Trigger button (see `TransportRow` in
+     * `MainScreen.kt`), a universally-recognized "fire this now" symbol rather than a text label,
+     * matching the icon-first look of the rest of the transport row. Straight-edged, built from
+     * plain [lineTo]s rather than the curved official Material glyph (see the file kdoc). */
+    val Trigger: ImageVector by lazy {
+        icon("Trigger") {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(13f, 2f)
+                lineTo(7f, 13f)
+                lineTo(11f, 13f)
+                lineTo(9f, 22f)
+                lineTo(17f, 10f)
+                lineTo(13f, 10f)
+                close()
             }
         }
     }

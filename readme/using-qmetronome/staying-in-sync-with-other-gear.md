@@ -36,5 +36,22 @@ chip, and tapping any other one cycles it through the three accent tiers and bac
 same marks drive both the audible click's tone (Settings → Click already has a tab per tone) and
 whichever MIDI action is configured for that type.
 
+## Overriding one beat, or one phrase
+
+A beat type's own default is a broad brush - Settings → Beat Overrides lets one *specific* beat
+carry its own MIDI action that wins over whatever its type would otherwise send, without changing
+that beat's accent or its click tone. Browse to any phrase and bar first (the same dot pickers the
+main screen's own phrase/bar queues use, shown only once there's more than one to choose from),
+step to the beat within it, and assign the override there - it lands on exactly that beat, not
+"whichever bar happens to be playing right now." Settings → Phrase Actions works the same way one
+level up: pick a phrase via its dot and give it its own MIDI action, fired once every time you jump
+to that phrase - tapping its dot on the main screen, or arriving there automatically as the queue
+advances.
+
+To sanity-check either without starting playback, latch HOLD (long-press or double-tap it) while
+MIDI Actions is on - TAP swaps to a lightning-bolt Trigger button for as long as the latch holds,
+firing whatever's actually configured for the engine's live current beat each time you tap it. See
+[Dialing in a tempo](dialing-in-a-tempo.md) for more on latching HOLD itself.
+
 Every gesture here also has its own screenshot/video page in
 [the user guide](../../docs/user-guide/README.md#midi-clock).

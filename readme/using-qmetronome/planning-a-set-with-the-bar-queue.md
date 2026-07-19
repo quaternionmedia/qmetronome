@@ -63,12 +63,13 @@ manually. Removing phrases back down to just one makes the whole strip disappear
 exists while there's more than one phrase to manage.
 
 Each phrase's dot is itself a small vertical stack of thin bar-segments, one per bar in that
-phrase, each segment's width echoing that bar's beat count relative to the others in the same
-phrase - a miniature version of the bar queue's own width-scaled rectangles above, giving a
-phrase's own rough shape at a glance without needing to open it. With more than one phrase queued,
-a small dot per phrase additionally appears around the physical Glyph Matrix's outer rim (and its
-on-screen preview mirror) - the active phrase reading brighter than the rest - independently
-toggleable from the bar-queue background in Settings → Visualizer.
+phrase, each segment's width echoing that bar's beat count relative to every bar in every queued
+phrase (not just its own phrase's bars, so two single-bar phrases with very different beat counts
+still read as visibly different widths) - a miniature version of the bar queue's own width-scaled
+rectangles above, giving a phrase's own rough shape at a glance without needing to open it. With
+more than one phrase queued, a small dot per phrase additionally appears around the physical Glyph
+Matrix's outer rim (and its on-screen preview mirror) - the active phrase reading brighter than the
+rest - independently toggleable from the bar-queue background in Settings → Visualizer.
 
 Every gesture here also has its own screenshot/video page in
 [the user guide](../../docs/user-guide/README.md#bar-queue).
