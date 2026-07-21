@@ -127,7 +127,7 @@ class QueueOverlayTest {
     }
 
     @Test
-    fun `a faster bar's row is thicker than a slower bar's, independent of any animation`() {
+    fun `a slower bar's row is thicker than a faster bar's, independent of any animation`() {
         val size = 25
         val queue = listOf(bar(bpm = MIN_BPM), bar(bpm = MAX_BPM))
         // beatIndex -1 and phase 0 - no active pulse in play, isolating the *static* size property.
@@ -146,9 +146,9 @@ class QueueOverlayTest {
         val slowRows = distinctLitRows(bounds[0])
         val fastRows = distinctLitRows(bounds[1])
         assertTrue(
-            "the MAX_BPM bar's row should be visibly thicker than the MIN_BPM bar's, with no " +
+            "the MIN_BPM bar's row should be visibly thicker than the MAX_BPM bar's, with no " +
                 "animation involved (slowRows=$slowRows, fastRows=$fastRows)",
-            fastRows > slowRows,
+            slowRows > fastRows,
         )
     }
 

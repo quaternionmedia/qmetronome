@@ -138,7 +138,7 @@ falling through to `ONCE`'s "nothing left to advance to" is what triggers a phra
 **`QueueOverlay`** (`visualizers/QueueOverlay.kt`) — an ambient version of "which bar, which beat"
 baked directly into the Glyph Matrix frame itself (and its on-screen `MatrixPreview` mirror).
 Loosely emulates a line of sheet music: the usable circle splits into one horizontal row per bar,
-stacked top-to-bottom in queue order (taller rows for faster bars), with beats ticking left to
+stacked top-to-bottom in queue order (taller rows for slower bars), with beats ticking left to
 right and only the active bar's current beat pulsing. Blended in behind whichever visualizer is
 selected rather than clipping it, so the two interact — deliberately a passive, ambient cue rather
 than a second control surface.

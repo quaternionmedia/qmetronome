@@ -130,8 +130,11 @@ class GlyphCanvas(val size: Int, initial: IntArray? = null) {
 fun decayEase(phase: Float): Float = (1f - phase).coerceIn(0f, 1f).let { it * it }
 
 /**
- * A bar's own [bpm], as a continuous 0..1 fraction of the fixed [MetronomeEngine.MIN_BPM]/
- * [MetronomeEngine.MAX_BPM] span - independent of whatever else happens to be queued. Used by both
+ * A bar's own [bpm], as a continuous 0..1 size fraction of the fixed [MetronomeEngine.MIN_BPM]/
+ * [MetronomeEngine.MAX_BPM] span - independent of whatever else happens to be queued. **Slower
+ * reads as bigger** (1 at [MetronomeEngine.MIN_BPM], 0 at [MetronomeEngine.MAX_BPM]) - a deliberate
+ * choice, not an arbitrary one: it reads like a wave's own period, a longer/slower cycle drawn
+ * larger, rather than tying visual size to onset speed. Used by both
  * [media.quaternion.qmetronome.ui] `BarQueueDots` (on-screen row height) and [QueueOverlay] (glyph
  * row thickness), so the two surfaces read as one consistent visual language rather than drifting
  * apart - see either call site's own kdoc for the fuller "why" (queue-relative scaling was tried
@@ -154,5 +157,6 @@ fun bpmSizeFraction(bpm: Float): Float {
     val logMin = ln(MetronomeEngine.MIN_BPM)
     val logMax = ln(MetronomeEngine.MAX_BPM)
     val logValue = ln(bpm.coerceAtLeast(0.0001f))
-    return ((logValue - logMin) / (logMax - logMin)).coerceIn(0f, 1f)
+    val fasterFraction = ((logValue - logMin) / (logMax - logMin)).coerceIn(0f, 1f)
+    return 1f - fasterFraction
 }
