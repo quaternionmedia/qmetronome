@@ -3,6 +3,28 @@
 Generated from this repo's own annotated git tags (`scripts/generate-changelog.sh`) -
 do not edit by hand. Newest first.
 
+## v0.1.1 — 2026-07-21
+
+v0.1.1: bar-queue beats read left-to-right, continuous tempo-height scaling
+
+- Beats within a queued bar now spread left-to-right instead of stacking
+  top-to-bottom, matching the physical Glyph Matrix's own sheet-music-style
+  row convention (QueueOverlay) instead of reading a different axis on-screen
+- Fixed bar height (tempo) scaling: it used to scale relative to the
+  queue's own min/max bpm, which degenerated with sparse data - a single
+  bar (the common case) never responded to its own bpm at all, and two
+  bars always rendered at the two size extremes regardless of how close
+  their tempos actually were. Now uses a log-scaled fraction of the fixed
+  MIN_BPM/MAX_BPM span, independent of whatever else is queued, so height
+  varies continuously and meaningfully with a bar's own tempo
+- Docs: readme/using-qmetronome/planning-a-set-with-the-bar-queue.md
+  describes the new beat direction and width/height scaling contrast;
+  cookbook.md/onboarding.md gained the missing adb launch step for the
+  manual build/test/install loop
+- Regenerated CHANGELOG.md (was stale since v0.0.25)
+
+Merged via PR #6, feature/bar-beat-orientation -> main.
+
 ## v0.1.0 — 2026-07-19
 
 v0.1.0: multi-phrase bar queue, per-beat/per-phrase MIDI actions, manual Trigger
