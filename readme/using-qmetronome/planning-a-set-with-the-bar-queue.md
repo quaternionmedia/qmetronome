@@ -19,12 +19,16 @@ it's the only one left. The trash icon at the far left - flagged with a small re
 destructive, unrecoverable action - clears the whole queue back to a single default bar, for
 starting over rather than trimming bars one at a time.
 
-Each bar renders as a rectangle sized to carry information at a glance: width scales with beat
-count relative to the rest of the queue (the longest bar reads as the widest rectangle), height
-scales with tempo (faster bars read taller), and each bar is divided into one segment per beat so
-the count reads directly off the shape. Only the active bar's current-beat segment pulses, and the
-active bar itself reads brighter than the rest. Long-press any bar to remove it directly, in
-addition to the `−` button.
+Each bar renders as a rectangle sized to carry information at a glance, and its two dimensions
+mean two different things. Width scales with beat count *relative to the rest of the queue* (the
+longest bar reads as the widest rectangle) - a beat count only means something next to what else
+is queued, so a lone bar's width isn't trying to be individually meaningful. Height scales with
+tempo on a fixed scale instead (faster bars read taller no matter what else is queued, so the same
+tempo always renders the same height) - and each bar is divided into one segment per beat, reading
+left to right, so the count reads directly off the shape and the beats fall in the same order a
+line of sheet music reads in. Only the active bar's current-beat segment pulses, and the active bar
+itself reads brighter than the rest. Long-press any bar to remove it directly, in addition to the
+`−` button.
 
 A mode icon at the far right controls how the queue advances at each bar boundary during playback:
 **Loop** (default) wraps back to the first bar after the last; **Once** stops advancing once it
