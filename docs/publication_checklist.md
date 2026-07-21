@@ -805,12 +805,20 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
       current beat position both while stopped and while playing without dropping the latch, and
       reverts to tap-tempo once the latch ends or MIDI Actions is turned off.
 - [ ] **Phrase dots as mini bar-stacks, on-screen**: with a phrase containing several bars of
-      different beat counts, confirm each phrase dot renders as a small vertical stack of
-      bar-segments (not one uniform block), each segment's width roughly tracking that bar's beat
-      count relative to *every* bar in *every* queued phrase (not just its own phrase's bars - a
-      single-bar phrase should still read as visibly different widths from another single-bar
-      phrase with a different beat count) - and that the phrase strip's own layout doesn't shift as
-      bars are added/removed within a phrase.
+      different durations, confirm each phrase dot renders as a small vertical stack of
+      bar-segments (not one uniform block), each segment's width roughly tracking that bar's real
+      duration (beat count ÷ tempo) relative to *every* bar in *every* queued phrase (not just its
+      own phrase's bars - a single-bar phrase should still read as visibly different widths from
+      another single-bar phrase with a different duration) - and that the phrase strip's own layout
+      doesn't shift as bars are added/removed within a phrase.
+- [ ] **Phrase dots show their own beats and which bar is playing, on-screen**: with a multi-bar
+      phrase active during playback, confirm each bar-segment inside its dot shows its own beats
+      (reading left to right, matching the bar queue's own rectangles above it) rather than a flat
+      block, and that exactly the bar actually playing reads brighter with its current beat
+      flashing - while every other bar (in the active phrase or any other) stays dim. Switch to a
+      different phrase mid-playback and confirm the bright/flashing bar moves to the newly-active
+      phrase's own dot, not the one just left. With playback stopped, confirm beats are still
+      faintly visible as separate segments (not one solid block) even on a dim, non-playing bar.
 - [ ] **Radial phrase indicator, real Glyph hardware**: with more than one phrase queued, confirm
       a small dot per phrase appears around the physical Glyph Matrix's outer rim (and its
       on-screen preview mirror), the active phrase's dot reading brighter than the others, and
