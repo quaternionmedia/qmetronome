@@ -3,6 +3,56 @@
 Generated from this repo's own annotated git tags (`scripts/generate-changelog.sh`) -
 do not edit by hand. Newest first.
 
+## v0.1.0 — 2026-07-19
+
+v0.1.0: multi-phrase bar queue, per-beat/per-phrase MIDI actions, manual Trigger
+
+- Multi-phrase bar queue: group bars into named phrases, each with its own bar
+  queue, queue mode, and dot-picker navigation (main screen + Settings)
+- Per-beat-type MIDI Actions (Note/CC), plus per-beat overrides that win over
+  the type default, plus per-phrase actions fired once on entry
+- Manual Trigger: while HOLD is latched and MIDI Actions is on, TAP fires the
+  live beat's resolved MIDI action instead of tap-tempo, for one-shot testing
+  or hand-cueing gear/lights without starting playback
+- Fixed a HOLD-staging bug: resetting/removing a bar or phrase while latched
+  now correctly updates the displayed staged tempo/beats, instead of showing
+  a stale value that could silently revert on unlatch
+- Fixed bar/phrase/beat proportional-scaling bugs in the queue-dot displays,
+  a duplicate unit-symbol artifact, and restored TAP/PLAY/HOLD transport-row
+  symmetry
+- Enforced an 8-minute upper bound (with live per-test logging) on every
+  Gradle Test task
+- Addressed automated review findings: MIDI sends now stamp the caller's own
+  beat timestamp rather than dispatch time; the radial phrase indicator on
+  the Glyph Matrix is now guaranteed to stay within the SDK's circular mask
+  at both real matrix sizes; a beat-count/accent-pattern resize race in the
+  time signature dialog; a submodule-status parsing gap
+
+Merged via PR #5, feature/beat-types-midi-actions -> main.
+
+## v0.0.28 — 2026-07-09
+
+v0.0.28: first-beat timing precision - Gap A/B fixes, buffer-sizing fix, true-zero offset defaults
+
+- Keep StreamingClickEngine warm across play/stop (Gap A)
+- User-tunable first-beat count-in (Gap B)
+- Buffer sized from AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER
+  instead of AudioTrack.getMinBufferSize() - beat 0 excess ~2ms, inside
+  the <=10ms target (was ~128ms at the start of this investigation)
+- Audio/visual timing offsets default to true 0ms, not a guessed pre-roll
+- Native AAudio/Oboe migration scoped as an open item, not started
+
+Alpha/developer build - tagged from timing/first-beat-precision, not yet
+merged to main.
+
+## v0.0.27 — 2026-07-08
+
+v0.0.27: docs restructure for readability - README split into readme/ pages, user-guide into its own folder, one gif per page
+
+## v0.0.26 — 2026-07-08
+
+v0.0.26: tests-as-source-of-truth doc pipeline (screenshots+video, generated user guide, in-app Help), docs consolidation, Android-first tone
+
 ## v0.0.25 — 2026-07-06
 
 BPM/BPH/BPS unit switcher, drag responsiveness fix, higher BPS ceiling
