@@ -67,6 +67,7 @@ import media.quaternion.qmetronome.ui.theme.PureWhite
 import media.quaternion.qmetronome.ui.theme.RecordingRed
 import media.quaternion.qmetronome.visualizers.bpmSizeFraction
 import media.quaternion.qmetronome.visualizers.decayEase
+import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -688,6 +689,8 @@ internal fun BeatsPerBarControls() {
                 phraseQueueMode = phraseQueueMode,
                 holdMode = holdMode,
                 unitSymbolsEnabled = unitSymbolsEnabled,
+                activeBarIndex = queueIndex,
+                beat = beat,
             )
         }
     }
@@ -830,6 +833,33 @@ internal fun proportionFraction(value: Float, min: Float, max: Float): Float =
 private fun TimeSignature.relativeDuration(): Float = beatCount / bpm
 
 /**
+ * The log-duration bounds to feed [proportionFraction] for a duration-scaled width, given every
+ * [bars] currently sharing that width axis - queue-relative (like beat count used to be), but with
+ * a floor on how narrow the assumed spread is allowed to be. Plain min-max normalization over
+ * [TimeSignature.relativeDuration] has the same problem [bpmSizeFraction] was written to avoid for
+ * tempo: with only 2-3 bars, it encodes *rank*, not magnitude - a 4/4 bar at 120 bpm and a 5/4 bar
+ * at 120 bpm (a 25% duration difference) would render at the two full size extremes, purely
+ * because they're each other's min and max, the same jump a 4x or 40x difference would produce.
+ * Unlike tempo, there's no single natural "everyday" duration range to anchor to instead the way
+ * [bpmSizeFraction] anchors to [MetronomeEngine.MIN_BPM]/[MetronomeEngine.MAX_BPM] - duration spans
+ * beat count *and* bpm, and realistic combinations don't cover their full theoretical cross-product
+ * ([MetronomeEngine.MIN_BEATS_PER_BAR] beats at [MetronomeEngine.MAX_BPM] through
+ * [MetronomeEngine.MAX_BEATS_PER_BAR] beats at [MetronomeEngine.MIN_BPM] spans nearly four orders
+ * of magnitude) - anchoring there would compress everyday differences into an imperceptible sliver
+ * instead, the opposite problem. So this keeps queue-relative scaling (a queue with genuinely wide
+ * variety still uses the full range, unchanged from before) but pads a too-narrow observed spread
+ * out to [MIN_LOG_DURATION_SPAN], centered on the data's own midpoint, so a small queue of
+ * close-together bars reads as a proportionate, gradual difference instead of a binary jump.
+ */
+private fun logDurationBounds(bars: List<TimeSignature>): Pair<Float, Float> {
+    val dataMin = bars.minOf { ln(it.relativeDuration()) }
+    val dataMax = bars.maxOf { ln(it.relativeDuration()) }
+    val center = (dataMin + dataMax) / 2f
+    val halfSpan = maxOf(dataMax - dataMin, MIN_LOG_DURATION_SPAN) / 2f
+    return (center - halfSpan) to (center + halfSpan)
+}
+
+/**
  * One rectangle per bar in the queue - a minimal, always-visible (even for the default single
  * bar) page indicator, since swiping alone gave no feedback about whether it did anything.
  * Deliberately mirrors the physical Glyph Matrix's own queue indicator
@@ -841,12 +871,15 @@ private fun TimeSignature.relativeDuration(): Float = beatCount / bpm
  * the same ratio the glyph overlay uses. Tap a bar to jump to it; long-press to remove it.
  *
  * Width and height deliberately use two *different* scaling strategies. Width scales relative to
- * *this queue's own* duration range ([proportionFraction], fed each bar's `beatCount / bpm` -
+ * *this queue's own* duration range ([logDurationBounds], fed each bar's `beatCount / bpm` -
  * proportional to how long it actually takes to play, not just its beat count, so a 4/4 bar at 120
  * bpm and an 8/8 bar at 240 bpm - the same real duration - render at the same width even though
  * their beat counts differ) - not the full 1..24-beats-at-any-tempo theoretical range, which made
  * everyday differences barely register, since a bar's length only means anything next to whatever
- * else is queued. Height instead uses [bpmSizeFraction], a fixed (not queue-relative) log-scaled
+ * else is queued. See [logDurationBounds]'s own kdoc for why that range floors how narrow the
+ * assumed spread can get, so e.g. a 4/4 and a 5/4 bar at the same tempo read as a small, gradual
+ * width difference rather than the two full size extremes. Height instead uses [bpmSizeFraction],
+ * a fixed (not queue-relative) log-scaled
  * span - queue-relative scaling was tried here first, but degenerates badly with sparse data: a
  * single bar (the common case) is trivially both the min and max of its own queue, so it never
  * responded to its own bpm at all, and two bars always rendered at exactly the two size extremes
@@ -870,13 +903,12 @@ internal fun BarQueueDots(
     onDotClick: (Int) -> Unit,
     onDotRemove: (Int) -> Unit,
 ) {
-    val minDuration = queue.minOf { it.relativeDuration() }
-    val maxDuration = queue.maxOf { it.relativeDuration() }
+    val (durationLogMin, durationLogMax) = logDurationBounds(queue)
 
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         queue.forEachIndexed { index, spec ->
             val isActive = index == activeIndex
-            val widthFraction = proportionFraction(spec.relativeDuration(), minDuration, maxDuration)
+            val widthFraction = proportionFraction(ln(spec.relativeDuration()), durationLogMin, durationLogMax)
             val heightFraction = bpmSizeFraction(spec.bpm)
             val barWidth = MIN_BAR_LENGTH + (MAX_BAR_LENGTH - MIN_BAR_LENGTH) * widthFraction
             val barHeight = MIN_BAR_HEIGHT + (MAX_BAR_HEIGHT - MIN_BAR_HEIGHT) * heightFraction
@@ -895,28 +927,56 @@ internal fun BarQueueDots(
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                // The bar is divided into one segment per beat - beats "represented as part of
-                // the larger rectangle" rather than a separate tick row above it. Beat 0 at the
-                // left, later beats spread rightward, so playback animates left-to-right - the
-                // same reading direction QueueOverlay's glyph rows already use. Only the active
-                // bar's current beat animates (via the same decayEase flash curve the Glyph Matrix
-                // visualizers use); every other segment sits at a flat brightness - active bar
-                // segments brighter than inactive bars', so which bar is playing still reads at a
-                // glance between pulses.
-                Row(modifier = Modifier.width(barWidth).height(barHeight)) {
-                    for (beatIdx in 0 until spec.beatCount) {
-                        val isCurrentBeat = isActive && beatIdx == beat.beatIndex
-                        val flash = if (isCurrentBeat) decayEase(beat.phase) else 0f
-                        val segmentAlpha = baseAlpha + (1f - baseAlpha) * flash
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .background(PureWhite.copy(alpha = segmentAlpha)),
-                        )
-                    }
-                }
+                BeatSegments(
+                    modifier = Modifier.width(barWidth).height(barHeight),
+                    beatCount = spec.beatCount,
+                    baseAlpha = baseAlpha,
+                    activeBeatIndex = if (isActive) beat.beatIndex else -1,
+                    phase = beat.phase,
+                )
             }
+        }
+    }
+}
+
+/**
+ * A bar's beats, one segment each, reading left to right - the same reading direction
+ * [media.quaternion.qmetronome.visualizers.QueueOverlay]'s glyph rows already use, and playback
+ * animates the same way (beat 0 at the left, later beats to the right). Shared by [BarQueueDots]
+ * (one full-size call per queued bar) and [PhraseQueueDots] (one small call per bar *within* a
+ * phrase's own mini-stack) so both surfaces render an individual bar's beats identically rather
+ * than one having its own second copy of this logic.
+ *
+ * Only [activeBeatIndex] (if it falls within [beatCount]) animates, via the same [decayEase] flash
+ * curve the Glyph Matrix visualizers use; every other segment sits at a flat [baseAlpha] - pass -1
+ * for a bar that isn't currently playing at all, the same "neutered index that never matches a
+ * real beat" convention already used elsewhere (see [BarQueueDots]' own Beat Overrides picker call
+ * site). A small gap ([BEAT_SEGMENT_GAP]) between segments - rather than one edge-to-edge fill -
+ * is what makes the beat count actually legible at rest: same-alpha adjacent segments with no gap
+ * between them read as one solid block, and the beat structure was only ever visible through the
+ * transient flash animation on whichever bar happened to be playing. A subtle, *always-present*
+ * gap means even a bar that never plays (or isn't playing right now) still shows its own beat
+ * count directly in its static shape.
+ */
+@Composable
+private fun BeatSegments(
+    modifier: Modifier = Modifier,
+    beatCount: Int,
+    baseAlpha: Float,
+    activeBeatIndex: Int,
+    phase: Float,
+) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(BEAT_SEGMENT_GAP)) {
+        for (beatIdx in 0 until beatCount) {
+            val isCurrentBeat = beatIdx == activeBeatIndex
+            val flash = if (isCurrentBeat) decayEase(phase) else 0f
+            val segmentAlpha = baseAlpha + (1f - baseAlpha) * flash
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(PureWhite.copy(alpha = segmentAlpha)),
+            )
         }
     }
 }
@@ -939,6 +999,8 @@ private fun PhraseQueueControls(
     phraseQueueMode: MetronomeEngine.QueueMode,
     holdMode: MetronomeEngine.HoldMode,
     unitSymbolsEnabled: Boolean,
+    activeBarIndex: Int,
+    beat: BeatPhase,
 ) {
     Row(
         modifier = Modifier
@@ -977,6 +1039,8 @@ private fun PhraseQueueControls(
             activeIndex = activePhraseIndex,
             onDotClick = MetronomeEngine::goToPhrase,
             onDotRemove = MetronomeEngine::removePhrase,
+            activeBarIndex = activeBarIndex,
+            beat = beat,
         )
 
         QueueIconButton(
@@ -1006,31 +1070,45 @@ private fun PhraseQueueControls(
 
 /**
  * The phrase-level counterpart to [BarQueueDots] - each phrase's dot is a miniature vertical
- * stack of thin bar-segments, one per bar in that phrase, rather than one uniform-sized rectangle.
+ * stack of bar-segments, one per bar in that phrase, rather than one uniform-sized rectangle.
  * A segment's *width* echoes its bar's own real duration ([TimeSignature.relativeDuration],
- * `beatCount / bpm` - the same measure [BarQueueDots] uses) relative to *every bar in every
- * queued phrase*, not just its own phrase's bars - scoping the min/max per-phrase (as this
- * originally shipped) meant a phrase's single bar always rendered at full width regardless of its
- * actual duration, since a lone bar is trivially both the min and the max of its own one-bar set: a
- * short phrase and a long phrase, each with one bar, were visually indistinguishable. Scoping to
- * the whole queue (the same fix [BarQueueDots] already gets for its own width) makes a phrase's
- * shape actually comparable to its neighbors, not just internally self-consistent -
- * simplified/miniaturized relative to [BarQueueDots] in every other way (no per-segment tempo/
- * height scaling, no per-segment beat ticks - deliberately not a second full [BarQueueDots], per
- * the explicit "stay minimal" instruction this feature shipped under; just enough shape to read
- * "this phrase is made of N bars of roughly these relative lengths, comparable to its neighbors"
- * at a glance). The dot's own overall bounding box stays fixed at
- * [MIN_BAR_HIT_WIDTH]x[MAX_BAR_HEIGHT] regardless of bar count, so the phrase strip's own layout
- * never shifts as bars are added/removed within a phrase - only what's drawn *inside* that fixed
- * box changes. Tap a phrase to jump to it (see [MetronomeEngine.goToPhrase]); long-press to remove
- * it, the same "long-press for destructive" gesture [BarQueueDots] already uses.
+ * `beatCount / bpm` - the same measure [BarQueueDots] uses, and the same [logDurationBounds]
+ * treatment) relative to *every bar in every queued phrase*, not just its own phrase's bars -
+ * scoping the min/max per-phrase (as this originally shipped) meant a phrase's single bar always
+ * rendered at full width regardless of its actual duration, since a lone bar is trivially both the
+ * min and the max of its own one-bar set: a short phrase and a long phrase, each with one bar,
+ * were visually indistinguishable. Scoping to the whole queue (the same fix [BarQueueDots] already
+ * gets for its own width) makes a phrase's shape actually comparable to its neighbors, not just
+ * internally self-consistent.
+ *
+ * Each bar segment renders its own [BeatSegments] - the *same* per-beat rendering [BarQueueDots]
+ * uses for a full-size bar, just smaller - rather than a flat-color block, so a phrase's own beat
+ * counts read directly off its mini-stack too, and [activeBarIndex] additionally marks *which bar
+ * within the active phrase* is actually playing right now (brighter, with its current beat
+ * flashing, exactly like [BarQueueDots]' own active bar) - the only indicator, previously, that a
+ * whole phrase was active was a flat tint across every one of its bars; now a phrase with nothing
+ * actually playing in it (every bar dim) reads differently at a glance from the one that does
+ * (exactly one bright, flashing bar somewhere in its stack). [activeBarIndex] is only consulted for
+ * whichever phrase is actually [activeIndex] - passing it unconditionally for every phrase would be
+ * wrong, since a non-active phrase never has a truly "playing" bar of its own. Defaults to -1
+ * (never matches a real bar index) and [beat] defaults to [BeatPhase.IDLE], the same "neutered,
+ * nothing highlighted" convention [BarQueueDots]' own Beat Overrides picker call site uses, so
+ * callers with nothing live to show (see below) don't need to pass anything.
+ *
+ * The dot's own overall bounding box stays fixed at [PHRASE_DOT_WIDTH]x[PHRASE_DOT_HEIGHT]
+ * regardless of bar count, so the phrase strip's own layout never shifts as bars are added/removed
+ * within a phrase - only what's drawn *inside* that fixed box changes. Tap a phrase to jump to it
+ * (see [MetronomeEngine.goToPhrase]); long-press to remove it, the same "long-press for
+ * destructive" gesture [BarQueueDots] already uses.
  *
  * Internal (not private): [SettingsSheet] embeds this same composable in two of its own sections -
  * Beat Overrides (picking which phrase to browse for an override) and Phrase Actions (picking
  * which phrase to author an action for) - both with local, non-navigating callbacks (`onDotClick`
  * updates that section's own selection state, never [MetronomeEngine.goToPhrase]) and `onDotRemove`
  * a no-op, since a picker shouldn't double as a destructive control - removal stays the main
- * screen's own hold-gated job.
+ * screen's own hold-gated job. Neither passes [activeBarIndex]/[beat] - those sections are about
+ * *authoring*, not playback, and already have their own, separate "which bar is selected for
+ * editing" state.
  */
 @Composable
 internal fun PhraseQueueDots(
@@ -1038,21 +1116,21 @@ internal fun PhraseQueueDots(
     activeIndex: Int,
     onDotClick: (Int) -> Unit,
     onDotRemove: (Int) -> Unit,
+    activeBarIndex: Int = -1,
+    beat: BeatPhase = BeatPhase.IDLE.copy(beatIndex = -1),
 ) {
     val allBars = phrases.flatMap { it.bars }
-    val minDuration = allBars.minOf { it.relativeDuration() }
-    val maxDuration = allBars.maxOf { it.relativeDuration() }
+    val (durationLogMin, durationLogMax) = logDurationBounds(allBars)
 
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         phrases.forEachIndexed { index, phrase ->
-            val isActive = index == activeIndex
-            val alpha = if (isActive) ACTIVE_BAR_ALPHA else INACTIVE_BAR_ALPHA
+            val isActivePhrase = index == activeIndex
 
             Box(
                 modifier = Modifier
                     .testTag("phrase_dot_$index")
-                    .width(MIN_BAR_HIT_WIDTH)
-                    .height(MAX_BAR_HEIGHT)
+                    .width(PHRASE_DOT_WIDTH)
+                    .height(PHRASE_DOT_HEIGHT)
                     .pointerInput(index) {
                         detectTapGestures(
                             onTap = { onDotClick(index) },
@@ -1062,17 +1140,23 @@ internal fun PhraseQueueDots(
                 contentAlignment = Alignment.Center,
             ) {
                 Column(
-                    modifier = Modifier.width(MAX_BAR_WIDTH).height(MAX_BAR_HEIGHT),
+                    modifier = Modifier.width(PHRASE_DOT_WIDTH).height(PHRASE_DOT_HEIGHT),
                     verticalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
-                    phrase.bars.forEach { bar ->
-                        val widthFraction = proportionFraction(bar.relativeDuration(), minDuration, maxDuration)
-                        val segmentWidth = MIN_BAR_WIDTH + (MAX_BAR_WIDTH - MIN_BAR_WIDTH) * widthFraction
-                        Box(
+                    phrase.bars.forEachIndexed { barIdx, bar ->
+                        val isActiveBar = isActivePhrase && barIdx == activeBarIndex
+                        val baseAlpha = if (isActiveBar) ACTIVE_BAR_ALPHA else INACTIVE_BAR_ALPHA
+                        val widthFraction = proportionFraction(ln(bar.relativeDuration()), durationLogMin, durationLogMax)
+                        val segmentWidth = PHRASE_DOT_MIN_SEGMENT_WIDTH +
+                            (PHRASE_DOT_WIDTH - PHRASE_DOT_MIN_SEGMENT_WIDTH) * widthFraction
+                        BeatSegments(
                             modifier = Modifier
                                 .weight(1f)
-                                .width(segmentWidth.coerceAtLeast(MIN_BAR_WIDTH))
-                                .background(PureWhite.copy(alpha = alpha)),
+                                .width(segmentWidth.coerceAtLeast(PHRASE_DOT_MIN_SEGMENT_WIDTH)),
+                            beatCount = bar.beatCount,
+                            baseAlpha = baseAlpha,
+                            activeBeatIndex = if (isActiveBar) beat.beatIndex else -1,
+                            phase = beat.phase,
                         )
                     }
                 }
@@ -1220,22 +1304,33 @@ private const val BPM_HINT_DURATION_MS = 4000L
 private const val CONTROLS_ALPHA = 0.82f
 private val PLAY_PAUSE_SIZE = 76.dp
 private val PLAY_PAUSE_ICON_SIZE = 40.dp
-private val MIN_BAR_WIDTH = 8.dp
-private val MAX_BAR_WIDTH = 22.dp
 private val MIN_BAR_HEIGHT = 6.dp
 private val MAX_BAR_HEIGHT = 30.dp
-private val MIN_BAR_HIT_WIDTH = 22.dp
 
-// BarQueueDots' own beat-spread axis range - deliberately separate from MIN/MAX_BAR_WIDTH (which
-// PhraseQueueDots also uses for its own, unrelated per-bar-within-phrase width scaling, and which
-// must stay untouched). Wider than MIN/MAX_BAR_WIDTH's 8-22dp because beats are now chopped out of
-// this axis directly (see BarQueueDots) - a bar with many beats needs more room than a plain solid
-// rectangle did to keep individual stripes legible. MIN_BAR_HIT_LENGTH stays coupled to
-// MAX_BAR_LENGTH (the same "fixed, full-sized tap target regardless of this bar's own beat
-// count/tempo" pattern MIN_BAR_HIT_WIDTH/MAX_BAR_WIDTH already established).
+// BarQueueDots' own beat-spread axis range - a bar with many beats needs more room than a plain
+// solid rectangle did to keep individual stripes legible. MIN_BAR_HIT_LENGTH stays coupled to
+// MAX_BAR_LENGTH so every bar's tap target is a constant, full-sized width regardless of its own
+// beat count/tempo.
 private val MIN_BAR_LENGTH = 10.dp
 private val MAX_BAR_LENGTH = 30.dp
 private val MIN_BAR_HIT_LENGTH = 30.dp
+
+// A small, deliberately subtle gap between beat segments (BeatSegments) - without it, same-alpha
+// adjacent segments read as one solid block and a bar's beat count is only visible through the
+// transient flash animation on whichever one happens to be playing.
+private val BEAT_SEGMENT_GAP = 0.5.dp
+
+// PhraseQueueDots' own dedicated sizing - separate from BarQueueDots' MIN/MAX_BAR_LENGTH, since
+// each bar-within-a-phrase segment now renders its own BeatSegments too (not just a flat-color
+// block), and needs more room than a miniature solid rectangle did to keep that legible.
+private val PHRASE_DOT_MIN_SEGMENT_WIDTH = 10.dp
+private val PHRASE_DOT_WIDTH = 26.dp
+private val PHRASE_DOT_HEIGHT = 34.dp
+
+// See logDurationBounds' own kdoc - floors the assumed log-duration spread so a queue of only a
+// couple of close-together bars doesn't stretch across the full width range. ln(6f): a 6x duration
+// ratio is treated as "already full-scale" when nothing wider is actually queued.
+private val MIN_LOG_DURATION_SPAN = ln(6f)
 private const val INACTIVE_BAR_ALPHA = 0.35f
 private const val ACTIVE_BAR_ALPHA = 0.7f
 private val TIME_SIG_STEPPER_SIZE = 32.dp

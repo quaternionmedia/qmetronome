@@ -24,7 +24,9 @@ mean two different things. Width scales with how long the bar actually *takes to
 duration (beat count divided by tempo), not just its raw beat count - relative to the rest of the
 queue (the longest-*playing* bar reads as the widest rectangle, so e.g. a 4/4 bar at 120 BPM and an
 8/8 bar at 240 BPM, the same real duration, render at the same width even though one has twice the
-beats). Height scales with tempo on a fixed scale instead, and in the opposite direction - slower
+beats), and gradually - a 4/4 bar and a 5/4 bar at the same tempo read as a small, proportionate
+width difference, not a jump between the narrowest and widest a bar can ever get. Height scales
+with tempo on a fixed scale instead, and in the opposite direction - slower
 bars read taller, like a wave drawn wider for a longer/slower cycle rather than tying size to
 onset speed - no matter what else is queued, so the same tempo always renders the same height. Each
 bar is divided into one segment per beat, reading left to right, so the count reads directly off
@@ -68,12 +70,17 @@ moment its own bars run out; **Loop** keeps a phrase playing indefinitely until 
 manually. Removing phrases back down to just one makes the whole strip disappear again - it only
 exists while there's more than one phrase to manage.
 
-Each phrase's dot is itself a small vertical stack of thin bar-segments, one per bar in that
-phrase, each segment's width echoing that bar's own real duration relative to every bar in every
-queued phrase (not just its own phrase's bars, so two single-bar phrases with very different
-durations still read as visibly different widths) - a miniature version of the bar queue's own
+Each phrase's dot is itself a small vertical stack of bar-segments, one per bar in that phrase,
+each segment's width echoing that bar's own real duration relative to every bar in every queued
+phrase (not just its own phrase's bars, so two single-bar phrases with very different durations
+still read as visibly different widths) - a miniature version of the bar queue's own
 duration-scaled rectangles above, giving a phrase's own rough shape at a glance without needing to
-open it. With
+open it. Each segment shows its own beats too, reading left to right just like the bar queue's own
+rectangles, and whichever bar is genuinely playing - only ever possible within the currently active
+phrase - reads brighter, with its current beat flashing, the same treatment the bar queue's own
+active bar gets. That's also how you tell which phrase is active at a glance: a phrase with nothing
+playing in it has every bar dim, while the active one always has exactly one bright, flashing bar
+somewhere in its stack. With
 more than one phrase queued, a small dot per phrase additionally appears around the physical Glyph
 Matrix's outer rim (and its on-screen preview mirror) - the active phrase reading brighter than the
 rest - independently toggleable from the bar-queue background in Settings → Visualizer.
