@@ -25,12 +25,17 @@ import kotlin.math.sin
  * beats across, the way a line of notation reads).
  *
  * A row's *thickness* - and therefore the size of every tick drawn in it - scales with that bar's
- * own tempo relative to [minBpm]/[maxBpm] (faster reads thicker/bigger, matching the on-screen bar
- * row's own tempo axis) - the caller passes the *queue's own* observed bpm range, not a fixed
- * absolute one, so a bar's row is always sized relative to what's actually queued next to it
- * rather than silently clipping at some boundary most bars never approach (e.g. the extended BPM
- * range's own 0.1-12000 span). This is a deliberate, static property of the bar, not tied to the
- * live beat animation - the earlier
+ * own tempo via [bpmSizeFraction] (faster reads thicker/bigger, matching the on-screen bar row's
+ * own tempo axis - the same shared function, so the two surfaces can't drift apart). This used to
+ * scale relative to the *queue's own* observed bpm range instead, but that degenerates once a
+ * queue mixes an extended-range bar (BPH/BPS territory, down to ~0.0017 bpm or up to 12000 - see
+ * [media.quaternion.qmetronome.engine.MetronomeEngine.extendedBpmRangeEnabled]) with everyday
+ * ones: linear, queue-relative normalization has no notion of "which values are actually common,"
+ * so a handful of everyday 120 bpm bars sharing a queue with one 8000 bpm bar would all compress
+ * into a barely-distinguishable sliver near one end. [bpmSizeFraction] fixes that by restraining
+ * all size variation to the fixed, everyday BPM span - extended-range bars simply peg the 0/1
+ * extreme instead of dominating the whole visible range. This is a deliberate, static property of
+ * the bar, not tied to the live beat animation - the earlier
  * version only conveyed tempo through the active tick's transient brightness pulse, which decays
  * over a fixed fraction of *each beat's own duration* regardless of bpm: sampled at a fixed frame
  * rate, a fast bar's pulse is almost always caught already-decayed (it has so little of *this*
@@ -71,8 +76,6 @@ object QueueOverlay {
         activeIndex: Int,
         beatIndex: Int,
         phase: Float,
-        minBpm: Float,
-        maxBpm: Float,
         phraseCount: Int = 1,
         activePhraseIndex: Int = 0,
     ): IntArray {
@@ -91,8 +94,7 @@ object QueueOverlay {
             // Row thickness is weighted, not a raw fraction, so even the slowest bar in the queue
             // still gets a visibly non-zero row rather than shrinking toward nothing.
             val weights = queue.map { bar ->
-                val tempoFraction = ((bar.bpm - minBpm) / (maxBpm - minBpm).coerceAtLeast(1f)).coerceIn(0f, 1f)
-                MIN_ROW_WEIGHT + (1f - MIN_ROW_WEIGHT) * tempoFraction
+                MIN_ROW_WEIGHT + (1f - MIN_ROW_WEIGHT) * bpmSizeFraction(bar.bpm)
             }
             val totalWeight = weights.sum()
             val clampedActive = activeIndex.coerceIn(0, queue.lastIndex)

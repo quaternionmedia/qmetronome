@@ -1,6 +1,8 @@
 package media.quaternion.qmetronome.visualizers
 
+import media.quaternion.qmetronome.engine.MetronomeEngine
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -126,3 +128,31 @@ class GlyphCanvas(val size: Int, initial: IntArray? = null) {
 
 /** Eases [phase] (0..1) so beat pulses decay quickly instead of fading linearly. */
 fun decayEase(phase: Float): Float = (1f - phase).coerceIn(0f, 1f).let { it * it }
+
+/**
+ * A bar's own [bpm], as a continuous 0..1 fraction of the fixed [MetronomeEngine.MIN_BPM]/
+ * [MetronomeEngine.MAX_BPM] span - independent of whatever else happens to be queued. Used by both
+ * [media.quaternion.qmetronome.ui] `BarQueueDots` (on-screen row height) and [QueueOverlay] (glyph
+ * row thickness), so the two surfaces read as one consistent visual language rather than drifting
+ * apart - see either call site's own kdoc for the fuller "why" (queue-relative scaling was tried
+ * first for both and degenerates badly with sparse data or with extended-range bars mixed into a
+ * normal-range queue).
+ *
+ * Deliberately restrains *all* size variation to the plain BPM span - extended-range bpms (below
+ * [MetronomeEngine.MIN_BPM] or above [MetronomeEngine.MAX_BPM] - see
+ * [MetronomeEngine.extendedBpmRangeEnabled]) clip flat to 0/1 and stay there, rather than
+ * stretching the visible range to cover them too. That matters because BPH/BPS bpms can be
+ * *enormously* far from the everyday range (down to ~0.0017 bpm, up to 12000): a linear,
+ * queue-relative scale sharing a queue between a 0.5 bpm bar, an 8000 bpm bar, and several 120 bpm
+ * bars would compress those 120 bpm bars into a barely-distinguishable sliver near one end, since
+ * linear normalization has no notion of "which values are actually common." Log-scaling *within*
+ * the fixed plain-BPM span (rather than clipping there too) is what keeps everyday tempos spread
+ * out relative to each other, while rare BPH/BPS bars simply peg the extreme instead of dominating
+ * the whole visible range.
+ */
+fun bpmSizeFraction(bpm: Float): Float {
+    val logMin = ln(MetronomeEngine.MIN_BPM)
+    val logMax = ln(MetronomeEngine.MAX_BPM)
+    val logValue = ln(bpm.coerceAtLeast(0.0001f))
+    return ((logValue - logMin) / (logMax - logMin)).coerceIn(0f, 1f)
+}

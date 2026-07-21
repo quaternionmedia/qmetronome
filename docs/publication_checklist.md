@@ -807,8 +807,10 @@ reactivity) and `docs/usb-midi-test-plan.md` for the USB MIDI ones.
 - [ ] **Phrase dots as mini bar-stacks, on-screen**: with a phrase containing several bars of
       different beat counts, confirm each phrase dot renders as a small vertical stack of
       bar-segments (not one uniform block), each segment's width roughly tracking that bar's beat
-      count relative to its own phrase's bars - and that the phrase strip's own layout doesn't
-      shift as bars are added/removed within a phrase.
+      count relative to *every* bar in *every* queued phrase (not just its own phrase's bars - a
+      single-bar phrase should still read as visibly different widths from another single-bar
+      phrase with a different beat count) - and that the phrase strip's own layout doesn't shift as
+      bars are added/removed within a phrase.
 - [ ] **Radial phrase indicator, real Glyph hardware**: with more than one phrase queued, confirm
       a small dot per phrase appears around the physical Glyph Matrix's outer rim (and its
       on-screen preview mirror), the active phrase's dot reading brighter than the others, and
