@@ -3,6 +3,26 @@
 Generated from this repo's own annotated git tags (`scripts/generate-changelog.sh`) -
 do not edit by hand. Newest first.
 
+## v0.1.2 — 2026-07-21
+
+v0.1.2: shared tempo-height scaling between BarQueueDots and QueueOverlay
+
+- QueueOverlay's glyph row thickness still scaled linearly relative to
+  the queue's own min/max bpm - the same class of bug just fixed for
+  BarQueueDots in v0.1.1, but worse: extended-range bars (BPH down to
+  ~0.0017 bpm, BPS up to 12000) mixed into a queue would compress all the
+  everyday 60-200bpm bars into a barely-distinguishable sliver near one
+  end, while the rare extreme bars dominated the visible spread
+- bpmSizeFraction() moved into visualizers/GlyphCanvas.kt so BarQueueDots
+  and QueueOverlay share the exact same tempo-scaling formula instead of
+  drifting apart; QueueOverlay.apply() no longer takes minBpm/maxBpm
+  parameters at all
+- Fixed docs/publication_checklist.md: PhraseQueueDots' width scaling is
+  relative to every bar in every queued phrase, not just its own phrase's
+  bars
+
+Merged via PR #7, fix/restrain-tempo-scaling-to-bpm -> main.
+
 ## v0.1.1 — 2026-07-21
 
 v0.1.1: bar-queue beats read left-to-right, continuous tempo-height scaling
