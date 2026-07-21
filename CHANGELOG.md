@@ -3,6 +3,24 @@
 Generated from this repo's own annotated git tags (`scripts/generate-changelog.sh`) -
 do not edit by hand. Newest first.
 
+## v0.1.3 — 2026-07-21
+
+v0.1.3: invert tempo-height direction, scale bar width by real duration
+
+- bpmSizeFraction() now returns 1 (biggest) at MIN_BPM and 0 (smallest)
+  at MAX_BPM instead of the reverse - slower bars read bigger, faster
+  bars read smaller. Affects both BarQueueDots' row height and
+  QueueOverlay's row thickness, since they share the one function.
+- Bar width (BarQueueDots, PhraseQueueDots) now scales with a bar's own
+  real duration (beatCount / bpm) instead of raw beat count - a 4/4 bar
+  at 120 bpm and an 8/8 bar at 240 bpm (the same real duration) now
+  render at the same width, instead of the 8/8 bar reading as "longer"
+  just because it has more beats.
+- Updated the one direction-dependent test assertion and the docs
+  describing either axis.
+
+Merged via PR #8, fix/duration-width-invert-tempo-height -> main.
+
 ## v0.1.2 — 2026-07-21
 
 v0.1.2: shared tempo-height scaling between BarQueueDots and QueueOverlay
