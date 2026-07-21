@@ -30,10 +30,7 @@ class QueueOverlayTest {
         val usableRadius = size / 2f * USABLE_RADIUS_FRACTION
         val startY = center - usableRadius
         val totalHeight = usableRadius * 2f
-        val weights = queue.map { bar ->
-            val tempoFraction = ((bar.bpm - MIN_BPM) / (MAX_BPM - MIN_BPM)).coerceIn(0f, 1f)
-            MIN_ROW_WEIGHT + (1f - MIN_ROW_WEIGHT) * tempoFraction
-        }
+        val weights = queue.map { bar -> MIN_ROW_WEIGHT + (1f - MIN_ROW_WEIGHT) * bpmSizeFraction(bar.bpm) }
         val totalWeight = weights.sum()
         var cumulative = 0f
         return weights.map { weight ->
@@ -47,14 +44,14 @@ class QueueOverlayTest {
     @Test
     fun `a single-entry queue is a no-op`() {
         val frame = frameOf(25, 50)
-        val result = QueueOverlay.apply(frame, 25, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM)
+        val result = QueueOverlay.apply(frame, 25, listOf(bar()), 0, 0, 0f)
         assertSame("nothing to indicate - should return the same array, not a copy", frame, result)
     }
 
     @Test
     fun `an empty queue is treated as a no-op, not a crash`() {
         val frame = frameOf(25, 50)
-        val result = QueueOverlay.apply(frame, 25, emptyList(), 0, 0, 0f, MIN_BPM, MAX_BPM)
+        val result = QueueOverlay.apply(frame, 25, emptyList(), 0, 0, 0f)
         assertSame("size <= 1, including empty, is documented as a no-op", frame, result)
     }
 
@@ -62,7 +59,7 @@ class QueueOverlayTest {
     fun `output stays the right size and in range for both real matrix sizes`() {
         for (size in listOf(13, 25)) {
             val queue = listOf(bar(bpm = 60f), bar(bpm = 240f), bar(bpm = 120f))
-            val result = QueueOverlay.apply(frameOf(size, 0), size, queue, 1, 0, 0f, MIN_BPM, MAX_BPM)
+            val result = QueueOverlay.apply(frameOf(size, 0), size, queue, 1, 0, 0f)
             assertEquals(size * size, result.size)
             assertTrue(result.all { it in 0..255 })
         }
@@ -73,7 +70,7 @@ class QueueOverlayTest {
         for (size in listOf(13, 25)) {
             val original = frameOf(size, 77)
             val queue = listOf(bar(1, 60f), bar(24, 240f), bar(12, 120f), bar(6, 30f))
-            val result = QueueOverlay.apply(original, size, queue, 2, 1, 0.3f, MIN_BPM, MAX_BPM)
+            val result = QueueOverlay.apply(original, size, queue, 2, 1, 0.3f)
             val center = (size - 1) / 2f
             val usableRadius = size / 2f * USABLE_RADIUS_FRACTION
 
@@ -98,7 +95,7 @@ class QueueOverlayTest {
     fun `bars are stacked as horizontal rows, top-to-bottom in queue order`() {
         val size = 25
         val queue = listOf(bar(bpm = 120f), bar(bpm = 120f))
-        val result = QueueOverlay.apply(frameOf(size, 0), size, queue, -1, -1, 0f, MIN_BPM, MAX_BPM)
+        val result = QueueOverlay.apply(frameOf(size, 0), size, queue, -1, -1, 0f)
         val bounds = rowBounds(size, queue)
 
         // Bar 0's row should sit entirely above bar 1's row (smaller y = higher up the matrix).
@@ -109,7 +106,7 @@ class QueueOverlayTest {
     fun `a bar with more beats produces more distinct tick columns within its own row`() {
         val size = 25
         val queue = listOf(bar(beatCount = 2, bpm = 120f), bar(beatCount = 12, bpm = 120f))
-        val result = QueueOverlay.apply(frameOf(size, 0), size, queue, -1, -1, 0f, MIN_BPM, MAX_BPM)
+        val result = QueueOverlay.apply(frameOf(size, 0), size, queue, -1, -1, 0f)
         val bounds = rowBounds(size, queue)
 
         fun distinctLitColumns(yRange: IntRange): Int {
@@ -134,7 +131,7 @@ class QueueOverlayTest {
         val size = 25
         val queue = listOf(bar(bpm = MIN_BPM), bar(bpm = MAX_BPM))
         // beatIndex -1 and phase 0 - no active pulse in play, isolating the *static* size property.
-        val result = QueueOverlay.apply(frameOf(size, 0), size, queue, -1, -1, 0f, MIN_BPM, MAX_BPM)
+        val result = QueueOverlay.apply(frameOf(size, 0), size, queue, -1, -1, 0f)
         val bounds = rowBounds(size, queue)
 
         fun distinctLitRows(yRange: IntRange): Int {
@@ -159,8 +156,8 @@ class QueueOverlayTest {
     fun `the active bar's current beat reads brighter at phase 0 than at phase 1`() {
         val size = 25
         val queue = listOf(bar(4, 120f), bar(4, 120f))
-        val fresh = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 1, 0f, MIN_BPM, MAX_BPM)
-        val decayed = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 1, 1f, MIN_BPM, MAX_BPM)
+        val fresh = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 1, 0f)
+        val decayed = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 1, 1f)
 
         assertTrue(
             "a freshly-struck active beat (phase 0) should read brighter overall than a fully " +
@@ -174,8 +171,8 @@ class QueueOverlayTest {
         val size = 25
         val queue = listOf(bar(4, 120f), bar(4, 120f))
         // Bar 0 is active in both calls; bar 1 is inactive throughout - only differ beatIndex/phase.
-        val a = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 2, 0f, MIN_BPM, MAX_BPM)
-        val b = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 2, 0.9f, MIN_BPM, MAX_BPM)
+        val a = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 2, 0f)
+        val b = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 2, 0.9f)
 
         val bar1Row = rowBounds(size, queue)[1]
         for (y in bar1Row) {
@@ -191,7 +188,7 @@ class QueueOverlayTest {
     fun `blends via max rather than overwriting - a saturated background is never darkened`() {
         val size = 25
         val queue = listOf(bar(4, 120f), bar(4, 120f))
-        val result = QueueOverlay.apply(frameOf(size, 255), size, queue, 0, 0, 0f, MIN_BPM, MAX_BPM)
+        val result = QueueOverlay.apply(frameOf(size, 255), size, queue, 0, 0, 0f)
         assertTrue("max-blending against an all-255 frame must leave every pixel at 255", result.all { it == 255 })
     }
 
@@ -199,14 +196,14 @@ class QueueOverlayTest {
     fun `blending against a dark background can still raise pixels above zero`() {
         val size = 25
         val queue = listOf(bar(4, 120f), bar(4, 120f))
-        val result = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 0, 0f, MIN_BPM, MAX_BPM)
+        val result = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 0, 0f)
         assertTrue("the tick structure should light up at least some pixels over an all-black frame", result.any { it > 0 })
     }
 
     @Test
     fun `a queue much larger than the available rows does not throw`() {
         val queue = (0 until 40).map { bar(beatCount = 1 + it % 8, bpm = 60f + it) }
-        val result = QueueOverlay.apply(frameOf(13, 0), 13, queue, 39, 0, 0f, MIN_BPM, MAX_BPM)
+        val result = QueueOverlay.apply(frameOf(13, 0), 13, queue, 39, 0, 0f)
         assertEquals(13 * 13, result.size)
         assertTrue(result.all { it in 0..255 })
     }
@@ -214,22 +211,22 @@ class QueueOverlayTest {
     @Test
     fun `an out-of-range active index or beat index is clamped instead of throwing`() {
         val queue = listOf(bar(4, 120f), bar(4, 120f))
-        QueueOverlay.apply(frameOf(25, 0), 25, queue, -1, -1, 0f, MIN_BPM, MAX_BPM)
-        QueueOverlay.apply(frameOf(25, 0), 25, queue, 99, 99, 0f, MIN_BPM, MAX_BPM)
+        QueueOverlay.apply(frameOf(25, 0), 25, queue, -1, -1, 0f)
+        QueueOverlay.apply(frameOf(25, 0), 25, queue, 99, 99, 0f)
     }
 
     @Test
     fun `the input frame array is never mutated`() {
         val original = frameOf(25, 0)
         val snapshot = original.copyOf()
-        QueueOverlay.apply(original, 25, listOf(bar(4, 60f), bar(8, 240f)), 1, 0, 0f, MIN_BPM, MAX_BPM)
+        QueueOverlay.apply(original, 25, listOf(bar(4, 60f), bar(8, 240f)), 1, 0, 0f)
         assertTrue("apply() must not mutate its input array in place", original.contentEquals(snapshot))
     }
 
     @Test
     fun `a single-entry queue with only one phrase is still a no-op`() {
         val frame = frameOf(25, 50)
-        val result = QueueOverlay.apply(frame, 25, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 1, activePhraseIndex = 0)
+        val result = QueueOverlay.apply(frame, 25, listOf(bar()), 0, 0, 0f, phraseCount = 1, activePhraseIndex = 0)
         assertSame("nothing to indicate on either axis - should return the same array", frame, result)
     }
 
@@ -237,7 +234,7 @@ class QueueOverlayTest {
     fun `a single-bar queue still draws the radial phrase indicator when multiple phrases exist`() {
         val size = 25
         val result = QueueOverlay.apply(
-            frameOf(size, 0), size, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 3, activePhraseIndex = 0,
+            frameOf(size, 0), size, listOf(bar()), 0, 0, 0f, phraseCount = 3, activePhraseIndex = 0,
         )
         assertTrue(
             "a single-bar queue no longer suppresses the phrase indicator - multiple phrases should still light pixels",
@@ -249,9 +246,9 @@ class QueueOverlayTest {
     fun `a multi-bar queue still draws rows when only one phrase exists`() {
         val size = 25
         val queue = listOf(bar(4, 120f), bar(4, 120f))
-        val withDefault = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 0, 0f, MIN_BPM, MAX_BPM)
+        val withDefault = QueueOverlay.apply(frameOf(size, 0), size, queue, 0, 0, 0f)
         val withExplicitSinglePhrase = QueueOverlay.apply(
-            frameOf(size, 0), size, queue, 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 1, activePhraseIndex = 0,
+            frameOf(size, 0), size, queue, 0, 0, 0f, phraseCount = 1, activePhraseIndex = 0,
         )
         assertTrue(
             "rows must not depend on phraseCount defaulting vs. being passed explicitly as 1",
@@ -263,7 +260,7 @@ class QueueOverlayTest {
     fun `every phrase-indicator pixel stays within the SDK's own circular mask`() {
         for (size in listOf(13, 25)) {
             val original = frameOf(size, 0)
-            val result = QueueOverlay.apply(original, size, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 6, activePhraseIndex = 2)
+            val result = QueueOverlay.apply(original, size, listOf(bar()), 0, 0, 0f, phraseCount = 6, activePhraseIndex = 2)
             val center = (size - 1) / 2f
             // The true mask boundary - matrixSize/2 - not PHRASE_INDICATOR_RADIUS_FRACTION plus an
             // arbitrary margin: QueueOverlay itself caps indicatorRadius so a dot's anti-aliased
@@ -288,7 +285,7 @@ class QueueOverlayTest {
     @Test
     fun `the active phrase's dot is brighter than an inactive phrase's dot`() {
         val size = 25
-        val result = QueueOverlay.apply(frameOf(size, 0), size, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 4, activePhraseIndex = 0)
+        val result = QueueOverlay.apply(frameOf(size, 0), size, listOf(bar()), 0, 0, 0f, phraseCount = 4, activePhraseIndex = 0)
         assertTrue("some phrase-indicator pixels should read at full brightness (the active phrase)", result.any { it == 255 })
         assertTrue(
             "some phrase-indicator pixels should read dimmer than full brightness (an inactive phrase)",
@@ -298,13 +295,13 @@ class QueueOverlayTest {
 
     @Test
     fun `an out-of-range activePhraseIndex is clamped instead of throwing`() {
-        QueueOverlay.apply(frameOf(25, 0), 25, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 3, activePhraseIndex = -1)
-        QueueOverlay.apply(frameOf(25, 0), 25, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 3, activePhraseIndex = 99)
+        QueueOverlay.apply(frameOf(25, 0), 25, listOf(bar()), 0, 0, 0f, phraseCount = 3, activePhraseIndex = -1)
+        QueueOverlay.apply(frameOf(25, 0), 25, listOf(bar()), 0, 0, 0f, phraseCount = 3, activePhraseIndex = 99)
     }
 
     @Test
     fun `a phraseCount much larger than the matrix does not throw`() {
-        val result = QueueOverlay.apply(frameOf(13, 0), 13, listOf(bar()), 0, 0, 0f, MIN_BPM, MAX_BPM, phraseCount = 40, activePhraseIndex = 20)
+        val result = QueueOverlay.apply(frameOf(13, 0), 13, listOf(bar()), 0, 0, 0f, phraseCount = 40, activePhraseIndex = 20)
         assertEquals(13 * 13, result.size)
         assertTrue(result.all { it in 0..255 })
     }

@@ -1755,15 +1755,10 @@ object MetronomeEngine {
      * singleton with no per-frame allocation, unlike building a new one-element list on this
      * ~100fps render path every time a toggle happens to be off.
      *
-     * [QueueOverlay.apply]'s `minBpm`/`maxBpm` are [queue]'s own observed bpm range, not the
-     * fixed [MIN_BPM]/[MAX_BPM] constants this used to pass - the same "scale relative to what's
-     * actually queued, not a boundary most bars never approach" fix `BarQueueDots`'s row height
-     * got in `MainScreen.kt` (see its own kdoc), for the same reason: any bar using the extended
-     * BPM range used to silently clip to the same min/max row thickness as every other
-     * extended-range bar, on this row's on-screen twin as well as the physical Glyph Matrix
-     * itself. [queue] (not the size-0 substitution above) is always non-empty - the bar queue can
-     * never be empty - so this is safe to compute unconditionally, even though it's only actually
-     * used when [showRows] is true. */
+     * Row thickness (see [QueueOverlay.apply]'s own kdoc) scales via the shared
+     * `bpmSizeFraction()` - a fixed span, not [queue]'s own observed bpm range - so this is safe
+     * to call unconditionally regardless of what's actually queued, even though the rows
+     * themselves only render when [showRows] is true. */
     private fun withQueueOverlay(rendered: IntArray, beatIndex: Int, phase: Float): IntArray {
         val queue = _timeSignatureQueue.value
         val phrases = _phrases.value
@@ -1777,8 +1772,6 @@ object MetronomeEngine {
             _queueIndex.value,
             beatIndex,
             phase,
-            minBpm = queue.minOf { it.bpm },
-            maxBpm = queue.maxOf { it.bpm },
             phraseCount = if (showPhraseIndicator) phrases.size else 1,
             activePhraseIndex = _activePhraseIndex.value,
         )

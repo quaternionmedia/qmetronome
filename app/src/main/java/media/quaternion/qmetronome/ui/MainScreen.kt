@@ -65,8 +65,8 @@ import media.quaternion.qmetronome.midi.MidiActionSender
 import media.quaternion.qmetronome.ui.icons.ExtraIcons
 import media.quaternion.qmetronome.ui.theme.PureWhite
 import media.quaternion.qmetronome.ui.theme.RecordingRed
+import media.quaternion.qmetronome.visualizers.bpmSizeFraction
 import media.quaternion.qmetronome.visualizers.decayEase
-import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -815,31 +815,6 @@ private fun TimeSignatureNumberRow(
  */
 internal fun proportionFraction(value: Float, min: Float, max: Float): Float =
     if (max <= min) 1f else ((value - min) / (max - min)).coerceIn(0f, 1f)
-
-/**
- * A bar's own [bpm], as a continuous 0..1 fraction of the fixed [MetronomeEngine.MIN_BPM]/
- * [MetronomeEngine.MAX_BPM] span - independent of whatever else happens to be queued, unlike
- * [proportionFraction]. [BarQueueDots] tried queue-relative scaling for tempo first (the same
- * formula beat-count width already uses), but it collapses badly with sparse data: a single bar
- * (the common case) is trivially both the min and the max of its own one-bar queue, so
- * [proportionFraction] always returns its degenerate-range value and the bar's height never moves
- * as its bpm changes; two bars render at exactly the two size extremes regardless of whether
- * they're 1 bpm or 200 bpm apart, since min-max normalization only encodes *rank*, not magnitude,
- * once there are only a couple of distinct values to spread across. Anchoring to a fixed span
- * fixes both - any bpm maps to its own distinct fraction, so a lone bar (or several sharing a
- * bpm) still varies meaningfully, and no bar's height depends on what's queued alongside it.
- * Log rather than linear so extended-range bars (below 1 or above 400 - see
- * [MetronomeEngine.extendedBpmRangeEnabled]) continue the same curve smoothly past 0/1 instead of
- * clipping to the same extreme height as every other extended-range bar - the exact silent-clip
- * bug a fixed *linear* absolute scale had, and the reason this row's scaling went queue-relative
- * in the first place before this fix.
- */
-internal fun bpmSizeFraction(bpm: Float): Float {
-    val logMin = ln(MetronomeEngine.MIN_BPM)
-    val logMax = ln(MetronomeEngine.MAX_BPM)
-    val logValue = ln(bpm.coerceAtLeast(0.0001f))
-    return ((logValue - logMin) / (logMax - logMin)).coerceIn(0f, 1f)
-}
 
 /**
  * One rectangle per bar in the queue - a minimal, always-visible (even for the default single
