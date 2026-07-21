@@ -66,6 +66,7 @@ import media.quaternion.qmetronome.ui.icons.ExtraIcons
 import media.quaternion.qmetronome.ui.theme.PureWhite
 import media.quaternion.qmetronome.ui.theme.RecordingRed
 import media.quaternion.qmetronome.visualizers.decayEase
+import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -816,6 +817,31 @@ internal fun proportionFraction(value: Float, min: Float, max: Float): Float =
     if (max <= min) 1f else ((value - min) / (max - min)).coerceIn(0f, 1f)
 
 /**
+ * A bar's own [bpm], as a continuous 0..1 fraction of the fixed [MetronomeEngine.MIN_BPM]/
+ * [MetronomeEngine.MAX_BPM] span - independent of whatever else happens to be queued, unlike
+ * [proportionFraction]. [BarQueueDots] tried queue-relative scaling for tempo first (the same
+ * formula beat-count width already uses), but it collapses badly with sparse data: a single bar
+ * (the common case) is trivially both the min and the max of its own one-bar queue, so
+ * [proportionFraction] always returns its degenerate-range value and the bar's height never moves
+ * as its bpm changes; two bars render at exactly the two size extremes regardless of whether
+ * they're 1 bpm or 200 bpm apart, since min-max normalization only encodes *rank*, not magnitude,
+ * once there are only a couple of distinct values to spread across. Anchoring to a fixed span
+ * fixes both - any bpm maps to its own distinct fraction, so a lone bar (or several sharing a
+ * bpm) still varies meaningfully, and no bar's height depends on what's queued alongside it.
+ * Log rather than linear so extended-range bars (below 1 or above 400 - see
+ * [MetronomeEngine.extendedBpmRangeEnabled]) continue the same curve smoothly past 0/1 instead of
+ * clipping to the same extreme height as every other extended-range bar - the exact silent-clip
+ * bug a fixed *linear* absolute scale had, and the reason this row's scaling went queue-relative
+ * in the first place before this fix.
+ */
+internal fun bpmSizeFraction(bpm: Float): Float {
+    val logMin = ln(MetronomeEngine.MIN_BPM)
+    val logMax = ln(MetronomeEngine.MAX_BPM)
+    val logValue = ln(bpm.coerceAtLeast(0.0001f))
+    return ((logValue - logMin) / (logMax - logMin)).coerceIn(0f, 1f)
+}
+
+/**
  * One rectangle per bar in the queue - a minimal, always-visible (even for the default single
  * bar) page indicator, since swiping alone gave no feedback about whether it did anything.
  * Deliberately mirrors the physical Glyph Matrix's own queue indicator
@@ -827,15 +853,16 @@ internal fun proportionFraction(value: Float, min: Float, max: Float): Float =
  * different ones. The one bar actually active reads at full brightness; the rest are dimmed to
  * the same ratio the glyph overlay uses. Tap a bar to jump to it; long-press to remove it.
  *
- * Both width and height are scaled relative to *this queue's own* min/max, not a fixed absolute
- * range - width already worked this way for beat count; tempo used to scale height against the
- * fixed [MetronomeEngine.MIN_BPM]/[MetronomeEngine.MAX_BPM] (1-400)
- * instead, which silently clipped: any bar using the extended BPM range (below 1 or above 400 -
- * see [MetronomeEngine.extendedBpmRangeEnabled]) rendered at the same min/max height as every
- * other extended-range bar, regardless of how much further beyond that boundary it actually was.
- * Scoping to the queue's own bpm span fixes that and stays consistent with how width already
- * behaves - a bar's rendered size is always meaningful relative to what's actually queued next to
- * it, never silently pinned by an absolute boundary most bars never approach.
+ * Width and height deliberately use two *different* scaling strategies. Width scales relative to
+ * *this queue's own* beat-count range ([proportionFraction]) - not the full 1..24 theoretical
+ * range, which made everyday differences like 3 vs 7 beats barely register - since a beat count
+ * only means anything next to whatever else is queued. Height instead uses [bpmSizeFraction], a
+ * fixed (not queue-relative) log-scaled span - queue-relative scaling was tried here first, but
+ * degenerates badly with sparse data: a single bar (the common case) is trivially both the min and
+ * max of its own queue, so it never responded to its own bpm at all, and two bars always rendered
+ * at exactly the two size extremes regardless of whether their tempos were 1 bpm or 200 bpm apart.
+ * See [bpmSizeFraction]'s own kdoc for why a fixed span fixes that without reintroducing the
+ * silent-clipping bug that motivated queue-relative scaling in the first place.
  *
  * Internal (not private): [SettingsSheet]'s Beat Overrides picker embeds this same composable to
  * choose which bar to author an override for - the exact "graphic to choose" the main screen
@@ -855,22 +882,20 @@ internal fun BarQueueDots(
 ) {
     val minBeats = queue.minOf { it.beatCount }
     val maxBeats = queue.maxOf { it.beatCount }
-    val minBpm = queue.minOf { it.bpm }
-    val maxBpm = queue.maxOf { it.bpm }
 
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         queue.forEachIndexed { index, spec ->
             val isActive = index == activeIndex
             val widthFraction = proportionFraction(spec.beatCount.toFloat(), minBeats.toFloat(), maxBeats.toFloat())
-            val heightFraction = proportionFraction(spec.bpm, minBpm, maxBpm)
-            val barWidth = MIN_BAR_WIDTH + (MAX_BAR_WIDTH - MIN_BAR_WIDTH) * widthFraction
+            val heightFraction = bpmSizeFraction(spec.bpm)
+            val barWidth = MIN_BAR_LENGTH + (MAX_BAR_LENGTH - MIN_BAR_LENGTH) * widthFraction
             val barHeight = MIN_BAR_HEIGHT + (MAX_BAR_HEIGHT - MIN_BAR_HEIGHT) * heightFraction
             val baseAlpha = if (isActive) ACTIVE_BAR_ALPHA else INACTIVE_BAR_ALPHA
 
             Box(
                 modifier = Modifier
                     .testTag("queue_bar_$index")
-                    .width(barWidth.coerceAtLeast(MIN_BAR_HIT_WIDTH))
+                    .width(barWidth.coerceAtLeast(MIN_BAR_HIT_LENGTH))
                     .height(MAX_BAR_HEIGHT)
                     .pointerInput(index) {
                         detectTapGestures(
@@ -882,12 +907,13 @@ internal fun BarQueueDots(
             ) {
                 // The bar is divided into one segment per beat - beats "represented as part of
                 // the larger rectangle" rather than a separate tick row above it. Beat 0 at the
-                // top, later beats stacked downward, so playback animates top-to-bottom. Only the
-                // active bar's current beat animates (via the same decayEase flash curve the
-                // Glyph Matrix visualizers use); every other segment sits at a flat brightness -
-                // active bar segments brighter than inactive bars', so which bar is playing still
-                // reads at a glance between pulses.
-                Column(modifier = Modifier.width(barWidth).height(barHeight)) {
+                // left, later beats spread rightward, so playback animates left-to-right - the
+                // same reading direction QueueOverlay's glyph rows already use. Only the active
+                // bar's current beat animates (via the same decayEase flash curve the Glyph Matrix
+                // visualizers use); every other segment sits at a flat brightness - active bar
+                // segments brighter than inactive bars', so which bar is playing still reads at a
+                // glance between pulses.
+                Row(modifier = Modifier.width(barWidth).height(barHeight)) {
                     for (beatIdx in 0 until spec.beatCount) {
                         val isCurrentBeat = isActive && beatIdx == beat.beatIndex
                         val flash = if (isCurrentBeat) decayEase(beat.phase) else 0f
@@ -895,7 +921,7 @@ internal fun BarQueueDots(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .fillMaxWidth()
+                                .fillMaxHeight()
                                 .background(PureWhite.copy(alpha = segmentAlpha)),
                         )
                     }
@@ -1208,6 +1234,17 @@ private val MAX_BAR_WIDTH = 22.dp
 private val MIN_BAR_HEIGHT = 6.dp
 private val MAX_BAR_HEIGHT = 30.dp
 private val MIN_BAR_HIT_WIDTH = 22.dp
+
+// BarQueueDots' own beat-spread axis range - deliberately separate from MIN/MAX_BAR_WIDTH (which
+// PhraseQueueDots also uses for its own, unrelated per-bar-within-phrase width scaling, and which
+// must stay untouched). Wider than MIN/MAX_BAR_WIDTH's 8-22dp because beats are now chopped out of
+// this axis directly (see BarQueueDots) - a bar with many beats needs more room than a plain solid
+// rectangle did to keep individual stripes legible. MIN_BAR_HIT_LENGTH stays coupled to
+// MAX_BAR_LENGTH (the same "fixed, full-sized tap target regardless of this bar's own beat
+// count/tempo" pattern MIN_BAR_HIT_WIDTH/MAX_BAR_WIDTH already established).
+private val MIN_BAR_LENGTH = 10.dp
+private val MAX_BAR_LENGTH = 30.dp
+private val MIN_BAR_HIT_LENGTH = 30.dp
 private const val INACTIVE_BAR_ALPHA = 0.35f
 private const val ACTIVE_BAR_ALPHA = 0.7f
 private val TIME_SIG_STEPPER_SIZE = 32.dp

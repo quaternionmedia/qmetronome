@@ -35,12 +35,16 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 # Reinstall (keeps data)
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 
+# Launch the app (adb install doesn't auto-launch, unlike Android Studio's Run button)
+adb shell am start -n media.quaternion.qmetronome/.MainActivity
+
 # Stream logcat (filter to this app)
 adb logcat --pid=$(adb shell pidof -s media.quaternion.qmetronome)
 
 # Windows — if adb isn't in PATH
 $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 & $adb install app\build\outputs\apk\debug\app-debug.apk
+& $adb shell am start -n media.quaternion.qmetronome/.MainActivity
 ```
 
 ---

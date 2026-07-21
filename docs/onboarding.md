@@ -239,6 +239,13 @@ recognized yet. Try: (1) unplug and replug, (2) accept the "Allow USB
 debugging?" dialog that appears on the phone, (3) run `adb devices` to see
 what's connected and whether it shows as `unauthorized`.
 
+`adb install` puts the app on the phone but doesn't open it (unlike Android
+Studio's Run button, which does both) - launch it yourself:
+
+```sh
+adb shell am start -n media.quaternion.qmetronome/.MainActivity
+```
+
 ---
 
 ## Run the tests
