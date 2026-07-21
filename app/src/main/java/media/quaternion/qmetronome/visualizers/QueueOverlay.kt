@@ -25,8 +25,9 @@ import kotlin.math.sin
  * beats across, the way a line of notation reads).
  *
  * A row's *thickness* - and therefore the size of every tick drawn in it - scales with that bar's
- * own tempo via [bpmSizeFraction] (faster reads thicker/bigger, matching the on-screen bar row's
- * own tempo axis - the same shared function, so the two surfaces can't drift apart). This used to
+ * own tempo via [bpmSizeFraction] (**slower reads thicker/bigger**, matching the on-screen bar
+ * row's own tempo axis - the same shared function, so the two surfaces can't drift apart; see
+ * [bpmSizeFraction]'s own kdoc for why that direction was chosen). This used to
  * scale relative to the *queue's own* observed bpm range instead, but that degenerates once a
  * queue mixes an extended-range bar (BPH/BPS territory, down to ~0.0017 bpm or up to 12000 - see
  * [media.quaternion.qmetronome.engine.MetronomeEngine.extendedBpmRangeEnabled]) with everyday

@@ -480,11 +480,12 @@ object MetronomeEngine {
             settings?.bpm = clamped
             persistPhrases()
         }
-        // The queue overlay's dot height reflects bpm, and this is the one function every
-        // bpm-committing path (direct edits, goToQueueBar switching bars, the denominator
-        // rescale) funnels through - refreshing here is what makes the glyph update immediately
-        // while stopped, not just once playback starts. No-ops while playing (renderFrame owns
-        // the frame then).
+        // The queue overlay's row/dot height reflects bpm, and a bar's own duration (its width -
+        // see applyBeatsPerBarImmediate's matching call) depends on bpm too, not just beat count -
+        // this is the one function every bpm-committing path (direct edits, goToQueueBar switching
+        // bars, the denominator rescale) funnels through, so refreshing here is what makes the
+        // glyph update immediately while stopped, not just once playback starts. No-ops while
+        // playing (renderFrame owns the frame then).
         emitIdleFrame()
     }
 
@@ -510,7 +511,8 @@ object MetronomeEngine {
         }
         settings?.beatsPerBar = clamped
         syncActivePhraseMemoryAndPersist()
-        // The queue overlay's dot width reflects beat count - see setBpmImmediate's matching call.
+        // A bar's own duration (the queue overlay's row/dot width) depends on beat count too, not
+        // just bpm - see setBpmImmediate's matching call.
         emitIdleFrame()
     }
 

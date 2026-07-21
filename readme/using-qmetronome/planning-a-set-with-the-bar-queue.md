@@ -20,15 +20,17 @@ destructive, unrecoverable action - clears the whole queue back to a single defa
 starting over rather than trimming bars one at a time.
 
 Each bar renders as a rectangle sized to carry information at a glance, and its two dimensions
-mean two different things. Width scales with beat count *relative to the rest of the queue* (the
-longest bar reads as the widest rectangle) - a beat count only means something next to what else
-is queued, so a lone bar's width isn't trying to be individually meaningful. Height scales with
-tempo on a fixed scale instead (faster bars read taller no matter what else is queued, so the same
-tempo always renders the same height) - and each bar is divided into one segment per beat, reading
-left to right, so the count reads directly off the shape and the beats fall in the same order a
-line of sheet music reads in. Only the active bar's current-beat segment pulses, and the active bar
-itself reads brighter than the rest. Long-press any bar to remove it directly, in addition to the
-`−` button.
+mean two different things. Width scales with how long the bar actually *takes to play* - its real
+duration (beat count divided by tempo), not just its raw beat count - relative to the rest of the
+queue (the longest-*playing* bar reads as the widest rectangle, so e.g. a 4/4 bar at 120 BPM and an
+8/8 bar at 240 BPM, the same real duration, render at the same width even though one has twice the
+beats). Height scales with tempo on a fixed scale instead, and in the opposite direction - slower
+bars read taller, like a wave drawn wider for a longer/slower cycle rather than tying size to
+onset speed - no matter what else is queued, so the same tempo always renders the same height. Each
+bar is divided into one segment per beat, reading left to right, so the count reads directly off
+the shape and the beats fall in the same order a line of sheet music reads in. Only the active
+bar's current-beat segment pulses, and the active bar itself reads brighter than the rest.
+Long-press any bar to remove it directly, in addition to the `−` button.
 
 A mode icon at the far right controls how the queue advances at each bar boundary during playback:
 **Loop** (default) wraps back to the first bar after the last; **Once** stops advancing once it
@@ -67,10 +69,11 @@ manually. Removing phrases back down to just one makes the whole strip disappear
 exists while there's more than one phrase to manage.
 
 Each phrase's dot is itself a small vertical stack of thin bar-segments, one per bar in that
-phrase, each segment's width echoing that bar's beat count relative to every bar in every queued
-phrase (not just its own phrase's bars, so two single-bar phrases with very different beat counts
-still read as visibly different widths) - a miniature version of the bar queue's own width-scaled
-rectangles above, giving a phrase's own rough shape at a glance without needing to open it. With
+phrase, each segment's width echoing that bar's own real duration relative to every bar in every
+queued phrase (not just its own phrase's bars, so two single-bar phrases with very different
+durations still read as visibly different widths) - a miniature version of the bar queue's own
+duration-scaled rectangles above, giving a phrase's own rough shape at a glance without needing to
+open it. With
 more than one phrase queued, a small dot per phrase additionally appears around the physical Glyph
 Matrix's outer rim (and its on-screen preview mirror) - the active phrase reading brighter than the
 rest - independently toggleable from the bar-queue background in Settings → Visualizer.

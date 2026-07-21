@@ -810,34 +810,49 @@ private fun TimeSignatureNumberRow(
  * guards a caller passing an unrelated value) never overshoots. 1f (not 0f) when [min] and [max]
  * are equal, since "nothing to compare against" should read as one consistent, full-size shape
  * rather than collapsing everything to the smallest possible one. Shared, directly-testable
- * scaling math for [BarQueueDots] (beat-count width, bpm height) and [PhraseQueueDots] (beat-count
- * width) - one formula instead of three near-identical inline copies.
+ * scaling math for [BarQueueDots] and [PhraseQueueDots] (both duration-width) - one formula
+ * instead of several near-identical inline copies.
  */
 internal fun proportionFraction(value: Float, min: Float, max: Float): Float =
     if (max <= min) 1f else ((value - min) / (max - min)).coerceIn(0f, 1f)
+
+/**
+ * How long [this] bar actually takes to play, in arbitrary but consistent relative units
+ * (`beatCount / bpm`) - not just its beat count, so e.g. a 4/4 bar at 120 bpm and an 8/8 bar at
+ * 240 bpm (the same real duration, twice the beats at twice the tempo) compare as equal rather
+ * than the 8/8 bar reading as "longer." [unitNoteValue] doesn't factor in separately - changing it
+ * already rescales [TimeSignature.bpm] to hold the bar's own real duration constant (see
+ * [MetronomeEngine.rescaledBpmForUnitNoteValueChange]), so `beatCount / bpm` already reflects it.
+ * Only ever used as an input to [proportionFraction]'s relative min/max, where a shared constant
+ * scale factor (e.g. converting to real seconds via `* 60`) would cancel out - so this is left in
+ * bpm's own native per-minute terms rather than converted to seconds for no functional reason.
+ */
+private fun TimeSignature.relativeDuration(): Float = beatCount / bpm
 
 /**
  * One rectangle per bar in the queue - a minimal, always-visible (even for the default single
  * bar) page indicator, since swiping alone gave no feedback about whether it did anything.
  * Deliberately mirrors the physical Glyph Matrix's own queue indicator
  * ([media.quaternion.qmetronome.visualizers.QueueOverlay]) rather than keeping a separate visual
- * language on-screen: a bar's *width* scales with its beat count relative to the rest of the
- * queue (not the full 1..24 theoretical range, which made everyday differences like 3 vs 7 beats
- * barely register), and its *height* scales with its own tempo - the same two axes, split the
- * same way, so the on-screen row and the glyph read as one consistent idea instead of two
- * different ones. The one bar actually active reads at full brightness; the rest are dimmed to
+ * language on-screen: a bar's *width* scales with its own real duration relative to the rest of
+ * the queue, and its *height* scales with its own tempo (slower reads taller) - the same two axes,
+ * split the same way, so the on-screen row and the glyph read as one consistent idea instead of
+ * two different ones. The one bar actually active reads at full brightness; the rest are dimmed to
  * the same ratio the glyph overlay uses. Tap a bar to jump to it; long-press to remove it.
  *
  * Width and height deliberately use two *different* scaling strategies. Width scales relative to
- * *this queue's own* beat-count range ([proportionFraction]) - not the full 1..24 theoretical
- * range, which made everyday differences like 3 vs 7 beats barely register - since a beat count
- * only means anything next to whatever else is queued. Height instead uses [bpmSizeFraction], a
- * fixed (not queue-relative) log-scaled span - queue-relative scaling was tried here first, but
- * degenerates badly with sparse data: a single bar (the common case) is trivially both the min and
- * max of its own queue, so it never responded to its own bpm at all, and two bars always rendered
- * at exactly the two size extremes regardless of whether their tempos were 1 bpm or 200 bpm apart.
- * See [bpmSizeFraction]'s own kdoc for why a fixed span fixes that without reintroducing the
- * silent-clipping bug that motivated queue-relative scaling in the first place.
+ * *this queue's own* duration range ([proportionFraction], fed each bar's `beatCount / bpm` -
+ * proportional to how long it actually takes to play, not just its beat count, so a 4/4 bar at 120
+ * bpm and an 8/8 bar at 240 bpm - the same real duration - render at the same width even though
+ * their beat counts differ) - not the full 1..24-beats-at-any-tempo theoretical range, which made
+ * everyday differences barely register, since a bar's length only means anything next to whatever
+ * else is queued. Height instead uses [bpmSizeFraction], a fixed (not queue-relative) log-scaled
+ * span - queue-relative scaling was tried here first, but degenerates badly with sparse data: a
+ * single bar (the common case) is trivially both the min and max of its own queue, so it never
+ * responded to its own bpm at all, and two bars always rendered at exactly the two size extremes
+ * regardless of whether their tempos were 1 bpm or 200 bpm apart. See [bpmSizeFraction]'s own kdoc
+ * for why a fixed span fixes that without reintroducing the silent-clipping bug that motivated
+ * queue-relative scaling in the first place, and for why slower reads bigger rather than faster.
  *
  * Internal (not private): [SettingsSheet]'s Beat Overrides picker embeds this same composable to
  * choose which bar to author an override for - the exact "graphic to choose" the main screen
@@ -855,13 +870,13 @@ internal fun BarQueueDots(
     onDotClick: (Int) -> Unit,
     onDotRemove: (Int) -> Unit,
 ) {
-    val minBeats = queue.minOf { it.beatCount }
-    val maxBeats = queue.maxOf { it.beatCount }
+    val minDuration = queue.minOf { it.relativeDuration() }
+    val maxDuration = queue.maxOf { it.relativeDuration() }
 
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         queue.forEachIndexed { index, spec ->
             val isActive = index == activeIndex
-            val widthFraction = proportionFraction(spec.beatCount.toFloat(), minBeats.toFloat(), maxBeats.toFloat())
+            val widthFraction = proportionFraction(spec.relativeDuration(), minDuration, maxDuration)
             val heightFraction = bpmSizeFraction(spec.bpm)
             val barWidth = MIN_BAR_LENGTH + (MAX_BAR_LENGTH - MIN_BAR_LENGTH) * widthFraction
             val barHeight = MIN_BAR_HEIGHT + (MAX_BAR_HEIGHT - MIN_BAR_HEIGHT) * heightFraction
@@ -992,13 +1007,14 @@ private fun PhraseQueueControls(
 /**
  * The phrase-level counterpart to [BarQueueDots] - each phrase's dot is a miniature vertical
  * stack of thin bar-segments, one per bar in that phrase, rather than one uniform-sized rectangle.
- * A segment's *width* echoes its bar's beat count relative to *every bar in every queued phrase*,
- * not just its own phrase's bars - scoping the min/max per-phrase (as this originally shipped)
- * meant a phrase's single bar always rendered at full width regardless of its actual beat count,
- * since a lone bar is trivially both the min and the max of its own one-bar set: a 3-beat phrase
- * and a 9-beat phrase, each with one bar, were visually indistinguishable. Scoping to the whole
- * queue (the same fix [BarQueueDots] already gets for its own height/tempo scaling) makes a
- * phrase's shape actually comparable to its neighbors, not just internally self-consistent -
+ * A segment's *width* echoes its bar's own real duration ([TimeSignature.relativeDuration],
+ * `beatCount / bpm` - the same measure [BarQueueDots] uses) relative to *every bar in every
+ * queued phrase*, not just its own phrase's bars - scoping the min/max per-phrase (as this
+ * originally shipped) meant a phrase's single bar always rendered at full width regardless of its
+ * actual duration, since a lone bar is trivially both the min and the max of its own one-bar set: a
+ * short phrase and a long phrase, each with one bar, were visually indistinguishable. Scoping to
+ * the whole queue (the same fix [BarQueueDots] already gets for its own width) makes a phrase's
+ * shape actually comparable to its neighbors, not just internally self-consistent -
  * simplified/miniaturized relative to [BarQueueDots] in every other way (no per-segment tempo/
  * height scaling, no per-segment beat ticks - deliberately not a second full [BarQueueDots], per
  * the explicit "stay minimal" instruction this feature shipped under; just enough shape to read
@@ -1024,8 +1040,8 @@ internal fun PhraseQueueDots(
     onDotRemove: (Int) -> Unit,
 ) {
     val allBars = phrases.flatMap { it.bars }
-    val minBeats = allBars.minOf { it.beatCount }
-    val maxBeats = allBars.maxOf { it.beatCount }
+    val minDuration = allBars.minOf { it.relativeDuration() }
+    val maxDuration = allBars.maxOf { it.relativeDuration() }
 
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         phrases.forEachIndexed { index, phrase ->
@@ -1050,7 +1066,7 @@ internal fun PhraseQueueDots(
                     verticalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
                     phrase.bars.forEach { bar ->
-                        val widthFraction = proportionFraction(bar.beatCount.toFloat(), minBeats.toFloat(), maxBeats.toFloat())
+                        val widthFraction = proportionFraction(bar.relativeDuration(), minDuration, maxDuration)
                         val segmentWidth = MIN_BAR_WIDTH + (MAX_BAR_WIDTH - MIN_BAR_WIDTH) * widthFraction
                         Box(
                             modifier = Modifier
