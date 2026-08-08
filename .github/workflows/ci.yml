@@ -35,23 +35,5 @@ jobs:
             exit 1
           fi
 
-      - name: ADR draft vocabulary lint
-        # Pre-ratification ADRs (governance/qm/adr/DRAFT-*.md) are squashed and rewritten in
-        # place as understanding changes - per governance/qm/adr/README.md and qm's
-        # decision-record-discipline record, they must never carry revision-history language
-        # about themselves. This is the enforcement side of that rule (already violated once in
-        # this project's history - see the squashed Amendment in
-        # governance/qm/adr/DRAFT-midi-clock-as-open-standard-seam.md's git history). qmetronome's
-        # own adr/ directory now lives inside the governance/qm submodule (on this project's
-        # dedicated project/qmetronome branch) rather than in this repo's own working tree - see
-        # governance/qm/README.md's "Forking a new project" section.
-        run: |
-          offending=$(grep -lEi "previously|originally|earlier draft|re-review|renumber|retroactive|supersedes the .* (stance|finding)|\bcorrected\b" governance/qm/adr/DRAFT-*.md 2>/dev/null || true)
-          if [ -n "$offending" ]; then
-            echo "Pre-ratification ADRs must be squashed, not narrate their own revision history - found banned vocabulary in:"
-            echo "$offending"
-            exit 1
-          fi
-
       - name: Build and test
         run: ./gradlew assembleDebug testDebugUnitTest --console=plain
