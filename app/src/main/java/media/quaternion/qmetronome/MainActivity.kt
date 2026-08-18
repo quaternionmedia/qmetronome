@@ -3,6 +3,7 @@ package media.quaternion.qmetronome
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -17,6 +18,7 @@ import media.quaternion.qmetronome.ui.theme.QMetronomeTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        volumeControlStream = AudioManager.STREAM_MUSIC
         enableEdgeToEdge()
         setContent {
             QMetronomeTheme {
