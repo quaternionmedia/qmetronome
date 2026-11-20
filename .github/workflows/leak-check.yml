@@ -1,0 +1,64 @@
+# Nothing committed names a person, a machine, or a private conversation.
+#
+# SEED FILE: copy verbatim into .github/workflows/, the same discipline as
+# adr-lint.yml. Only the workflow is copied -- it runs check_leaks.py out of
+# the governance submodule, so a pattern added to the rule reaches every
+# project on its next pin bump instead of needing N copies updated.
+#
+# The rule is records/DRAFT-what-is-not-the-organisation.md: a committed file
+# states what is true of the organisation, and the workstation, the agent
+# driving a session, and the conversation are not it. This check sees the
+# mechanical part of that line -- a home directory, a path through a personal
+# or IDE-made folder, a path into a session's scratch space, a
+# shared-conversation link, a conversation archive's path -- and nothing else.
+# An editor named in prose, a process somebody saw, or a quotation is found by
+# a reader, and the check's own output says so.
+#
+# What this fails, and who can fix it
+#
+# It fails on a tracked file carrying one of those shapes, and prints the
+# finding redacted -- enough to recognise, never enough to use, because a
+# check that echoed what it found would have published it a second time. The
+# remedy is the author's: redact, move the fact to the gitignored companion it
+# belongs in, or declare a deliberate example with `leaks: allow <reason>` on
+# the line or the line above. Every allowance is counted on every run.
+#
+# It reads `git ls-files` and the tracked files, and nothing else: no host,
+# no network, no gitignored companion. That is what lets it run on a runner.
+
+name: Leak check
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  leaks:
+    runs-on: ubuntu-latest
+    steps:
+      # Only the governance submodule: `submodules: true` is all-or-nothing, and
+      # a project with a private submodule the runner has no credential for
+      # fails the checkout before the check runs.
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Check out the governance submodule only
+        run: git submodule update --init --depth 1 governance/qm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Nothing committed names a person, a machine, or a private conversation
+        run: python governance/qm/project-seed/ci/check_leaks.py
