@@ -1,5 +1,6 @@
 package media.quaternion.qmetronome.engine
 
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -76,7 +77,10 @@ class ClickPlayer {
         }
         val track = AudioTrack.Builder()
             .setAudioAttributes(
-                clickAudioAttributes(),
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build(),
             )
             .setAudioFormat(
                 AudioFormat.Builder()

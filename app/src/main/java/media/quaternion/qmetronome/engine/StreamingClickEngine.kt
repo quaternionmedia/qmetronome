@@ -1,6 +1,7 @@
 package media.quaternion.qmetronome.engine
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTimestamp
@@ -379,7 +380,10 @@ class StreamingClickEngine {
         bufferFrames = bufferBytes / bytesPerFrame
         return AudioTrack.Builder()
             .setAudioAttributes(
-                clickAudioAttributes(),
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build(),
             )
             .setAudioFormat(
                 AudioFormat.Builder()
