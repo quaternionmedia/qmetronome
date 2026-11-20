@@ -208,10 +208,10 @@ was saved and you've opened a new terminal since.
 
 ```properties
 # Windows (escape the backslash, or use forward slashes)
-sdk.dir=C\:/Users/yourname/AppData/Local/Android/Sdk
+sdk.dir=C\:/Users/you/AppData/Local/Android/Sdk
 
 # macOS
-sdk.dir=/Users/yourname/Library/Android/sdk
+sdk.dir=/Users/you/Library/Android/sdk
 ```
 
 ### 4. Install on a device
