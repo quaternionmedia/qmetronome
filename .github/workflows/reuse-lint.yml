@@ -1,0 +1,62 @@
+name: REUSE lint
+
+# SEED FILE: copy verbatim into a forking project's .github/workflows/.
+#
+# The outbound-licensing record's enforcement clause. Checks that every file
+# carries copyright and licence information, that every licence referenced has
+# its text in LICENSES/, and that no licence text sits there unused.
+#
+# Self-contained, like submodule-check.yml and unlike adr-lint.yml: `reuse` is
+# a published tool, so there is nothing project-specific to run from the
+# governance submodule.
+#
+# This gate is independent of runtime shape: it works identically for a corpus
+# of prose, a Python service, a single-file HTML deliverable and a hardware
+# repository, which is what the open-license record's SBOM path cannot do.
+#
+# Start in reporting mode. A repository that has not had its licensing pass
+# will fail this immediately and usefully; make it blocking once it is green,
+# and say in the project's adoption record which date that happened.
+# To report without blocking, add:  continue-on-error: true  to the lint step.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One run per branch per workflow. A second push supersedes the first: the
+# result of a run whose commit has been replaced is not read, and its minutes
+# are billed.
+#
+# Cancellation applies to pull requests only. On the default branch and on a
+# project branch the run is the record of what that commit reported, and
+# cancelling it would remove the only evidence that the commit was checked.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: reuse lint
+        # Run through uv's tool runner rather than installed with pip. The tool
+        # gets an environment of its own, so the step writes into no
+        # interpreter it did not make and needs no pip in whichever python is
+        # first on PATH. A uv-made virtual environment has no pip, so a pip
+        # step fails under the local workflow runner in a uv-managed checkout.
+        #
+        # The charset-normalizer extra, not bare `reuse`: bare `reuse` detects
+        # file encodings through python-magic, which needs libmagic on the box
+        # that runs it and which reuse skips on Windows, so with no other
+        # encoding module installed it raises NoEncodingModuleError before it
+        # lints anything. charset-normalizer is the encoding module reuse
+        # accepts that imports everywhere.
+        run: uvx 'reuse[charset-normalizer]' lint
