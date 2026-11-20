@@ -204,15 +204,21 @@ it in the same terminal session, or that the system-wide environment variable
 was saved and you've opened a new terminal since.
 
 **If you see "SDK location not found":** either `ANDROID_HOME` isn't set or
-`local.properties` is missing. Create `local.properties` in the project root:
+`local.properties` is missing. Write `local.properties` from the project
+root, with the SDK path Android Studio installs to:
 
-```properties
-# Windows (escape the backslash, or use forward slashes)
-sdk.dir=C\:/Users/yourname/AppData/Local/Android/Sdk
-
-# macOS
-sdk.dir=/Users/yourname/Library/Android/sdk
+```powershell
+# Windows PowerShell
+"sdk.dir=$($env:LOCALAPPDATA -replace '\\', '/')/Android/Sdk" | Set-Content local.properties
 ```
+
+```sh
+# macOS
+echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
+```
+
+If the SDK is somewhere else, put that folder after `sdk.dir=` instead, with
+forward slashes.
 
 ### 4. Install on a device
 
