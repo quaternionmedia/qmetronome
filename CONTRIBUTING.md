@@ -24,8 +24,10 @@ hardware.
 The Gradle wrapper (`gradlew` / `gradlew.bat`) downloads Gradle 9.4.1
 automatically on first run — you don't install Gradle separately.
 
-The Glyph Matrix SDK (`app/libs/glyph-matrix-sdk-2.0.aar`) is committed to
-the repo — no separate SDK download or account is required.
+The Glyph Matrix SDK (`app/libs/glyph-matrix-sdk-2.0.aar`) is not in the
+repo. The first build downloads it from Nothing's Developer Kit at a pinned
+commit and checks its SHA-256 (see `app/build.gradle.kts`) — no account is
+required, and later builds need no network for it.
 
 **Windows note:** on Windows, use `gradlew.bat` instead of `./gradlew`
 everywhere in this doc. `./gradlew` requires Git Bash; `gradlew.bat` works
@@ -61,7 +63,7 @@ qmetronome/
 │   ├── ui/              # Compose UI: MainScreen, SettingsSheet, HelpScreen, MatrixPreview, etc.
 │   ├── tutorial/        # TutorialTopics — shared source of truth for docs/user-guide/ + HelpScreen
 │   └── widget/          # Home screen widget (Jetpack Glance)
-├── app/libs/            # glyph-matrix-sdk-2.0.aar — committed, no separate download
+├── app/libs/            # glyph-matrix-sdk-2.0.aar — fetched by the first build, ignored by git
 ├── docs/                # Feature investigations, test plans, release checklists, user-guide/
 ├── governance/qm/       # org constitution submodule; adr/ here holds this project's own ADRs
 ├── scripts/             # Helper scripts (e.g. generate-release-key.bat)

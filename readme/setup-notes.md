@@ -2,7 +2,8 @@
 
 [← Root README](../README.md)
 
-- `app/libs/glyph-matrix-sdk-2.0.aar` is the Glyph Matrix SDK from the Developer Kit.
+- `app/libs/glyph-matrix-sdk-2.0.aar` is the Glyph Matrix SDK from the Developer Kit. The build
+  downloads it there at a pinned commit and checks its SHA-256; git ignores it.
 - `minSdk` is 33, required by the SDK itself (the Glyph Matrix only exists on phones running
   recent Android anyway).
 - The Glyph Toy preview icon (`drawable/toy_preview.xml`) is generated pixel art, not hand-drawn:

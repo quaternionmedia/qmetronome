@@ -1,3 +1,5 @@
+import java.net.URI
+import java.security.MessageDigest
 import java.time.Duration
 import java.util.Properties
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
@@ -100,8 +102,44 @@ android {
     }
 }
 
+// The Glyph Matrix SDK is Nothing Technology Limited's closed binary, licensed under the Glyph SDK
+// End User License Agreement in the vendor's Developer Kit. It is not kept in this repository: the
+// build takes it from the Developer Kit at a pinned commit, into the ignored `app/libs/`, and
+// refuses any file whose SHA-256 is not the one written here. A checkout with the file already in
+// place builds without the network.
+val glyphSdkFile = layout.projectDirectory.file("libs/glyph-matrix-sdk-2.0.aar").asFile
+val glyphSdkUrl = "https://raw.githubusercontent.com/Nothing-Developer-Programme/" +
+    "GlyphMatrix-Developer-Kit/999b1143a6bff0dd79db11d21b92c15c56a346b1/glyph-matrix-sdk-2.0.aar"
+val glyphSdkSha256 = "be00ee9cd7115f6b11984c6e31fe98e298fb726940d1555063610685ef3bbf29"
+
+fun sha256Of(file: File): String =
+    MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
+
+if (!glyphSdkFile.exists()) {
+    check(!gradle.startParameter.isOffline) {
+        "${glyphSdkFile.name} is absent and Gradle is offline. Run one build online, or put the " +
+            "file from $glyphSdkUrl at $glyphSdkFile."
+    }
+    glyphSdkFile.parentFile.mkdirs()
+    val partial = File(glyphSdkFile.path + ".part")
+    val connection = URI(glyphSdkUrl).toURL().openConnection().apply {
+        connectTimeout = 30_000
+        readTimeout = 60_000
+    }
+    connection.getInputStream().use { input -> partial.outputStream().use { input.copyTo(it) } }
+    val fetched = sha256Of(partial)
+    if (fetched != glyphSdkSha256) {
+        partial.delete()
+        error("The Glyph Matrix SDK fetched from $glyphSdkUrl has SHA-256 $fetched, not $glyphSdkSha256.")
+    }
+    check(partial.renameTo(glyphSdkFile)) { "Could not move ${partial.name} to ${glyphSdkFile.name}." }
+}
+check(sha256Of(glyphSdkFile) == glyphSdkSha256) {
+    "$glyphSdkFile has SHA-256 ${sha256Of(glyphSdkFile)}, not $glyphSdkSha256. Delete it and build again."
+}
+
 dependencies {
-    implementation(files("libs/glyph-matrix-sdk-2.0.aar"))
+    implementation(files(glyphSdkFile))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

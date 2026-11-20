@@ -4,6 +4,10 @@ keystore.properties
 *.jks
 *.keystore
 
+# The Glyph Matrix SDK, fetched by app/build.gradle.kts and never committed
+/app/libs/*.aar
+/app/libs/*.part
+
 # Built-in ignores
 .gradle
 /local.properties

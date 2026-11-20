@@ -283,8 +283,8 @@ laptop's JVM without a device. It stubs out the Android framework enough
 for unit tests. That's why tests run fast — no emulator boot, no ADB push.
 
 The Glyph Matrix SDK (`app/libs/glyph-matrix-sdk-2.0.aar`) is a prebuilt
-binary from Nothing Technology Limited, committed directly to the repo. You
-don't download it separately. It only works on real Nothing hardware — on
+binary from Nothing Technology Limited. It is not in the repo: the first
+build downloads it and checks its hash, so you don't fetch it yourself. It only works on real Nothing hardware — on
 everything else the "Activate as Glyph Toy" button shows a toast instead of
 opening the system toys manager. That's intentional and not a bug.
 
