@@ -1,7 +1,7 @@
 // SEED FILE: part of project-seed/ide/, copied recursively onto the
-// project root (see README.md's "Forking a new project", step 5). This is
-// the canonical copy -- the qm corpus's own root .vscode/extensions.json is
-// a symlink back to this file, not an independent copy.
+// project root (see governance/qm/docs/usage/first-project.md, step 5). The
+// canonical copy is qm's project-seed/ide/.vscode/extensions.json; qm's own
+// root .vscode/extensions.json is a symlink to it, and a project's is a copy.
 {
   "recommendations": [
     "anthropic.claude-code",
