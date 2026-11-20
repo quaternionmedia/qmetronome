@@ -18,7 +18,7 @@ rewritten to narrate it) with a status note where the reality diverged.
 Three related capabilities, roughly in the order they'd naturally build on each other:
 
 1. **Independent audio channel routing per beat type.** Today, `BAR`/`ACCENT`/`REGULAR` all play
-   through the same output (whatever `AudioAttributes.USAGE_ASSISTANCE_SONIFICATION` resolves to
+   through the same output (whatever `AudioAttributes.USAGE_MEDIA` resolves to
    on the device). The goal: let each beat type route to its own destination - e.g. a different
    output device, a different app-level "channel" a DAW or mixer could address independently, or
    distinct stereo panning/routing within the same output. **Still open** - `ClickSound` itself grew

@@ -128,16 +128,16 @@ worth establishing first rather than assuming.
 
 ### The closed Glyph Matrix SDK and redistribution
 
-- [ ] **Not verified in this pass**: whether the GlyphMatrix-Developer-Kit's
-      own terms explicitly permit redistributing `glyph-matrix-sdk-2.0.aar`
-      inside a published third-party Play Store APK. The AAR itself carries
-      no bundled `LICENSE`/`NOTICE` file (confirmed by unzipping it - just
-      `R.txt`, `AndroidManifest.xml`, `classes.jar`, resources, and AAR
-      metadata). The Developer Kit publishing the SDK at all strongly implies
-      third-party redistribution is the intended use, but "strongly implies"
-      isn't the same as "verified the actual terms," and I don't have that
-      text memorized with confidence - read the Developer Kit's own
-      README/license/terms directly before relying on this.
+- [ ] **The SDK's terms are the Glyph SDK End User License Agreement**,
+      `LICENSE.md` in the GlyphMatrix-Developer-Kit. It grants use of the SDK
+      for integrating its functionality in an application, forbids
+      redistributing the SDK except as the agreement authorises, and forbids
+      commercial use without Nothing's written permission. The AAR is
+      therefore not in this repository; the build fetches it from the kit.
+      The text does not say whether a published Play Store APK that contains
+      the SDK is within the grant, and a paid or monetised release needs
+      Nothing's written permission first - the agreement gives the address
+      to ask at.
 - [x] **`NothingKey`**: Ships with the SDK's development placeholder (`"test"`);
       no production key is needed or planned.
 

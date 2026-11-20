@@ -51,8 +51,8 @@ not a network call the app makes on your behalf.
 
 qMetronome's source code is publicly available at
 [github.com/quaternionmedia/qmetronome](https://github.com/quaternionmedia/qmetronome)
-under the MIT License, so this policy can be verified directly against what
-the app actually does.
+under the GNU General Public License, version 3 or later, so this policy
+can be verified directly against what the app actually does.
 
 ## Contact
 
