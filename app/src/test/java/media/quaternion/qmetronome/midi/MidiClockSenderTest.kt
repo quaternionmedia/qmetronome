@@ -1,6 +1,7 @@
 package media.quaternion.qmetronome.midi
 
 import android.media.midi.MidiReceiver
+import java.util.concurrent.CopyOnWriteArrayList
 import media.quaternion.qmetronome.engine.ClockTimingMode
 import media.quaternion.qmetronome.engine.MetronomeEngine
 import org.junit.After
@@ -17,7 +18,8 @@ import org.robolectric.annotation.Config
 @Config(sdk = [33])
 class MidiClockSenderTest {
 
-    private val receivedBytes = mutableListOf<Int>()
+    // Written on the sender's own thread and read on the test's while ticks still arrive.
+    private val receivedBytes = CopyOnWriteArrayList<Int>()
     private val fakeDestination = object : MidiReceiver() {
         override fun onSend(msg: ByteArray, offset: Int, count: Int, timestamp: Long) {
             for (i in 0 until count) receivedBytes.add(msg[offset + i].toInt() and 0xFF)
